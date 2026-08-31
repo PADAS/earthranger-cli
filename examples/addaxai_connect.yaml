@@ -1,0 +1,42 @@
+category:
+  value: addaxai_connect
+  display: AddaxAI Connect
+event_types:
+- value: addaxai_connect_detection
+  display: AddaxAI Connect Detection
+  icon_id: cameratrap_rep
+  fields:
+  - key: addaxai_connect_species
+    label: Species
+    type: select
+    options:
+    - elephant
+    - giraffe
+    - lion
+  - key: addaxai_connect_scientific_name
+    label: Scientific Name
+    type: string
+  - key: addaxai_connect_category
+    label: AddaxAI Connect Category
+    type: string
+  - key: addaxai_connect_count
+    label: Count
+    type: number
+    min: 0
+    max: 100
+  - key: addaxai_connect_confidence
+    label: Confidence
+    type: number
+    min: 0.0
+    max: 1.0
+  - key: addaxai_connect_camera_id
+    label: AddaxAI Connect Camera ID
+    type: string
+  - key: addaxai_connect_site_name
+    label: AddaxAI Connect Site Name
+    type: string
+  - key: addaxai_connect_link
+    label: AddaxAI Connect Link
+    type: url
+  required:
+  - addaxai_connect_species

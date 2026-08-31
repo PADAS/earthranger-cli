@@ -1,0 +1,872 @@
+# Skipped constructs the DSL cannot express:
+#   - event type 'incident_collection': layout uses 0 sections; skipped entirely
+category:
+  value: security
+  display: Security
+event_types:
+- value: accident_rep
+  display: Accident
+  layout:
+    label: ''
+    columns: 2
+  fields:
+  - key: type_accident
+    label: Type
+    type: string
+  - key: animals_involved
+    label: Animals involved
+    type: string
+  - key: number_people_involved
+    label: Number of people involved
+    type: number
+    min: 0
+    column: right
+  required:
+  - type_accident
+- value: animal_control_rep
+  display: Animal Control
+  layout:
+    label: ''
+    columns: 2
+  fields:
+  - key: animalcontrolrep_species
+    label: Animal Species
+    type: select
+    choices_field: animalcontrolrep_species
+    options:
+    - baboon
+    - buffalo
+    - dog
+    - elephant
+    - hippo
+    - hyena
+    - leopard
+    - lion
+    - monkey
+    - warthog
+    - wildebeest
+    - zebra
+    - other
+  - key: animalcontrolrep_reason
+    label: Reason Animal Control Needed
+    type: string
+  - key: animalcontrolrep_numberanimals
+    label: Number of Animals
+    type: number
+    min: 0
+    column: right
+  - key: animalcontrolrep_shotsfired
+    label: Number of Shots Fired
+    type: number
+    min: 0
+    column: right
+  required:
+  - animalcontrolrep_species
+  - animalcontrolrep_numberanimals
+- value: arrest_rep
+  display: Arrest
+  layout:
+    label: ''
+    columns: 2
+  fields:
+  - key: arrestrep_name
+    label: Name of Arrestee
+    type: string
+  - key: arrestrep_dateofbirth
+    label: Date of Birth
+    type: datetime
+  - key: arrestrep_nationality
+    label: Nationality
+    type: select
+    choices_field: arrestrep_nationality
+    options:
+    - america
+    - angola
+    - botswana
+    - camaroon
+    - value: centralafricanrepublic
+      display: Central African Republic
+    - chad
+    - china
+    - value: congodrc
+      display: Congo (DRC)
+    - value: congobrazzaville
+      display: Congo (Brazzaville)
+    - ethiopia
+    - france
+    - gabon
+    - kenya
+    - malawi
+    - mozambique
+    - namibia
+    - rwanda
+    - somalia
+    - value: southafrica
+      display: South Africa
+    - value: sudansouth
+      display: Sudan (South)
+    - value: sudannorth
+      display: Sudan (North)
+    - tanzania
+    - uganda
+    - zambia
+    - zimbabwe
+    - other
+  - key: arrestrep_timeofarrest
+    label: Time of Arrest
+    type: datetime
+  - key: arrestrep_arrestingranger
+    label: Arresting Ranger
+    type: string
+  - key: arrestrep_age
+    label: Age
+    type: number
+    min: 0
+    column: right
+  - key: arrestrep_villagename
+    label: Village Name
+    type: string
+    column: right
+  - key: arrestrep_reaonforarrest
+    label: Reason for Arrest
+    type: select
+    choices_field: arrestrep_reasonforarrest
+    options:
+    - value: bushmeat
+      display: Bush Meat
+    - charcoal
+    - firearm
+    - fishing
+    - value: grazinglivestock
+      display: Grazing Livestock
+    - value: huntingdogs
+      display: Hunting Dogs
+    - ivory
+    - logging
+    - mining
+    - motorbike
+    - poaching
+    - value: resourceharvesting
+      display: Resource Harvesting
+    - value: rhinohorn
+      display: Rhino Horn
+    - snare
+    - speeding
+    - value: startingfires
+      display: Starting Fires
+    - tresspassing
+    - other
+    column: right
+  - key: arrestrep_placeofarrest
+    label: Place of Arrest
+    type: string
+    column: right
+  - key: arrestrep_witness
+    label: Witness (may be multiple)
+    type: string
+    column: right
+  required:
+  - arrestrep_name
+  - arrestrep_reaonforarrest
+  - arrestrep_placeofarrest
+- value: cameratrap_rep
+  display: Camera Trap
+  layout:
+    label: ''
+    columns: 2
+  fields:
+  - key: cameratraprep_camera-name
+    label: Camera Name
+    type: string
+  - key: cameratraprep_camera-version
+    label: Camera Version
+    type: string
+  - key: cameratraprep_camera-make
+    label: Camera Make
+    type: string
+    column: right
+  - key: detected
+    label: Detected
+    type: string
+    column: right
+- value: carcass_rep
+  display: Carcass
+  layout:
+    label: ''
+    columns: 2
+  fields:
+  - key: carcassrep_species
+    label: Species
+    type: select
+    choices_field: carcassrep_species
+    options:
+    - bongo
+    - buffalo
+    - cheetah
+    - chimpanzee
+    - crocodile
+    - eland
+    - elephant
+    - giraffe
+    - gorilla
+    - hippo
+    - hyena
+    - kob
+    - kudu
+    - lechwe
+    - leopard
+    - lion
+    - value: redriverhog
+      display: Red River Hog
+    - rhino
+    - sable
+    - shoebill
+    - topi
+    - tsessebe
+    - warthog
+    - waterbuck
+    - wildebeest
+    - value: wilddog
+      display: Wild Dog
+    - zebra
+    - other
+  - key: carcassrep_ageofanimal
+    label: Age of Animal
+    type: select
+    choices_field: carcassrep_ageofanimal
+    options:
+    - adult
+    - value: subadult
+      display: Sub-adult
+    - juvenile
+    - unknown
+  - key: carcassrep_trophystatus
+    label: Trophy Status
+    type: select
+    choices_field: carcassrep_trophystatus
+    options:
+    - intact
+    - removed
+    - value: naturallymissing
+      display: Naturally Missing
+  - key: carcassrep_sex
+    label: Sex of Animal
+    type: select
+    choices_field: carcassrep_sex
+    options:
+    - male
+    - female
+    - unknown
+    column: right
+  - key: carcassrep_ageofcarcass
+    label: Age of Carcass
+    type: select
+    choices_field: carcassrep_ageofcarcass
+    options:
+    - value: less_than_a_day
+      display: 1 Day or less
+    - value: within_a_week
+      display: Fresh (within a week)
+    - value: within_a_month
+      display: <1 Month
+    - value: more_than_a_month
+      display: <3 Months
+    - value: morethan3months
+      display: More than 3 months
+    column: right
+  - key: carcassrep_causeofdeath
+    label: Cause of Death
+    type: select
+    choices_field: carcassrep_causeofdeath
+    options:
+    - value: naturaldisease
+      display: Natural - Disease
+    - value: naturalfightinjury
+      display: Natural - Fight Injury
+    - value: naturaloldage
+      display: Natural - Old Age
+    - value: naturalpredation
+      display: Natural - Predation
+    - value: naturalother
+      display: Natural - Other
+    - value: unnaturalshot
+      display: Unnatural - Shot
+    - value: unnaturalsnare
+      display: Unnatural - Snare
+    - value: unnaturalpoisoned
+      display: Unnatural - Poisoned
+    - value: unnaturalother
+      display: Unnatural - Other
+    column: right
+  required:
+  - carcassrep_species
+  - carcassrep_ageofcarcass
+- value: confiscation_rep
+  display: Confiscation
+  layout:
+    label: ''
+    columns: 2
+  fields:
+  - key: confiscationrep_itemsconfiscated
+    label: Items Confiscated
+    type: select
+    choices_field: confiscationrep_itemsconfiscated
+    options:
+    - trophies
+    - weapons
+    - value: bushmeat
+      display: Bush Beat
+    - other
+  - key: confiscationrep_weightofitems
+    label: Weight of Items (if appropriate)
+    type: number
+    min: 0
+  - key: confiscationrep_numberofitems
+    label: Number of Items
+    type: number
+    min: 0
+    column: right
+  - key: confiscationrep_details
+    label: Details
+    type: textarea
+    column: right
+  required:
+  - confiscationrep_itemsconfiscated
+  - confiscationrep_numberofitems
+- value: entry_alert
+  display: Entry Alert
+  sections:
+  - label: ''
+    fields:
+    - key: link
+      label: Skylight Link
+      type: url
+  - label: ''
+    columns: 2
+    fields:
+    - key: vessel1_name
+      label: Name
+      type: string
+    - key: vessel1_MMSI
+      label: MMSI
+      type: number
+    - key: vessel1_IMO
+      label: IMO
+      type: number
+    - key: vessel1_flag
+      label: Flag
+      type: string
+      column: right
+    - key: vessel1_type
+      label: Type
+      type: string
+      column: right
+    - key: vessel1_length
+      label: Length
+      type: string
+      column: right
+- value: illegal_fishing_sighting
+  display: Illegal Fishing Sighting
+  icon_id: fishing_vessel_local_rep
+  layout:
+    label: ''
+    columns: 2
+  fields:
+  - key: method
+    label: Method
+    type: string
+    default: ''
+  - key: vessel_name
+    label: Vessel Name
+    type: string
+    default: ''
+  - key: vessel_size
+    label: Vessel Size
+    type: select
+    choices_field: vessel_size
+    options:
+    - value: less_5_m
+      display: < 5m
+    - value: 5_to_15_m
+      display: 5 - 15m
+    - value: greater_15_m
+      display: '> 15m'
+    column: right
+  - key: action
+    label: Action
+    type: select
+    choices_field: illegal_fishing_action
+    options:
+    - Apprehend
+    - Chase
+    - Nothing
+    column: right
+  required:
+  - method
+- value: light_rep
+  display: Light
+  layout:
+    label: ''
+    columns: 2
+  fields:
+  - key: lightrep_whatdetected
+    label: What was detected
+    type: select
+    choices_field: lightrep_whatdetected
+    options:
+    - value: bushfire
+      display: Bush Fire
+    - value: campfire
+      display: Camp Fire
+    - smoke
+    - value: torch
+      display: Torch/Light
+    - other
+  - key: lightrep_distance
+    label: Distance (m)
+    type: number
+    min: 0
+  - key: lightrep_patrolresponse
+    label: Patrols response/intent
+    type: string
+  - key: lightrep_bearing
+    label: Bearing (0-360)
+    type: number
+    min: 0
+    max: 360
+    column: right
+  - key: lightrep_activity
+    label: Description of activity
+    type: string
+    column: right
+  required:
+  - lightrep_whatdetected
+- value: medevac_rep
+  display: MedEvac
+  layout:
+    label: ''
+    columns: 2
+  fields:
+  - key: medevacrep_location
+    label: Location of Pickup Site
+    type: string
+  - key: medevacrep_urgentpatients
+    label: Number of Urgent Patients (1 hour/ASAP)
+    type: number
+    min: 0
+  - key: medevacrep_routinepatients
+    label: Number of Routine Patients (within 24 hours)
+    type: number
+    min: 0
+  - key: medevacrep_ambulatorycasualties
+    label: Number of walking casualties
+    type: number
+    min: 0
+  - key: medevacrep_security
+    label: Security at Pickup Site
+    type: select
+    choices_field: medevacrep_security
+    options:
+    - value: areasecured
+      display: Area secured and safe
+    - value: possibleinterference
+      display: Possible interference from public/poachers (approach with caution)
+    - value: opposition
+      display: Opposition in area (armed escort required)
+  - key: medevacrep_bestcommunication
+    label: Communication method (radio frequency, patrol call sign, sat phone number, etc)
+    type: string
+    column: right
+  - key: medevacrep_prioritypatients
+    label: Number of Priority Patients (within 6-12 hours)
+    type: number
+    min: 0
+    column: right
+  - key: medevacrep_specialequipment
+    label: Special Equipment Required
+    type: select
+    choices_field: medevacrep_specialequipment
+    options:
+    - value: emergencykit
+      display: Complete Emergency Kit
+    - value: stretcher
+      display: Stretcher and other mobilsation devices
+    - none
+    column: right
+  - key: medevacrep_stretchercasualties
+    label: Number of stretcher casualties
+    type: number
+    min: 0
+    column: right
+  - key: medevacrep_other
+    label: Other
+    type: string
+    column: right
+  required:
+  - medevacrep_location
+  - medevacrep_bestcommunication
+- value: mist_rep
+  display: MIST
+  layout:
+    label: ''
+    columns: 2
+  fields:
+  - key: mistrep_Method
+    label: M - Method of injury (how did the casualty occur?)
+    type: string
+  - key: mistrep_Symptoms
+    label: S - Signs and Symptoms
+    type: string
+  - key: mistrep_Injury
+    label: I - Injury or Illness details
+    type: textarea
+    column: right
+  - key: mistrep_Treatment
+    label: T - Treatment given so far
+    type: string
+    column: right
+  required:
+  - mistrep_Method
+  - mistrep_Injury
+  - mistrep_Symptoms
+  - mistrep_Treatment
+- value: contact_rep
+  display: Poacher Contact
+  layout:
+    label: ''
+    columns: 2
+  fields:
+  - key: contactrep_poachinggroupsize
+    label: Size of the Poaching Group
+    type: number
+    min: 0
+  - key: contactrep_patrolactivity
+    label: What happened? Patrol activity
+    type: select
+    choices_field: contactrep_patrolactivity
+    options:
+    - aware
+    - unaware
+    - ambushed
+    - patrolling
+    - value: incamp
+      display: In Camp
+    - other
+  - key: contactrep_rangercasualties
+    label: Ranger Casualties
+    type: number
+  - key: contactrep_arrests
+    label: Arrests
+    type: number
+  - key: contactrep_ammunitionusedbypatrol
+    label: Ammunition used by patrol
+    type: number
+  - key: contactrep_whoinitiatedcontact
+    label: Who initiated contact
+    type: select
+    choices_field: contactrep_whoinitiatedcontact
+    options:
+    - ranger
+    - poacher
+    column: right
+  - key: contactrep_rangerresponse
+    label: What is the response?
+    type: string
+    column: right
+  - key: contactrep_oppositioncasualties
+    label: Opposition Casualties
+    type: number
+    column: right
+  - key: contactrep_seizedweapons
+    label: Seized weapons, equipment, evidence, etc.
+    type: string
+    column: right
+  required:
+  - contactrep_poachinggroupsize
+  - contactrep_whoinitiatedcontact
+  - contactrep_patrolactivity
+  - contactrep_rangerresponse
+- value: poacher_camp_rep
+  display: Poachers Camp
+  layout:
+    label: ''
+    columns: 2
+  fields:
+  - key: poachercamprep_status
+    label: Status of Camp
+    type: select
+    choices_field: poachercamprep_status
+    options:
+    - active
+    - inactive
+  - key: poachercamprep_description
+    label: Description of what was detected
+    type: string
+  - key: poachercamprep_numberofpeople
+    label: Estimated Number of People
+    type: number
+    min: 0
+    column: right
+  required:
+  - poachercamprep_status
+  - poachercamprep_numberofpeople
+  - poachercamprep_description
+- value: ranger_shot_rep
+  display: Ranger Shot
+  layout:
+    label: ''
+    columns: 2
+  fields:
+  - key: rangershotrep_ranger
+    label: Name of Ranger
+    type: string
+  - key: rangershotrep_typeofrounds
+    label: Type Of Rounds
+    type: select
+    choices_field: rangershotrep_typeofrounds
+    options:
+    - shot
+    - rubber
+    - slug
+  - key: rangershotrep_numberofrounds
+    label: Number Of Rounds
+    type: number
+    column: right
+  - key: rangershotrep_target
+    label: Target
+    type: select
+    choices_field: rangershotrep_target
+    options:
+    - game
+    - dog
+    - poacher
+    - value: hwc
+      display: HWC
+    column: right
+  required:
+  - rangershotrep_ranger
+  - rangershotrep_numberofrounds
+  - rangershotrep_typeofrounds
+  - rangershotrep_target
+- value: shot_rep
+  display: Shot
+  layout:
+    label: ''
+    columns: 2
+  fields:
+  - key: shotrep_timeofshot
+    label: Time when shot was heard
+    type: datetime
+  - key: shotrep_distance
+    label: Distance of Shots (m)
+    type: number
+    min: 0
+  - key: shotrep_typeofshots
+    label: Rate of Fire
+    type: select
+    choices_field: shotrep_typeofshot
+    options:
+    - value: singleshot
+      display: Single
+    - value: semiautomaticshot
+      display: Semi-automatic
+    - value: automaticshot
+      display: Automatic
+  - key: shotrep_patrolresponse
+    label: Patrols Response / Intent
+    type: string
+  - key: shotrep_bearing
+    label: Bearing to Shot (0-360)
+    type: number
+    min: 0
+    max: 360
+    column: right
+  - key: shotrep_numberofshots
+    label: Number of Shots
+    type: number
+    min: 0
+    column: right
+  - key: shotrep_estimatedcaliber
+    label: Estimated Caliber
+    type: select
+    choices_field: shotrep_estimatedcaliber
+    options:
+    - value: smallcalibershot
+      display: Small Caliber
+    - value: shotgunshot
+      display: Shot gun/muzzle loader
+    - value: largecalibershot
+      display: Large Caliber
+    column: right
+  required:
+  - shotrep_timeofshot
+  - shotrep_numberofshots
+  - shotrep_typeofshots
+  - shotrep_patrolresponse
+- value: sit_rep
+  display: SIT-REP
+  layout:
+    label: ''
+    columns: 2
+  fields:
+  - key: sitrep_currentactivity
+    label: Update of current activity
+    type: textarea
+  - key: sitrep_other
+    label: Other
+    type: textarea
+  - key: sitrep_futureactivity
+    label: Planned Future Activity
+    type: textarea
+    column: right
+  required:
+  - sitrep_currentactivity
+  - sitrep_futureactivity
+- value: snare_rep
+  display: Snare
+  layout:
+    label: ''
+    columns: 2
+  fields:
+  - key: snarerep_numberofsnares
+    label: Number of Snares Found
+    type: number
+  - key: snarerep_action
+    label: Planned Action
+    type: select
+    choices_field: snarerep_action
+    options:
+    - remove
+    - ambushed
+  - key: snarerep_status
+    label: Status
+    type: select
+    choices_field: snarerep_status
+    options:
+    - set
+    - unset
+    column: right
+  - key: snarerep_comments
+    label: Comments
+    type: string
+    column: right
+  required:
+  - snarerep_numberofsnares
+  - snarerep_status
+  - snarerep_action
+- value: spoor_rep
+  display: Spoor
+  layout:
+    label: ''
+    columns: 2
+  fields:
+  - key: spoorrep_type
+    label: Type of spoor
+    type: select
+    choices_field: spoorrep_type
+    options:
+    - footprint
+    - motorbike
+    - value: vehilce
+      display: Vehicle
+  - key: spoorrep_bearing
+    label: Bearing Spoor is going (0-360)
+    type: number
+    min: 0
+    max: 360
+  - key: spoorrep_comments
+    label: Comments/other information
+    type: string
+  - key: spoorrep_numberpeopletracked
+    label: Estimated number of people being tracked
+    type: number
+    min: 0
+    column: right
+  - key: spoorrep_age
+    label: Age of the spoor
+    type: select
+    choices_field: spoorrep_age
+    options:
+    - value: new
+      display: New/Fresh
+    - old
+    column: right
+  required:
+  - spoorrep_type
+- value: activity_rep
+  display: Suspicious Activity
+  layout:
+    label: ''
+    columns: 2
+  fields:
+  - key: activityrep_whatseen
+    label: What was seen?
+    type: string
+  - key: activityrep_distance
+    label: Distance (m)
+    type: number
+    min: 0
+  - key: activityrep_bearing
+    label: Bearing (0-360)
+    type: number
+    min: 0
+    max: 360
+    column: right
+  - key: activityrep_patrolresponse
+    label: Patrols Response / Intent
+    type: string
+    column: right
+  required:
+  - activityrep_whatseen
+- value: traffic_rep
+  display: Traffic
+  layout:
+    label: ''
+    columns: 2
+  fields:
+  - key: trafficrep_sightingdescription
+    label: What was seen?
+    type: select
+    choices_field: trafficrep_sightingdescription
+    options:
+    - aircraft
+    - bicycles
+    - boats
+    - car
+    - motorbike
+    - truck
+    - other
+  - key: trafficrep_distance
+    label: Distance (m)
+    type: number
+    min: 0
+  - key: trafficrep_vehicleregistration
+    label: Vehicle Registration Number
+    type: string
+  - key: trafficrep_currentpatrolactivity
+    label: Patrols Response / Intent
+    type: string
+  - key: trafficrep_bearing
+    label: Bearing (0-360)
+    type: number
+    min: 0
+    max: 360
+    column: right
+  - key: trafficrep_sightingactivity
+    label: Activity of vehicle
+    type: select
+    choices_field: trafficrep_sightingactivity
+    options:
+    - speeding
+    - value: drivingoffroad
+      display: Driving Off Road
+    - value: brokendown
+      display: Broken Down
+    - other
+    column: right
+  - key: trafficrep_vehiclemakemodel
+    label: Vehicle Make and Model
+    type: string
+    column: right
+  required:
+  - trafficrep_sightingdescription

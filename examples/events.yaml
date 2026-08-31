@@ -1,0 +1,16 @@
+# Example batch file for `er-events post-event --file events.yaml`.
+# Each entry: event_type (required), event_details, optional
+# location / time / title. time defaults to now (UTC).
+
+- event_type: animal_sighting
+  title: Morning elephant sighting
+  location: {latitude: -1.286, longitude: 36.817}
+  event_details:
+    species: elephant
+    count: 3
+    threats: [snares]
+
+- event_type: animal_sighting
+  event_details:
+    species: lion
+    count: 1
