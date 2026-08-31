@@ -343,3 +343,81 @@ def test_rotated_token_is_persisted_after_command(monkeypatch):
     assert data["access_token"] == "acc-2"
     assert data["refresh_token"] == "ref-2"
     assert data["username"] == "chris"
+
+
+# --- pull command ---
+
+
+def _seed_pull_server(fake):
+    from er_events_cli.dsl import parse_spec as _ps
+    from er_events_cli.schema_gen import build_event_type_payload as _bp
+
+    spec = _ps(
+        {
+            "category": {"value": "wm", "display": "Wildlife Monitoring"},
+            "event_types": [
+                {
+                    "value": "sighting",
+                    "display": "Sighting",
+                    "fields": [
+                        {
+                            "key": "species",
+                            "label": "Species",
+                            "type": "select",
+                            "options": ["elephant"],
+                        },
+                    ],
+                }
+            ],
+        }
+    )
+    payload = _bp(spec.event_types[0], "wm")
+    payload["id"] = "et-1"
+    payload["category"] = {"value": "wm"}
+    fake.categories = [{"id": "c1", "value": "wm", "display": "Wildlife Monitoring"}]
+    fake.event_types = [payload]
+    fake.choices = {
+        "sighting_species": [
+            {"id": "1", "value": "elephant", "display": "Elephant", "is_active": True}
+        ]
+    }
+    return payload
+
+
+def test_pull_prints_spec_yaml(fake):
+    _seed_pull_server(fake)
+    result = _run(["pull", "wm"])
+    assert result.exit_code == 0
+    assert "value: wm" in result.output
+    assert "- elephant" in result.output
+
+
+def test_pull_writes_file(fake):
+    _seed_pull_server(fake)
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        result = runner.invoke(main, ["pull", "wm", "-o", "out.yaml"])
+        assert result.exit_code == 0
+        with open("out.yaml") as f:
+            text = f.read()
+    assert "Wrote out.yaml" in result.output
+    assert "value: wm" in text
+
+
+def test_pull_refuses_lossy_without_flag(fake):
+    payload = _seed_pull_server(fake)
+    payload["schema"]["ui"]["fields"]["species"]["type"] = "LOCATION"
+    result = _run(["pull", "wm"])
+    assert result.exit_code == 1
+    assert "warning:" in result.output
+    assert "--skip-unsupported" in result.output
+    result = _run(["pull", "wm", "--skip-unsupported"])
+    assert result.exit_code == 0
+    assert "# Skipped constructs" in result.output
+
+
+def test_pull_missing_category_exits_1(fake):
+    fake.categories = []
+    result = _run(["pull", "nope"])
+    assert result.exit_code == 1
+    assert "error: no category with value 'nope'" in result.output

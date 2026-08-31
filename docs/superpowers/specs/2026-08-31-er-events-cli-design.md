@@ -32,8 +32,10 @@ against the resulting types.
 - v1 event-type schemas (inline enums).
 - Deleting objects (ER soft-deletes; we only flip `is_active`).
 - Managing subjects, patrols, users, or any non-event objects.
-- Round-tripping existing ER schemas back into the DSL (export is raw
-  JSON only, via `show event-type`).
+- ~~Round-tripping existing ER schemas back into the DSL~~ — superseded:
+  the `pull` command reconstructs a DSL spec from server state for
+  everything the DSL can express, and reports (or, with
+  `--skip-unsupported`, drops) what it cannot.
 - Multi-category specs (one spec file = one category; run twice for two).
 
 ## Dependencies & packaging

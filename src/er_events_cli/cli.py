@@ -17,6 +17,7 @@ from .apply import ApplyError, apply_spec, extract_choice_fields
 from .client import make_client, make_token_client
 from .dsl import SpecError, load_spec
 from .events import FieldArgError, build_event, load_events_file, parse_field_args, post_events
+from .pull import PullError, pull_category, render_spec_yaml
 
 
 def _api_errors(f):
@@ -26,7 +27,12 @@ def _api_errors(f):
     def wrapper(*args, **kwargs):
         try:
             return f(*args, **kwargs)
-        except (ApplyError, ERClientException, requests.exceptions.RequestException) as e:
+        except (
+            ApplyError,
+            PullError,
+            ERClientException,
+            requests.exceptions.RequestException,
+        ) as e:
             click.echo(f"error: {e}")
             sys.exit(1)
 
@@ -270,3 +276,34 @@ def auth_status(ctx):
     state = "expired" if token_store.is_expired(data) else "valid"
     as_user = f" as {data['username']}" if data.get("username") else ""
     click.echo(f"{host}: {state}{as_user} (access token expires {data['expires_at']})")
+
+
+@main.command("pull")
+@click.argument("category_value")
+@click.option("-o", "--output", type=click.Path(dir_okay=False), help="Write the spec to a file.")
+@click.option(
+    "--skip-unsupported",
+    is_flag=True,
+    help="Write anyway, dropping constructs the DSL cannot express.",
+)
+@click.pass_context
+@_api_errors
+def pull_cmd(ctx, category_value, output, skip_unsupported):
+    """Reconstruct a DSL spec from the server's CATEGORY_VALUE (reverse of apply)."""
+    client = _connect(ctx)
+    result = pull_category(client, category_value)
+    for w in result.unsupported:
+        click.echo(f"warning: {w}")
+    if result.unsupported and not skip_unsupported:
+        click.echo(
+            "error: the server contains constructs the DSL cannot express; "
+            "re-run with --skip-unsupported to drop them"
+        )
+        sys.exit(1)
+    text = render_spec_yaml(result)
+    if output:
+        with open(output, "w", encoding="utf-8") as f:
+            f.write(text)
+        click.echo(f"Wrote {output}")
+    else:
+        click.echo(text, nl=False)

@@ -87,6 +87,15 @@ auth login'`.
    option), dry-run again, re-apply. `apply` patches exactly what
    differs; dropped options are deactivated, never deleted.
 
+5. Absorb server-side edits into your file: if someone changed a value
+   in ER's UI, `er-events pull wildlife_monitoring -o spec.yaml`
+   rewrites your spec from the live server; `apply --dry-run` should
+   then report all `unchanged`. Constructs the DSL can't express
+   (collections, locations, multi-section layouts, hand-named choice
+   fields) are reported and refused unless you pass
+   `--skip-unsupported`, which drops them and lists what was skipped in
+   a comment at the top of the file.
+
 ## Commands
 
 | Command | What it does |
@@ -97,6 +106,7 @@ auth login'`.
 | `list categories` | List categories (inactive included) |
 | `list event-types [--category V]` | List event types |
 | `show event-type V` | Full v2 event-type JSON + its Choice records |
+| `pull CATEGORY [-o FILE] [--skip-unsupported]` | Reconstruct a DSL spec from the server (reverse of apply) |
 
 ## Spec reference
 
