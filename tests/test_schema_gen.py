@@ -1,5 +1,10 @@
 from er_events_cli.dsl import EventTypeSpec, FieldSpec, OptionSpec
-from er_events_cli.schema_gen import build_event_type_payload, build_property_pair, build_schema, choice_field_name
+from er_events_cli.schema_gen import (
+    build_event_type_payload,
+    build_property_pair,
+    build_schema,
+    choice_field_name,
+)
 
 
 def test_choice_field_name_joins_and_truncates_to_100():
