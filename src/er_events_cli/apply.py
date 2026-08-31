@@ -8,6 +8,7 @@ deactivated, never deleted).
 
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass
 
@@ -41,10 +42,15 @@ class ActionRecord:
     detail: str = ""
 
 
-def normalize_v2_schema(schema: dict) -> dict:
-    """Repair a GET'd v2 schema for comparison/PATCH: ER's GET returns
-    additionalProperties where its POST meta-schema requires
-    unevaluatedProperties."""
+def normalize_v2_schema(schema: dict | str) -> dict | str:
+    """Repair a GET'd v2 schema for comparison/PATCH: ER sometimes returns the
+    schema JSON-stringified, and its GET returns additionalProperties where the
+    POST meta-schema requires unevaluatedProperties."""
+    if isinstance(schema, str):
+        try:
+            schema = json.loads(schema)
+        except (json.JSONDecodeError, TypeError):
+            return schema
     if not isinstance(schema, dict):
         return schema
     json_block = schema.get("json")

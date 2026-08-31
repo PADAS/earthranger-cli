@@ -175,3 +175,14 @@ def test_icon_change_patches_event_type():
     assert any(r.kind == "event_type" and r.action == "updated" for r in records)
     patched = next(c for c in fake.calls if c[0] == "patch_event_type")
     assert patched[1]["icon"] == "cameratrap_rep"
+
+
+def test_stringified_schema_from_get_still_compares_unchanged():
+    import json as _json
+
+    fake = _existing_state()
+    et = fake.event_types[0]
+    et["schema"] = _json.dumps(et["schema"])  # ER sometimes stringifies on GET
+    records = apply_spec(fake, _spec())
+    assert {r.action for r in records} == {"unchanged"}
+    assert fake.writes() == []
