@@ -127,11 +127,15 @@ def build_schema(et: EventTypeSpec) -> dict:
             "order": [SECTION_ID],
             "sections": {
                 SECTION_ID: {
-                    "label": "Details",
-                    "columns": 1,
+                    "label": et.layout.label,
+                    "columns": et.layout.columns,
                     "isActive": True,
-                    "leftColumn": [{"name": f.key, "type": "field"} for f in et.fields],
-                    "rightColumn": [],
+                    "leftColumn": [
+                        {"name": f.key, "type": "field"} for f in et.fields if f.column != "right"
+                    ],
+                    "rightColumn": [
+                        {"name": f.key, "type": "field"} for f in et.fields if f.column == "right"
+                    ],
                 }
             },
         },

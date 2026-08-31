@@ -375,3 +375,36 @@ def test_format_rules():
         "event_types[0].fields[0].format: unsupported format 'phone' "
         "(supported: email, url, uuid)" in errors
     )
+
+
+def test_layout_defaults():
+    spec = parse_spec(_spec_with_field({"key": "n", "label": "N", "type": "string"}))
+    et = spec.event_types[0]
+    assert (et.layout.label, et.layout.columns) == ("Details", 1)
+    assert et.fields[0].column == "left"
+
+
+def test_layout_two_columns_parses():
+    data = _spec_with_field({"key": "n", "label": "N", "type": "string", "column": "right"})
+    data["event_types"][0]["layout"] = {"label": "", "columns": 2}
+    spec = parse_spec(data)
+    et = spec.event_types[0]
+    assert (et.layout.label, et.layout.columns) == ("", 2)
+    assert et.fields[0].column == "right"
+
+
+def test_layout_validation():
+    data = _spec_with_field({"key": "n", "label": "N", "type": "string"})
+    data["event_types"][0]["layout"] = {"columns": 3}
+    errors = _errors_for(data)
+    assert "event_types[0].layout.columns: must be 1 or 2" in errors
+
+    errors = _errors_for(
+        _spec_with_field({"key": "n", "label": "N", "type": "string", "column": "middle"})
+    )
+    assert "event_types[0].fields[0].column: must be 'left' or 'right'" in errors
+
+    errors = _errors_for(
+        _spec_with_field({"key": "n", "label": "N", "type": "string", "column": "right"})
+    )
+    assert "event_types[0].fields[0].column: 'right' requires layout columns: 2" in errors

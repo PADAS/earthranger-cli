@@ -217,3 +217,26 @@ def test_select_hint_and_description():
     assert json_prop["description"] == "The species"
     assert "default" not in json_prop
     assert ui["placeholder"] == "pick one"
+
+
+def test_two_column_layout_section():
+    from er_events_cli.dsl import LayoutSpec
+
+    et = EventTypeSpec(
+        value="t1",
+        display="T1",
+        layout=LayoutSpec(label="", columns=2),
+        fields=[
+            FieldSpec(key="a", label="A", type="string"),
+            FieldSpec(key="b", label="B", type="string", column="right"),
+            FieldSpec(key="c", label="C", type="string"),
+        ],
+    )
+    section = build_schema(et)["ui"]["sections"]["section-1"]
+    assert section["label"] == ""
+    assert section["columns"] == 2
+    assert section["leftColumn"] == [
+        {"name": "a", "type": "field"},
+        {"name": "c", "type": "field"},
+    ]
+    assert section["rightColumn"] == [{"name": "b", "type": "field"}]

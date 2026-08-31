@@ -1,0 +1,26 @@
+# Skipped constructs the DSL cannot express:
+#   - event type 'accident_rep': layout is not the generator's single 'section-1' Details section; skipped entirely
+#   - event type 'animal_control_rep': layout is not the generator's single 'section-1' Details section; skipped entirely
+#   - event type 'arrest_rep': layout is not the generator's single 'section-1' Details section; skipped entirely
+#   - event type 'cameratrap_rep': layout is not the generator's single 'section-1' Details section; skipped entirely
+#   - event type 'carcass_rep': layout is not the generator's single 'section-1' Details section; skipped entirely
+#   - event type 'confiscation_rep': layout is not the generator's single 'section-1' Details section; skipped entirely
+#   - event type 'entry_alert': layout is not the generator's single 'section-1' Details section; skipped entirely
+#   - event type 'illegal_fishing_sighting': layout is not the generator's single 'section-1' Details section; skipped entirely
+#   - event type 'incident_collection': layout is not the generator's single 'section-1' Details section; skipped entirely
+#   - event type 'light_rep': layout is not the generator's single 'section-1' Details section; skipped entirely
+#   - event type 'medevac_rep': layout is not the generator's single 'section-1' Details section; skipped entirely
+#   - event type 'mist_rep': layout is not the generator's single 'section-1' Details section; skipped entirely
+#   - event type 'contact_rep': layout is not the generator's single 'section-1' Details section; skipped entirely
+#   - event type 'poacher_camp_rep': layout is not the generator's single 'section-1' Details section; skipped entirely
+#   - event type 'ranger_shot_rep': layout is not the generator's single 'section-1' Details section; skipped entirely
+#   - event type 'shot_rep': layout is not the generator's single 'section-1' Details section; skipped entirely
+#   - event type 'sit_rep': layout is not the generator's single 'section-1' Details section; skipped entirely
+#   - event type 'snare_rep': layout is not the generator's single 'section-1' Details section; skipped entirely
+#   - event type 'spoor_rep': layout is not the generator's single 'section-1' Details section; skipped entirely
+#   - event type 'activity_rep': layout is not the generator's single 'section-1' Details section; skipped entirely
+#   - event type 'traffic_rep': layout is not the generator's single 'section-1' Details section; skipped entirely
+category:
+  value: security
+  display: Security
+event_types: []

@@ -95,13 +95,11 @@ def _invert_event_type(client, et: dict, unsupported: list[str]) -> dict | None:
     properties = json_block.get("properties") or {}
     ui_fields = ui_block.get("fields") or {}
 
-    order = _field_order(json_block, ui_block, properties, ui_fields)
-    if order is None:
-        unsupported.append(
-            f"event type {value!r}: layout is not the generator's single "
-            f"'{SECTION_ID}' Details section; skipped entirely"
-        )
+    layout_result = _read_layout(json_block, ui_block, properties, ui_fields)
+    if isinstance(layout_result, str):
+        unsupported.append(f"event type {value!r}: {layout_result}; skipped entirely")
         return None
+    order, right_keys, layout = layout_result
 
     fields: list[dict] = []
     kept_keys: set[str] = set()
@@ -122,6 +120,11 @@ def _invert_event_type(client, et: dict, unsupported: list[str]) -> dict | None:
         out["is_active"] = False
     if et.get("icon"):
         out["icon_id"] = et["icon"]
+    if layout != {"label": "Details", "columns": 1}:
+        out["layout"] = layout
+    for f in fields:
+        if f["key"] in right_keys:
+            f["column"] = "right"
     out["fields"] = fields
     required = [k for k in (json_block.get("required") or []) if k in kept_keys]
     if required:
@@ -129,22 +132,34 @@ def _invert_event_type(client, et: dict, unsupported: list[str]) -> dict | None:
     return out
 
 
-def _field_order(json_block, ui_block, properties, ui_fields) -> list[str] | None:
-    """Field order from the single Details section, or None when the layout is
-    something our generator never produces (multi-section, headers, conditions,
-    right column, or fields outside the section)."""
+def _read_layout(json_block, ui_block, properties, ui_fields):
+    """Return (field_order, right_column_keys, layout_dict) for a single-section
+    schema the DSL can express, or a reason string when it cannot (multiple
+    sections, headers, conditions, or fields outside the section)."""
     sections = ui_block.get("sections") or {}
-    if list(sections) != [SECTION_ID] or ui_block.get("headers") or json_block.get("allOf"):
-        return None
+    if list(sections) != [SECTION_ID]:
+        if len(sections) != 1:
+            return f"layout uses {len(sections)} sections"
+        return f"layout section id {next(iter(sections))!r} differs from '{SECTION_ID}'"
+    if ui_block.get("headers"):
+        return "layout uses headers"
+    if json_block.get("allOf"):
+        return "layout uses conditional sections"
     section = sections[SECTION_ID]
-    if section.get("rightColumn") or section.get("conditions"):
-        return None
-    if section.get("label") != "Details" or section.get("columns") != 1:
-        return None
-    order = [e.get("name") for e in section.get("leftColumn") or [] if e.get("type") == "field"]
+    if section.get("conditions"):
+        return "layout uses section conditions"
+    label = section.get("label")
+    columns = section.get("columns")
+    if not isinstance(label, str) or columns not in (1, 2):
+        return f"layout has label={label!r}, columns={columns!r}"
+    left = [e.get("name") for e in section.get("leftColumn") or [] if e.get("type") == "field"]
+    right = [e.get("name") for e in section.get("rightColumn") or [] if e.get("type") == "field"]
+    if columns == 1 and right:
+        return "layout puts fields in the right column of a 1-column section"
+    order = left + right
     if set(order) != set(properties) or set(order) != set(ui_fields):
-        return None
-    return order
+        return "layout leaves fields outside the section"
+    return order, set(right), {"label": label, "columns": columns}
 
 
 def _invert_field(client, et_value, key, json_prop, ui_field):

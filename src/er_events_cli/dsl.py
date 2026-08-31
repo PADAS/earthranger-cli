@@ -53,6 +53,7 @@ class FieldSpec:
     description: str | None = None
     default: object = None  # None means "not set" (False/"" are real defaults)
     format: str | None = None  # string fields only: url | email | uuid
+    column: str = "left"  # "right" needs layout columns: 2
 
 
 # Types whose ER UI variant has a placeholder slot (boolean/date/datetime don't).
@@ -71,6 +72,12 @@ _DEFAULT_RULES = {
 
 
 @dataclass
+class LayoutSpec:
+    label: str = "Details"
+    columns: int = 1
+
+
+@dataclass
 class EventTypeSpec:
     value: str
     display: str
@@ -78,6 +85,7 @@ class EventTypeSpec:
     required: list[str] = field(default_factory=list)
     is_active: bool = True
     icon_id: str | None = None
+    layout: LayoutSpec = field(default_factory=LayoutSpec)
 
 
 @dataclass
@@ -204,6 +212,10 @@ def _parse_event_type(raw: object, path: str, errors: list[str]) -> EventTypeSpe
     if icon_id is not None and not isinstance(icon_id, str):
         errors.append(f"{path}.icon_id: must be a string")
         icon_id = None
+    layout = _parse_layout(raw.get("layout"), f"{path}.layout", errors)
+    for j, f in enumerate(fields):
+        if f.column == "right" and layout.columns != 2:
+            errors.append(f"{path}.fields[{j}].column: 'right' requires layout columns: 2")
     return EventTypeSpec(
         value=value,
         display=display,
@@ -211,7 +223,25 @@ def _parse_event_type(raw: object, path: str, errors: list[str]) -> EventTypeSpe
         required=required,
         is_active=is_active,
         icon_id=icon_id,
+        layout=layout,
     )
+
+
+def _parse_layout(raw: object, path: str, errors: list[str]) -> LayoutSpec:
+    if raw is None:
+        return LayoutSpec()
+    if not isinstance(raw, dict):
+        errors.append(f"{path}: must be a mapping with 'label' and/or 'columns'")
+        return LayoutSpec()
+    label = raw.get("label", "Details")
+    if not isinstance(label, str):
+        errors.append(f"{path}.label: must be a string")
+        label = "Details"
+    columns = raw.get("columns", 1)
+    if columns not in (1, 2):
+        errors.append(f"{path}.columns: must be 1 or 2")
+        columns = 1
+    return LayoutSpec(label=label, columns=columns)
 
 
 def _parse_field(raw: object, path: str, errors: list[str]) -> FieldSpec:
@@ -272,6 +302,11 @@ def _parse_field(raw: object, path: str, errors: list[str]) -> FieldSpec:
                 errors.append(f"{path}.default: must be {label_} for type {ftype!r}")
                 default = None
 
+    column = raw.get("column", "left")
+    if column not in ("left", "right"):
+        errors.append(f"{path}.column: must be 'left' or 'right'")
+        column = "left"
+
     fmt = raw.get("format")
     if fmt is not None:
         if ftype != "string":
@@ -293,6 +328,7 @@ def _parse_field(raw: object, path: str, errors: list[str]) -> FieldSpec:
         description=description,
         default=default,
         format=fmt,
+        column=column,
     )
 
 

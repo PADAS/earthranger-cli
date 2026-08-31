@@ -182,3 +182,66 @@ def test_pull_skips_v1_event_types():
     result = pull_category(fake, "wm")
     assert any("legacy_v1" in w and "v2 json/ui envelope" in w for w in result.unsupported)
     assert "legacy_v1" not in [t["value"] for t in result.spec["event_types"]]
+
+
+TWO_COL_SPEC = {
+    "category": {"value": "wm", "display": "Wildlife Monitoring"},
+    "event_types": [
+        {
+            "value": "traffic",
+            "display": "Traffic",
+            "layout": {"label": "", "columns": 2},
+            "fields": [
+                {"key": "a", "label": "A", "type": "string"},
+                {"key": "b", "label": "B", "type": "number", "column": "right"},
+                {"key": "c", "label": "C", "type": "string"},
+            ],
+        }
+    ],
+}
+
+
+def test_pull_round_trips_two_column_layout():
+    fake = _server_from_spec(TWO_COL_SPEC)
+    result = pull_category(fake, "wm")
+    assert result.unsupported == []
+    et = result.spec["event_types"][0]
+    assert et["layout"] == {"label": "", "columns": 2}
+    # pull canonicalizes field order to left column then right column;
+    # the wire schema is identical either way (verified by the apply below)
+    assert [(f["key"], f.get("column")) for f in et["fields"]] == [
+        ("a", None),
+        ("c", None),
+        ("b", "right"),
+    ]
+    records = apply_spec(fake, parse_spec(result.spec))
+    assert {r.action for r in records} == {"unchanged"}
+
+
+def test_pull_default_layout_omits_layout_key():
+    fake = _server_from_spec(SPEC_DATA)
+    result = pull_category(fake, "wm")
+    assert all("layout" not in et for et in result.spec["event_types"])
+
+
+def test_pull_multi_section_message_names_the_construct():
+    fake = _server_from_spec(SPEC_DATA)
+    fake.event_types[0]["schema"]["ui"]["sections"]["section-2"] = {
+        "label": "More",
+        "columns": 1,
+        "isActive": True,
+        "leftColumn": [],
+        "rightColumn": [],
+    }
+    result = pull_category(fake, "wm")
+    assert any("layout uses 2 sections" in w for w in result.unsupported)
+
+
+def test_pull_foreign_section_id_still_unsupported():
+    fake = _server_from_spec(SPEC_DATA)
+    et = fake.event_types[0]
+    ui = et["schema"]["ui"]
+    ui["sections"] = {"section-custom": ui["sections"].pop("section-1")}
+    ui["order"] = ["section-custom"]
+    result = pull_category(fake, "wm")
+    assert any("section-custom" in w and "layout" in w for w in result.unsupported)

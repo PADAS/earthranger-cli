@@ -140,6 +140,11 @@ Options are `{value, display}` mappings or bare strings
 (`lion` → value `lion`, display `Lion`). Slugs — category value, event
 type values, field keys, option values — must match `[a-z0-9_]+`.
 
+Per event type an optional `layout: {label, columns}` (default
+`{label: Details, columns: 1}`) controls the form section; with
+`columns: 2`, per-field `column: right` places a field in the right
+column.
+
 Per event type: `value`, `display`, `fields` (required);
 `required`, `is_active`, `icon_id` (optional; sent to ER as its writable
 `icon` field — the API's own `icon_id` is a derived, read-only property).
