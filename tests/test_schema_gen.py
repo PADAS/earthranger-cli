@@ -163,7 +163,11 @@ def test_build_event_type_payload():
     assert payload["is_active"] is True
     assert payload["readonly"] is False
     assert payload["schema"] == build_schema(_event_type())
-    assert "icon_id" not in payload
+    assert "icon" not in payload
     et = _event_type()
     et.icon_id = "mammal_rep"
-    assert build_event_type_payload(et, "c")["icon_id"] == "mammal_rep"
+    # ER's v2 API ignores a top-level icon_id (read-only, derived); the
+    # writable model field is "icon".
+    payload = build_event_type_payload(et, "c")
+    assert payload["icon"] == "mammal_rep"
+    assert "icon_id" not in payload

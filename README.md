@@ -110,7 +110,8 @@ Options are `{value, display}` mappings or bare strings
 type values, field keys, option values — must match `[a-z0-9_]+`.
 
 Per event type: `value`, `display`, `fields` (required);
-`required`, `is_active`, `icon_id` (optional).
+`required`, `is_active`, `icon_id` (optional; sent to ER as its writable
+`icon` field — the API's own `icon_id` is a derived, read-only property).
 
 ### What apply owns
 

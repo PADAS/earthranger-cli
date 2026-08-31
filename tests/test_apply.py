@@ -165,3 +165,13 @@ def test_api_write_failure_names_the_failing_object():
     with pytest.raises(ApplyError) as exc:
         apply_spec(fake, _spec())
     assert "creating event_type 'sighting': 400 schema invalid" in str(exc.value)
+
+
+def test_icon_change_patches_event_type():
+    fake = _existing_state()
+    spec = _spec()
+    spec.event_types[0].icon_id = "cameratrap_rep"
+    records = apply_spec(fake, spec)
+    assert any(r.kind == "event_type" and r.action == "updated" for r in records)
+    patched = next(c for c in fake.calls if c[0] == "patch_event_type")
+    assert patched[1]["icon"] == "cameratrap_rep"

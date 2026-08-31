@@ -85,7 +85,7 @@ event_types:
   - value: animal_sighting
     display: Animal Sighting
     is_active: true            # optional, default true
-    icon_id: mammal_rep        # optional, passthrough
+    icon_id: mammal_rep        # optional; sent as ER's writable `icon` field
     fields:
       - key: species
         label: Species

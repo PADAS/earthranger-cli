@@ -131,5 +131,7 @@ def build_event_type_payload(et: EventTypeSpec, category_value: str) -> dict:
         "schema": build_schema(et),
     }
     if et.icon_id:
-        payload["icon_id"] = et.icon_id
+        # ER's v2 API treats icon_id as read-only (a property derived from the
+        # EventType.icon model field); "icon" is the writable field.
+        payload["icon"] = et.icon_id
     return payload

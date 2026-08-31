@@ -161,7 +161,7 @@ def _event_type_differs(payload: dict, existing: dict) -> bool:
         return True
     if payload["category"] != _category_value(existing.get("category")):
         return True
-    if "icon_id" in payload and payload["icon_id"] != existing.get("icon_id"):
+    if "icon" in payload and payload["icon"] != existing.get("icon"):
         return True
     return payload["schema"] != normalize_v2_schema(existing.get("schema") or {})
 
