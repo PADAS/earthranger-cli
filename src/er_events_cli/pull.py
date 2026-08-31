@@ -81,6 +81,9 @@ def _invert_event_type(client, et: dict, unsupported: list[str]) -> dict | None:
             schema = json.loads(schema)
         except (json.JSONDecodeError, TypeError):
             schema = None
+    if isinstance(schema, dict) and schema.get("auto-generate"):
+        unsupported.append(f"event type {value!r}: schema uses auto-generate; skipped entirely")
+        return None
     if (
         not isinstance(schema, dict)
         or not isinstance(schema.get("json"), dict)
@@ -191,6 +194,8 @@ def _read_sections(json_block, ui_block, properties, ui_fields):
     all_keys: list[str] = []
     for sid in order_ids:
         section = sections[sid]
+        if section.get("isActive") is not True:
+            return f"layout section {sid!r} is inactive (isActive: false)"
         if section.get("conditions"):
             return "layout uses section conditions"
         label = section.get("label")

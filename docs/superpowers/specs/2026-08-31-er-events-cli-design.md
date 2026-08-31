@@ -74,6 +74,17 @@ Connection parameters resolve in priority order:
 `--server` accepts either a bare site name (`myreserve` →
 `https://myreserve.pamdas.org`) or a full `https://` URL.
 
+Beyond one-shot password auth: `er-events auth login` exchanges a
+password for OAuth tokens once and caches them (never the password)
+per server host in `~/.config/er-events/tokens/<host>.json`;
+subsequent commands on that host reuse the cache automatically
+(refreshing an expired access token via its refresh token), skipping
+it only when an explicit `--username` doesn't match the cached
+session's owner. `auth status`/`auth logout` inspect/clear the cache.
+`profile add/use/list/remove` manage named `{server, username}` pairs
+so switching between sites is one flag (`--profile NAME`) or one
+command (`profile use NAME`) instead of re-typing `--server`.
+
 ## The spec DSL
 
 One YAML file declares one category and its event types:
@@ -119,15 +130,35 @@ Validation rules (fail fast, before any API call):
   `select`/`multiselect` and forbidden otherwise; `min`/`max` only on
   `integer`/`number`.
 - Every entry in `required` must name a declared field key.
-- Values used as slugs (`category.value`, event type `value`, field
-  `key`, option `value`) must match `[a-z0-9_]+` (we validate, not
-  transform — explicit beats magic).
+- Values used as slugs (`category.value`, event type `value`) must
+  match `[a-z0-9_]+` (we validate, not transform — explicit beats
+  magic). Field `key`s follow ER's own looser rule instead,
+  `[a-zA-Z0-9_-]+` (das `FORM_ELEMENT_SEGMENT_PATTERN`) — stock event
+  types use hyphens and uppercase in field keys.
+- Option `value`s are free text, not slugs: ER's `Choice.value` is an
+  unconstrained varchar(100) (truncated at generation time), so no
+  slug rule applies to them.
 - Option shorthand (`- lion`) derives `value: lion`,
   `display: "Lion"` (underscores → spaces, title-cased).
 
 Parsed into small dataclasses (`Spec`, `CategorySpec`, `EventTypeSpec`,
 `FieldSpec`, `OptionSpec`) — plain stdlib `dataclasses`, no pydantic
 needed at this size.
+
+Beyond the single-section form shown above: an event type can declare
+`layout: {label, columns}` plus per-field `column: right` for a
+two-column single section, or `sections:` (a list of `{label?,
+columns?, fields: [...]}` mappings) for a multi-section form — each
+section becomes its own numbered `section-N` in the wire schema, and
+`sections:` is mutually exclusive with top-level `fields:`/`layout:`.
+A select/multiselect field may set `choices_field` to name an existing
+ER Choice set explicitly instead of the derived
+`<event_type>_<field_key>` name — needed for stock event types whose
+choice sets predate this tool, and to deliberately share one choice
+set between fields (allowed only when every sharing field declares
+identical options). A form-less event type (e.g. an incident
+collection container) is declared with an explicit `fields: []` and,
+for collections, `is_collection: true`.
 
 ### Why YAML and not JSON?
 
@@ -150,7 +181,10 @@ Anticipated user question; the README will carry this answer too.
 ## Field type mapping
 
 Each DSL field generates a `json.properties` entry and a `ui.fields`
-entry (all UI fields carry `parent: "section-1"`):
+entry (each UI field carries `parent: <its section's id>` — `section-1`
+for the default single-section form; a multi-section form via
+`sections:` numbers sections positionally, `section-1`, `section-2`,
+...):
 
 Every json property also carries `"deprecated": false` — ER's meta-schema
 (das `eventtype_meta_schemas.py`) requires it on every field variant.
@@ -188,7 +222,7 @@ The generated event-type payload:
 ```json
 {
   "value": "...", "display": "...", "category": "<category value>",
-  "is_active": true, "readonly": false,
+  "is_active": true,
   "schema": {
     "json": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -302,6 +336,18 @@ er-events post-event --file events.yaml
 - `er-events show event-type VALUE` — the full v2 event-type JSON
   (schema included) plus the Choice records for every `$ref` field it
   references. Output is JSON (pipe-friendly).
+
+### `er-events pull CATEGORY [-o FILE] [--skip-unsupported]`
+
+The reverse of `apply`: reconstructs a DSL spec from a live category's
+event types and choices, for everything the DSL can express. Anything
+it cannot (e.g. headers, conditional sections, non-positional section
+ids, auto-generate schemas, inactive layout sections, pattern
+validation, deprecated fields) is reported as a warning and, by
+default, refused; `--skip-unsupported` drops those pieces instead and
+lists what was skipped in a comment at the top of the written file.
+Round-tripping a pulled spec straight back through `apply --dry-run`
+should report all `unchanged`.
 
 ## Module layout
 

@@ -173,6 +173,30 @@ def test_pull_reports_layout_it_cannot_express():
     assert "sections" not in pulled  # collapsed back to the single-section form
 
 
+def test_pull_skips_schema_with_auto_generate():
+    fake = _server_from_spec(SPEC_DATA)
+    et = fake.event_types[0]
+    et["schema"]["auto-generate"] = True
+    result = pull_category(fake, "wm")
+    assert any(
+        w == "event type 'sighting': schema uses auto-generate; skipped entirely"
+        for w in result.unsupported
+    )
+    assert "sighting" not in [t["value"] for t in result.spec["event_types"]]
+
+
+def test_pull_skips_event_type_with_inactive_section():
+    fake = _server_from_spec(SPEC_DATA)
+    et = fake.event_types[0]
+    et["schema"]["ui"]["sections"]["section-1"]["isActive"] = False
+    result = pull_category(fake, "wm")
+    assert any(
+        "sighting" in w and "layout section 'section-1' is inactive (isActive: false)" in w
+        for w in result.unsupported
+    )
+    assert "sighting" not in [t["value"] for t in result.spec["event_types"]]
+
+
 def test_pull_handles_json_stringified_v2_schema():
     import json as _json
 
@@ -307,6 +331,19 @@ def test_pull_single_default_section_still_emits_flat_form():
     for et in result.spec["event_types"]:
         assert "sections" not in et
         assert "fields" in et
+
+
+def test_pull_all_inactive_choices_round_trip_to_empty_options():
+    fake = _server_from_spec(SPEC_DATA)
+    for rec in fake.choices["sighting_species"]:
+        rec["is_active"] = False
+    result = pull_category(fake, "wm")
+    assert result.unsupported == []
+    et = next(t for t in result.spec["event_types"] if t["value"] == "sighting")
+    species = next(f for f in et["fields"] if f["key"] == "species")
+    assert species["options"] == []
+    records = apply_spec(fake, parse_spec(result.spec))
+    assert {r.action for r in records} == {"unchanged"}
 
 
 def test_pull_fieldless_collection_round_trips():

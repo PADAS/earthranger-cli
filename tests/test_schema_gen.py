@@ -161,7 +161,9 @@ def test_build_event_type_payload():
     assert payload["display"] == "T One"
     assert payload["category"] == "wildlife_monitoring"
     assert payload["is_active"] is True
-    assert payload["readonly"] is False
+    # readonly is never sent: omitting it preserves the server value on PATCH
+    # and the server default (False) on POST.
+    assert "readonly" not in payload
     assert payload["schema"] == build_schema(_event_type())
     assert "icon" not in payload
     et = _event_type()

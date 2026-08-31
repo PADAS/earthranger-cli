@@ -161,7 +161,6 @@ def build_event_type_payload(et: EventTypeSpec, category_value: str) -> dict:
         "display": et.display,
         "category": category_value,
         "is_active": et.is_active,
-        "readonly": False,
         "schema": build_schema(et),
     }
     if et.icon_id:

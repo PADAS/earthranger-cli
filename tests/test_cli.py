@@ -219,6 +219,25 @@ def test_show_event_type_includes_choices(fake):
     assert data["choices"]["s_species"][0]["value"] == "elephant"
 
 
+def test_show_event_type_handles_stringified_schema(fake):
+    # ER sometimes returns the schema JSON-stringified on GET.
+    schema = {
+        "json": {
+            "properties": {
+                "species": {"anyOf": [{"$ref": "/api/v2.0/schemas/choices.json?field=s_species"}]}
+            }
+        }
+    }
+    fake.event_types = [
+        {"value": "s", "display": "S", "category": "wm", "schema": json.dumps(schema)},
+    ]
+    fake.choices = {"s_species": [{"id": "1", "value": "elephant", "display": "Elephant"}]}
+    result = _run(["show", "event-type", "s"])
+    assert result.exit_code == 0
+    data = json.loads(result.output)
+    assert data["choices"]["s_species"][0]["value"] == "elephant"
+
+
 def test_show_event_type_missing_exits_1(fake):
     result = _run(["show", "event-type", "nope"])
     assert result.exit_code == 1
@@ -305,6 +324,34 @@ def test_connect_explicit_password_beats_cache(monkeypatch):
     )
     assert result.exit_code == 0
     assert captured == {"username": "u", "password": "pw"}
+
+
+def test_connect_cached_token_skipped_when_username_differs(monkeypatch):
+    # a cached token belongs to "chris"; an explicit --username alice must not
+    # silently ride on chris's cached session.
+    token_store.save_token("sandbox.pamdas.org", AUTH, FUTURE, "chris")
+    captured = {}
+
+    def fake_make_client(*, server, username, password):
+        captured.update(server=server, username=username, password=password)
+        return FakeER()
+
+    monkeypatch.setattr(cli_mod, "make_client", fake_make_client)
+    result = _run(
+        ["--server", "sandbox", "--username", "alice", "list", "categories"], input="pw\n"
+    )
+    assert result.exit_code == 0
+    assert captured == {"server": "sandbox", "username": "alice", "password": "pw"}
+
+
+def test_connect_cached_token_used_when_username_matches(monkeypatch):
+    token_store.save_token("sandbox.pamdas.org", AUTH, FUTURE, "chris")
+    fake = FakeER()
+    monkeypatch.setattr(cli_mod, "make_token_client", lambda **kw: fake)
+    result = _run(["--server", "sandbox", "--username", "chris", "list", "categories"])
+    assert result.exit_code == 0
+    assert fake.auth["access_token"] == "acc-1"
+    assert ("auth_headers",) in fake.calls
 
 
 def test_connect_expired_cached_session_message(monkeypatch):

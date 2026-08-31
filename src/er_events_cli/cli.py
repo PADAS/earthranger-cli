@@ -13,7 +13,7 @@ from erclient.er_errors import ERClientException
 
 from . import client as er
 from . import config_store, token_store
-from .apply import ApplyError, apply_spec, extract_choice_fields
+from .apply import ApplyError, apply_spec, extract_choice_fields, normalize_v2_schema
 from .client import make_client, make_token_client
 from .dsl import SpecError, load_spec
 from .events import FieldArgError, build_event, load_events_file, parse_field_args, post_events
@@ -77,7 +77,10 @@ def _connect(ctx):
     password = ctx.obj["password"]
     if not password:
         cached = token_store.load_token(token_store.server_host(server))
-        if cached:
+        # An explicit username (flag/env/profile) that doesn't match the
+        # cached session's owner must not silently ride on someone else's
+        # cache; no explicit username, or a matching one, keeps using it.
+        if cached and (not username or cached.get("username") == username):
             return _connect_with_cached_token(ctx, server, cached)
     if not username:
         raise click.UsageError("Missing username: pass --username or set ER_USERNAME.")
@@ -248,7 +251,7 @@ def show_event_type(ctx, value):
     if et is None:
         click.echo(f"error: no event type with value {value!r}")
         sys.exit(1)
-    fields = extract_choice_fields(et.get("schema") or {})
+    fields = extract_choice_fields(normalize_v2_schema(et.get("schema") or {}))
     choices = {f: er.get_choices(client, f) for f in fields}
     click.echo(json.dumps({"event_type": et, "choices": choices}, indent=2))
 

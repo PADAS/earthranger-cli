@@ -113,13 +113,20 @@ def test_unknown_type_rejected():
 
 def test_options_required_for_select_and_forbidden_otherwise():
     errors = _errors_for(_spec_with_field({"key": "f1", "label": "F", "type": "select"}))
-    assert (
-        "event_types[0].fields[0].options: required non-empty list for select/multiselect" in errors
-    )
+    assert "event_types[0].fields[0].options: required list for select/multiselect" in errors
     errors = _errors_for(
         _spec_with_field({"key": "f1", "label": "F", "type": "string", "options": ["a"]})
     )
     assert "event_types[0].fields[0].options: not allowed for type 'string'" in errors
+
+
+def test_empty_options_list_is_valid():
+    # an all-inactive choice set round-trips to `options: []` (pull); parsing
+    # must accept it rather than requiring at least one option.
+    spec = parse_spec(
+        _spec_with_field({"key": "f1", "label": "F", "type": "select", "options": []})
+    )
+    assert spec.event_types[0].fields[0].options == []
 
 
 def test_min_only_on_numeric():
@@ -498,6 +505,77 @@ def test_shared_choices_field_allowed_when_options_identical():
 def test_shared_choices_field_rejected_when_options_differ():
     errors = _errors_for(_two_fields_sharing("shared_actions", ["stop"], ["go"]))
     assert any("shared_actions" in e and "identical options" in e for e in errors)
+
+
+def _implicit_and_explicit_sharing(options_a, options_b):
+    # type "a" field "species" derives the name "a_species" implicitly; type
+    # "b" reuses that same name explicitly via choices_field.
+    return {
+        "category": {"value": "c1", "display": "C1"},
+        "event_types": [
+            {
+                "value": "a",
+                "display": "A",
+                "fields": [
+                    {"key": "species", "label": "Species", "type": "select", "options": options_a}
+                ],
+            },
+            {
+                "value": "b",
+                "display": "B",
+                "fields": [
+                    {
+                        "key": "other",
+                        "label": "Other",
+                        "type": "select",
+                        "choices_field": "a_species",
+                        "options": options_b,
+                    }
+                ],
+            },
+        ],
+    }
+
+
+def test_implicit_and_explicit_choice_field_sharing_allowed_when_options_identical():
+    spec = parse_spec(_implicit_and_explicit_sharing(["x", "y"], ["x", "y"]))
+    assert len(spec.event_types) == 2
+
+
+def test_implicit_and_explicit_choice_field_sharing_rejected_when_options_differ():
+    errors = _errors_for(_implicit_and_explicit_sharing(["x", "y"], ["x"]))
+    assert any("a_species" in e and "identical options" in e for e in errors)
+
+
+def test_two_implicit_fields_colliding_still_rejected_even_with_identical_options():
+    # the corruption guard for accidental derivation collisions stays even
+    # when options happen to match.
+    data = {
+        "category": {"value": "c1", "display": "C1"},
+        "event_types": [
+            {
+                "value": "animal",
+                "display": "Animal",
+                "fields": [
+                    {
+                        "key": "sighting_species",
+                        "label": "Species",
+                        "type": "select",
+                        "options": ["a"],
+                    }
+                ],
+            },
+            {
+                "value": "animal_sighting",
+                "display": "Animal Sighting",
+                "fields": [
+                    {"key": "species", "label": "Species", "type": "select", "options": ["a"]}
+                ],
+            },
+        ],
+    }
+    errors = _errors_for(data)
+    assert any("collides with" in e for e in errors)
 
 
 def test_field_keys_accept_er_charset():

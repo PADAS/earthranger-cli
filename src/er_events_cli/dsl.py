@@ -156,7 +156,12 @@ def _check_choice_field_name_collisions(
     schema_gen.choice_field_name; ER's Choice.field column is varchar(40), so long
     names are hash-compressed). Two distinct fields anywhere in the spec can still
     produce the same name; that silently corrupts the server's choice set on apply,
-    so it's rejected here rather than at apply time.
+    so it's rejected here rather than at apply time — UNLESS the two fields
+    declare identical options, in which case sharing is presumably intentional
+    (an explicit choices_field naming another field's derived name, or two
+    explicit choices_field values naming the same set) and is allowed. Two
+    *implicit* (derived) names colliding is always rejected regardless of
+    options: that shape only arises by accident, never on purpose.
     """
     from .schema_gen import effective_choice_field  # local: schema_gen imports from dsl
 
@@ -174,22 +179,24 @@ def _check_choice_field_name_collisions(
                 seen[name] = (path, explicit, f.options or [])
                 continue
             first_path, first_explicit, first_options = first
-            if explicit and first_explicit:
-                # Intentional sharing of one Choice set is fine only when both
-                # sides carry the same options; otherwise apply would see-saw
-                # the shared set (each apply deactivating the other's options).
-                if (f.options or []) != first_options:
-                    errors.append(
-                        f"{path}: choices_field {name!r} is shared with {first_path} "
-                        "but the two fields declare different options; shared choice "
-                        "sets must declare identical options"
-                    )
+            if not explicit and not first_explicit:
+                # Both names were derived, not chosen — an accidental
+                # derivation collision, not intentional sharing.
+                errors.append(
+                    f"{path}: choice field name {name!r} collides with {first_path} "
+                    "(choice-list field names are derived from '<event_type>_<field_key>' "
+                    "and must be unique across the spec)"
+                )
                 continue
-            errors.append(
-                f"{path}: choice field name {name!r} collides with {first_path} "
-                "(choice-list field names are derived from '<event_type>_<field_key>' "
-                "and must be unique across the spec)"
-            )
+            # At least one side is explicit: sharing is fine only when both
+            # sides carry the same options; otherwise apply would see-saw the
+            # shared set (each apply deactivating the other's options).
+            if (f.options or []) != first_options:
+                errors.append(
+                    f"{path}: choice field name {name!r} is shared with {first_path} "
+                    "but the two fields declare different options; shared choice "
+                    "sets must declare identical options"
+                )
 
 
 def _parse_category(raw: object, errors: list[str]) -> CategorySpec:
@@ -442,8 +449,8 @@ def _parse_field(raw: object, path: str, errors: list[str]) -> FieldSpec:
 
 
 def _parse_options(raw: object, path: str, errors: list[str]) -> list[OptionSpec]:
-    if not isinstance(raw, list) or not raw:
-        errors.append(f"{path}: required non-empty list for select/multiselect")
+    if not isinstance(raw, list):
+        errors.append(f"{path}: required list for select/multiselect")
         return []
     out: list[OptionSpec] = []
     seen: set[str] = set()

@@ -105,8 +105,9 @@ auth login'`.
    in ER's UI, `er-events pull wildlife_monitoring -o spec.yaml`
    rewrites your spec from the live server; `apply --dry-run` should
    then report all `unchanged`. Constructs the DSL can't express
-   (collections, locations, multi-section layouts, hand-named choice
-   fields) are reported and refused unless you pass
+   (headers, conditional sections, non-positional section ids,
+   auto-generate schemas, inactive layout sections, pattern validation,
+   deprecated fields) are reported and refused unless you pass
    `--skip-unsupported`, which drops them and lists what was skipped in
    a comment at the top of the file.
 
@@ -121,6 +122,7 @@ auth login'`.
 | `list event-types [--category V]` | List event types |
 | `show event-type V` | Full v2 event-type JSON + its Choice records |
 | `pull CATEGORY [-o FILE] [--skip-unsupported]` | Reconstruct a DSL spec from the server (reverse of apply) |
+| `auth login/status/logout` | Cache/inspect/clear the token for the current `--server` |
 | `profile add/use/list/remove` | Named site profiles; `--profile NAME` on any command |
 
 ## Spec reference
@@ -138,7 +140,9 @@ Validation" (`url` is sent as JSON Schema `uri`).
 
 Options are `{value, display}` mappings or bare strings
 (`lion` → value `lion`, display `Lion`); option values are free text
-(ER stores them as-is). Category and event-type values must match
+(ER stores them as-is). `options: []` is valid — it deactivates every
+option on that field (an all-inactive choice set pulls back to
+exactly this). Category and event-type values must match
 `[a-z0-9_]+` (they appear in URLs); field keys follow ER's own rule,
 `[a-zA-Z0-9_-]+`.
 
