@@ -307,3 +307,35 @@ def test_pull_single_default_section_still_emits_flat_form():
     for et in result.spec["event_types"]:
         assert "sections" not in et
         assert "fields" in et
+
+
+def test_pull_fieldless_collection_round_trips():
+    fake = _server_from_spec(SPEC_DATA)
+    fake.event_types.append(
+        {
+            "id": "id-ic",
+            "value": "incident_collection",
+            "display": "Incident",
+            "category": {"value": "wm"},
+            "is_active": True,
+            "is_collection": True,
+            "icon": None,
+            "schema": {
+                "json": {
+                    "$schema": "https://json-schema.org/draft/2020-12/schema",
+                    "type": "object",
+                    "unevaluatedProperties": False,
+                    "properties": {},
+                    "required": [],
+                },
+                "ui": {"fields": {}, "headers": {}, "order": [], "sections": {}},
+            },
+        }
+    )
+    result = pull_category(fake, "wm")
+    assert result.unsupported == []
+    pulled_et = next(t for t in result.spec["event_types"] if t["value"] == "incident_collection")
+    assert pulled_et["is_collection"] is True
+    assert pulled_et["fields"] == []
+    records = apply_spec(fake, parse_spec(result.spec))
+    assert {r.action for r in records} == {"unchanged"}

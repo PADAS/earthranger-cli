@@ -100,6 +100,7 @@ class EventTypeSpec:
     required: list[str] = field(default_factory=list)
     is_active: bool = True
     icon_id: str | None = None
+    is_collection: bool = False
     layout: LayoutSpec = field(default_factory=LayoutSpec)
     sections: list[SectionSpec] | None = None
 
@@ -232,9 +233,9 @@ def _parse_event_type(raw: object, path: str, errors: list[str]) -> EventTypeSpe
         fields = [f for sec in sections for f in sec.fields]
     else:
         fields_raw = raw.get("fields")
-        if not isinstance(fields_raw, list) or not fields_raw:
+        if not isinstance(fields_raw, list):
             errors.append(f"{path}.fields: at least one field is required")
-        else:
+        elif fields_raw:
             seen_keys: set[str] = set()
             for j, f_raw in enumerate(fields_raw):
                 f = _parse_field(f_raw, f"{path}.fields[{j}]", errors)
@@ -257,6 +258,10 @@ def _parse_event_type(raw: object, path: str, errors: list[str]) -> EventTypeSpe
     if not isinstance(is_active, bool):
         errors.append(f"{path}.is_active: must be true or false")
         is_active = True
+    is_collection = raw.get("is_collection", False)
+    if not isinstance(is_collection, bool):
+        errors.append(f"{path}.is_collection: must be true or false")
+        is_collection = False
     icon_id = raw.get("icon_id")
     if icon_id is not None and not isinstance(icon_id, str):
         errors.append(f"{path}.icon_id: must be a string")
@@ -273,6 +278,7 @@ def _parse_event_type(raw: object, path: str, errors: list[str]) -> EventTypeSpe
         required=required,
         is_active=is_active,
         icon_id=icon_id,
+        is_collection=is_collection,
         layout=layout,
         sections=sections,
     )

@@ -117,7 +117,10 @@ def build_schema(et: EventTypeSpec) -> dict:
     ui_fields: dict[str, dict] = {}
     sections: dict[str, dict] = {}
     order: list[str] = []
-    for idx, sec in enumerate(et.sections or [], start=1):
+    # a field-less event type (e.g. an incident collection) has NO sections at
+    # all on ER, so the empty sugar section is skipped rather than emitted
+    real_sections = [sec for sec in (et.sections or []) if sec.fields]
+    for idx, sec in enumerate(real_sections, start=1):
         sid = f"section-{idx}"
         order.append(sid)
         left: list[dict] = []
@@ -165,4 +168,6 @@ def build_event_type_payload(et: EventTypeSpec, category_value: str) -> dict:
         # ER's v2 API treats icon_id as read-only (a property derived from the
         # EventType.icon model field); "icon" is the writable field.
         payload["icon"] = et.icon_id
+    if et.is_collection:
+        payload["is_collection"] = True
     return payload

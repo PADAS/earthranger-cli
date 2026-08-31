@@ -598,3 +598,31 @@ def test_sections_validation():
     data["event_types"][0]["sections"][0]["fields"][0]["column"] = "right"  # 1-col section
     errors = _errors_for(data)
     assert any("'right' requires" in e and "columns: 2" in e for e in errors)
+
+
+def test_explicit_empty_fields_and_is_collection():
+    spec = parse_spec(
+        {
+            "category": {"value": "c1", "display": "C1"},
+            "event_types": [
+                {
+                    "value": "incident_collection",
+                    "display": "Incident",
+                    "is_collection": True,
+                    "fields": [],
+                }
+            ],
+        }
+    )
+    et = spec.event_types[0]
+    assert et.is_collection is True
+    assert et.fields == []
+
+    # a MISSING fields key (with no sections) is still an error
+    errors = _errors_for(
+        {
+            "category": {"value": "c1", "display": "C1"},
+            "event_types": [{"value": "t1", "display": "T1"}],
+        }
+    )
+    assert "event_types[0].fields: at least one field is required" in errors

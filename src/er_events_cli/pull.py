@@ -96,6 +96,18 @@ def _invert_event_type(client, et: dict, unsupported: list[str]) -> dict | None:
     properties = json_block.get("properties") or {}
     ui_fields = ui_block.get("fields") or {}
 
+    if not properties and not (ui_block.get("sections") or {}):
+        # a form-less event type (e.g. an incident collection): no fields at all
+        out: dict = {"value": value, "display": et.get("display")}
+        if et.get("is_active", True) is False:
+            out["is_active"] = False
+        if et.get("icon"):
+            out["icon_id"] = et["icon"]
+        if et.get("is_collection"):
+            out["is_collection"] = True
+        out["fields"] = []
+        return out
+
     sections_result = _read_sections(json_block, ui_block, properties, ui_fields)
     if isinstance(sections_result, str):
         unsupported.append(f"event type {value!r}: {sections_result}; skipped entirely")
@@ -138,6 +150,8 @@ def _invert_event_type(client, et: dict, unsupported: list[str]) -> dict | None:
         out["is_active"] = False
     if et.get("icon"):
         out["icon_id"] = et["icon"]
+    if et.get("is_collection"):
+        out["is_collection"] = True
     if len(out_sections) == 1:
         single = out_sections[0]
         layout = {

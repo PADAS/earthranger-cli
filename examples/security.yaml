@@ -1,5 +1,4 @@
 # Skipped constructs the DSL cannot express:
-#   - event type 'entry_alert': layout uses 2 sections; skipped entirely
 #   - event type 'incident_collection': layout uses 0 sections; skipped entirely
 category:
   value: security
@@ -334,6 +333,38 @@ event_types:
   required:
   - confiscationrep_itemsconfiscated
   - confiscationrep_numberofitems
+- value: entry_alert
+  display: Entry Alert
+  sections:
+  - label: ''
+    fields:
+    - key: link
+      label: Skylight Link
+      type: url
+  - label: ''
+    columns: 2
+    fields:
+    - key: vessel1_name
+      label: Name
+      type: string
+    - key: vessel1_MMSI
+      label: MMSI
+      type: number
+    - key: vessel1_IMO
+      label: IMO
+      type: number
+    - key: vessel1_flag
+      label: Flag
+      type: string
+      column: right
+    - key: vessel1_type
+      label: Type
+      type: string
+      column: right
+    - key: vessel1_length
+      label: Length
+      type: string
+      column: right
 - value: illegal_fishing_sighting
   display: Illegal Fishing Sighting
   icon_id: fishing_vessel_local_rep

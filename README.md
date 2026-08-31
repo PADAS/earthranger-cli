@@ -166,6 +166,10 @@ one per form section, in order:
       fields: [...]
 ```
 
+A form-less event type (e.g. an incident collection container) is
+declared with an explicit `fields: []` and, for collections,
+`is_collection: true`.
+
 Per event type: `value`, `display`, `fields` (required);
 `required`, `is_active`, `icon_id` (optional; sent to ER as its writable
 `icon` field — the API's own `icon_id` is a derived, read-only property).

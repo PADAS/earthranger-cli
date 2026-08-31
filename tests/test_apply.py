@@ -203,3 +203,12 @@ def test_server_echo_noise_still_compares_unchanged():
     records = apply_spec(fake, _spec())
     assert {r.action for r in records} == {"unchanged"}
     assert fake.writes() == []
+
+
+def test_is_collection_change_triggers_update():
+    fake = _existing_state()
+    spec = _spec()
+    spec.event_types[0].is_collection = True
+    apply_spec(fake, spec)
+    patched = next(c for c in fake.calls if c[0] == "patch_event_type")
+    assert patched[1]["is_collection"] is True

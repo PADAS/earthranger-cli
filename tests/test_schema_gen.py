@@ -281,3 +281,16 @@ def test_multi_section_envelope():
     assert ui["fields"]["at"]["parent"] == "section-1"
     assert ui["fields"]["lon"]["parent"] == "section-2"
     assert set(schema["json"]["properties"]) == {"at", "lat", "lon"}
+
+
+def test_fieldless_collection_payload():
+    et = EventTypeSpec(value="ic", display="Incident", fields=[], is_collection=True)
+    payload = build_event_type_payload(et, "security")
+    assert payload["is_collection"] is True
+    assert payload["schema"]["json"]["properties"] == {}
+    assert payload["schema"]["ui"] == {"fields": {}, "headers": {}, "order": [], "sections": {}}
+
+
+def test_non_collection_payload_omits_is_collection():
+    payload = build_event_type_payload(_event_type(), "c")
+    assert "is_collection" not in payload

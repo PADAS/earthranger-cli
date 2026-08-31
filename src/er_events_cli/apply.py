@@ -194,6 +194,8 @@ def _event_type_differs(payload: dict, existing: dict) -> bool:
         return True
     if "icon" in payload and payload["icon"] != existing.get("icon"):
         return True
+    if payload.get("is_collection", False) != existing.get("is_collection", False):
+        return True
     return _canonical_schema(payload["schema"]) != _canonical_schema(existing.get("schema") or {})
 
 
