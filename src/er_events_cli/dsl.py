@@ -49,6 +49,25 @@ class FieldSpec:
     options: list[OptionSpec] | None = None
     min: float | None = None
     max: float | None = None
+    hint: str | None = None  # ER's "Hint" -> ui placeholder (max 32 chars)
+    description: str | None = None
+    default: object = None  # None means "not set" (False/"" are real defaults)
+    format: str | None = None  # string fields only: url | email | uuid
+
+
+# Types whose ER UI variant has a placeholder slot (boolean/date/datetime don't).
+HINT_TYPES = {"string", "textarea", "url", "integer", "number", "select", "multiselect"}
+# DSL format values for string fields; wire values live in schema_gen.
+FORMAT_VALUES = {"url", "email", "uuid"}
+# Types whose ER json variant accepts a default, and the Python type it must be.
+_DEFAULT_RULES = {
+    "string": (str, "a string"),
+    "textarea": (str, "a string"),
+    "url": (str, "a string"),
+    "integer": ((int, float), "a number"),
+    "number": ((int, float), "a number"),
+    "boolean": (bool, "true or false"),
+}
 
 
 @dataclass
@@ -223,7 +242,58 @@ def _parse_field(raw: object, path: str, errors: list[str]) -> FieldSpec:
                 errors.append(f"{path}.{name}: must be a number")
     if ftype not in NUMERIC_TYPES:
         minimum = maximum = None
-    return FieldSpec(key=key, label=label, type=ftype, options=options, min=minimum, max=maximum)
+
+    hint = raw.get("hint")
+    if hint is not None:
+        if ftype not in HINT_TYPES:
+            errors.append(f"{path}.hint: not allowed for type {ftype!r}")
+            hint = None
+        elif not isinstance(hint, str):
+            errors.append(f"{path}.hint: must be a string")
+            hint = None
+        elif len(hint) > 32:
+            errors.append(f"{path}.hint: must be at most 32 characters")
+
+    description = raw.get("description")
+    if description is not None and not isinstance(description, str):
+        errors.append(f"{path}.description: must be a string")
+        description = None
+
+    default = raw.get("default")
+    if default is not None:
+        rule = _DEFAULT_RULES.get(ftype)
+        if rule is None:
+            errors.append(f"{path}.default: not allowed for type {ftype!r}")
+            default = None
+        else:
+            expected, label_ = rule
+            wrong_bool = expected is not bool and isinstance(default, bool)
+            if wrong_bool or not isinstance(default, expected):
+                errors.append(f"{path}.default: must be {label_} for type {ftype!r}")
+                default = None
+
+    fmt = raw.get("format")
+    if fmt is not None:
+        if ftype != "string":
+            errors.append(f"{path}.format: only allowed on string fields")
+            fmt = None
+        elif fmt not in FORMAT_VALUES:
+            supported = ", ".join(sorted(FORMAT_VALUES))
+            errors.append(f"{path}.format: unsupported format {fmt!r} (supported: {supported})")
+            fmt = None
+
+    return FieldSpec(
+        key=key,
+        label=label,
+        type=ftype,
+        options=options,
+        min=minimum,
+        max=maximum,
+        hint=hint,
+        description=description,
+        default=default,
+        format=fmt,
+    )
 
 
 def _parse_options(raw: object, path: str, errors: list[str]) -> list[OptionSpec]:

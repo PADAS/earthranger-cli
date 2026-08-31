@@ -105,6 +105,12 @@ Field types: `string`, `textarea`, `integer` (advisory — ER stores it as
 optional `min`/`max`), `boolean`, `date`, `datetime`, `url`, `select`,
 `multiselect` (both take `options`).
 
+Every field also takes optional `hint` (ER's placeholder, max 32 chars;
+not on `boolean`/`date`/`datetime`), `description`, and `default`
+(`string`/`textarea`/`url`/`integer`/`number`/`boolean` only). `string`
+fields take `format: url | email | uuid` — the builder's "Format
+Validation" (`url` is sent as JSON Schema `uri`).
+
 Options are `{value, display}` mappings or bare strings
 (`lion` → value `lion`, display `Lion`). Slugs — category value, event
 type values, field keys, option values — must match `[a-z0-9_]+`.

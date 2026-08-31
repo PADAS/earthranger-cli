@@ -53,15 +53,28 @@ def choice_field_name(event_type_value: str, field_key: str) -> str:
     return f"{full[: FIELD_NAME_LIMIT - 9]}_{digest}"
 
 
+# DSL format values -> JSON Schema format strings (ER's builder calls uri "URL").
+_FORMAT_WIRE = {"url": "uri", "email": "email", "uuid": "uuid"}
+
+
 def build_property_pair(field: FieldSpec, event_type_value: str) -> tuple[dict, dict]:
     if field.type in _SCALAR_JSON:
         # ER's meta-schema requires "deprecated" on every json property.
         json_prop = {**_SCALAR_JSON[field.type], "title": field.label, "deprecated": False}
+        if field.format:
+            json_prop["format"] = _FORMAT_WIRE[field.format]
         if field.min is not None:
             json_prop["minimum"] = field.min
         if field.max is not None:
             json_prop["maximum"] = field.max
-        return json_prop, {**_SCALAR_UI[field.type], "parent": SECTION_ID}
+        if field.description is not None:
+            json_prop["description"] = field.description
+        if field.default is not None:
+            json_prop["default"] = field.default
+        ui_field = {**_SCALAR_UI[field.type], "parent": SECTION_ID}
+        if field.hint:
+            ui_field["placeholder"] = field.hint
+        return json_prop, ui_field
     return _build_choice_pair(field, event_type_value)
 
 
@@ -71,6 +84,8 @@ def _build_choice_pair(field: FieldSpec, event_type_value: str) -> tuple[dict, d
     # ER's meta-schema rejects extra UI keys (the legacy builder-only "choices"
     # block included); the json $ref is the sole linkage to the Choice records.
     ui_field = {"type": "CHOICE_LIST", "inputType": "DROPDOWN", "parent": SECTION_ID}
+    if field.hint:
+        ui_field["placeholder"] = field.hint
     if field.type == "multiselect":
         json_prop = {
             "type": "array",
@@ -86,6 +101,8 @@ def _build_choice_pair(field: FieldSpec, event_type_value: str) -> tuple[dict, d
             "deprecated": False,
             "anyOf": [{"$ref": ref}],
         }
+    if field.description is not None:
+        json_prop["description"] = field.description
     return json_prop, ui_field
 
 

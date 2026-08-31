@@ -297,3 +297,81 @@ def test_url_type_accepted():
         }
     )
     assert spec.event_types[0].fields[0].type == "url"
+
+
+def test_extra_field_properties_parse():
+    spec = parse_spec(
+        _spec_with_field(
+            {
+                "key": "link",
+                "label": "Link",
+                "type": "string",
+                "format": "url",
+                "hint": "https://...",
+                "description": "A link",
+                "default": "https://example.org",
+            }
+        )
+    )
+    f = spec.event_types[0].fields[0]
+    assert f.format == "url"
+    assert f.hint == "https://..."
+    assert f.description == "A link"
+    assert f.default == "https://example.org"
+
+
+def test_boolean_default_false_is_kept():
+    spec = parse_spec(
+        _spec_with_field({"key": "b", "label": "B", "type": "boolean", "default": False})
+    )
+    assert spec.event_types[0].fields[0].default is False
+
+
+def test_hint_rules():
+    errors = _errors_for(
+        _spec_with_field({"key": "b", "label": "B", "type": "boolean", "hint": "x"})
+    )
+    assert "event_types[0].fields[0].hint: not allowed for type 'boolean'" in errors
+    errors = _errors_for(
+        _spec_with_field({"key": "s", "label": "S", "type": "string", "hint": "x" * 33})
+    )
+    assert "event_types[0].fields[0].hint: must be at most 32 characters" in errors
+
+
+def test_default_type_rules():
+    errors = _errors_for(
+        _spec_with_field({"key": "s", "label": "S", "type": "string", "default": 3})
+    )
+    assert "event_types[0].fields[0].default: must be a string for type 'string'" in errors
+    errors = _errors_for(
+        _spec_with_field({"key": "c", "label": "C", "type": "integer", "default": "many"})
+    )
+    assert "event_types[0].fields[0].default: must be a number for type 'integer'" in errors
+    errors = _errors_for(
+        _spec_with_field({"key": "b", "label": "B", "type": "boolean", "default": "yes"})
+    )
+    assert "event_types[0].fields[0].default: must be true or false for type 'boolean'" in errors
+    errors = _errors_for(
+        _spec_with_field({"key": "d", "label": "D", "type": "date", "default": "2026-01-01"})
+    )
+    assert "event_types[0].fields[0].default: not allowed for type 'date'" in errors
+    errors = _errors_for(
+        _spec_with_field(
+            {"key": "x", "label": "X", "type": "select", "options": ["a"], "default": "a"}
+        )
+    )
+    assert "event_types[0].fields[0].default: not allowed for type 'select'" in errors
+
+
+def test_format_rules():
+    errors = _errors_for(
+        _spec_with_field({"key": "n", "label": "N", "type": "textarea", "format": "url"})
+    )
+    assert "event_types[0].fields[0].format: only allowed on string fields" in errors
+    errors = _errors_for(
+        _spec_with_field({"key": "s", "label": "S", "type": "string", "format": "phone"})
+    )
+    assert (
+        "event_types[0].fields[0].format: unsupported format 'phone' "
+        "(supported: email, url, uuid)" in errors
+    )

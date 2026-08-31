@@ -171,3 +171,49 @@ def test_build_event_type_payload():
     payload = build_event_type_payload(et, "c")
     assert payload["icon"] == "mammal_rep"
     assert "icon_id" not in payload
+
+
+def test_extra_properties_on_string_field():
+    json_prop, ui = build_property_pair(
+        FieldSpec(
+            key="link",
+            label="Link",
+            type="string",
+            format="url",
+            hint="https://...",
+            description="A link",
+            default="https://example.org",
+        ),
+        "t1",
+    )
+    assert json_prop == {
+        "type": "string",
+        "title": "Link",
+        "deprecated": False,
+        "format": "uri",  # DSL "url" maps to JSON Schema "uri"
+        "description": "A link",
+        "default": "https://example.org",
+    }
+    assert ui == {
+        "type": "TEXT",
+        "inputType": "SHORT_TEXT",
+        "parent": "section-1",
+        "placeholder": "https://...",
+    }
+
+
+def test_boolean_default_false_emitted():
+    json_prop, _ = build_property_pair(
+        FieldSpec(key="b", label="B", type="boolean", default=False), "t1"
+    )
+    assert json_prop["default"] is False
+
+
+def test_select_hint_and_description():
+    f = _select_field()
+    f.hint = "pick one"
+    f.description = "The species"
+    json_prop, ui = build_property_pair(f, "t1")
+    assert json_prop["description"] == "The species"
+    assert "default" not in json_prop
+    assert ui["placeholder"] == "pick one"

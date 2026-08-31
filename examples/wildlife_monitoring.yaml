@@ -25,6 +25,7 @@ event_types:
         label: Number of animals
         type: integer
         min: 0
+        default: 1               # ER's "Default Input"
       - key: adult_ratio
         label: Adult ratio
         type: number
@@ -49,6 +50,8 @@ event_types:
       - key: photo_link
         label: Photo link
         type: url                # string with format: uri
+        hint: https://...        # ER's "Hint" (placeholder), max 32 chars
+        description: Link to the camera-trap image
       - key: notes
         label: Notes
         type: textarea
