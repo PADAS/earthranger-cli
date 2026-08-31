@@ -168,8 +168,12 @@ the CHOICE_LIST ui field carries the choices block
 "eventTypeCategories": [], "featureCategories": [], "myDataType": "",
 "subjectGroups": [], "subjectSubtypes": []}`.
 
-`choice_field = f"{event_type_value}_{field_key}"`, truncated to 100
-characters (ER varchar limits).
+`choice_field = f"{event_type_value}_{field_key}"` when that fits ER's
+varchar(40) `Choice.field` column; longer names are compressed to exactly
+40 chars — a 31-char readable prefix plus an 8-char sha1 digest of the
+full name — so distinct long fields stay distinct and re-applies derive
+the same name deterministically. (Choice `value`/`display` have the
+larger varchar(100) limit.)
 
 ### The v2 envelope
 

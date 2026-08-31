@@ -97,9 +97,10 @@ def parse_spec(data: object) -> Spec:
 def _check_choice_field_name_collisions(
     event_types: list[EventTypeSpec], errors: list[str]
 ) -> None:
-    """Choice-list field names are '<event_type>_<field_key>' truncated to VARCHAR_LIMIT
-    chars (see schema_gen.choice_field_name). Two distinct fields anywhere in the spec
-    can produce the same name; that silently corrupts the server's choice set on apply,
+    """Choice-list field names are derived from '<event_type>_<field_key>' (see
+    schema_gen.choice_field_name; ER's Choice.field column is varchar(40), so long
+    names are hash-compressed). Two distinct fields anywhere in the spec can still
+    produce the same name; that silently corrupts the server's choice set on apply,
     so it's rejected here rather than at apply time.
     """
     from .schema_gen import choice_field_name  # local import: schema_gen imports from dsl
@@ -115,8 +116,8 @@ def _check_choice_field_name_collisions(
             if first is not None:
                 errors.append(
                     f"{path}: choice field name {name!r} collides with {first} "
-                    "(choice-list field names are '<event_type>_<field_key>' truncated to "
-                    "100 chars and must be unique across the spec)"
+                    "(choice-list field names are derived from '<event_type>_<field_key>' "
+                    "and must be unique across the spec)"
                 )
             else:
                 seen[name] = path

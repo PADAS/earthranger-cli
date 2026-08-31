@@ -7,11 +7,27 @@ from er_events_cli.schema_gen import (
 )
 
 
-def test_choice_field_name_joins_and_truncates_to_100():
+def test_choice_field_name_fits_er_varchar_40():
+    # ER's Choice.field column is varchar(40) (das/choices/models.py); a longer
+    # name 500s on POST: "value too long for type character varying(40)".
+    name = choice_field_name("addaxai_connect_detection", "addaxai_connect_species")
+    assert len(name) <= 40
+
+
+def test_choice_field_name_short_names_unchanged():
     assert choice_field_name("animal_sighting", "species") == "animal_sighting_species"
-    long = choice_field_name("a" * 80, "b" * 80)
-    assert len(long) == 100
-    assert long == "a" * 80 + "_" + "b" * 19
+
+
+def test_choice_field_name_long_names_deterministic_and_distinct():
+    a1 = choice_field_name("addaxai_connect_detection", "addaxai_connect_species")
+    a2 = choice_field_name("addaxai_connect_detection", "addaxai_connect_species")
+    assert a1 == a2
+    assert a1.startswith("addaxai_connect_detection_adda")
+    # names that differ only past the truncation point stay distinct
+    b = choice_field_name("a" * 30, "b" * 30)
+    c = choice_field_name("a" * 30, "b" * 29 + "c")
+    assert b != c
+    assert len(b) == 40 and len(c) == 40
 
 
 def test_string_field():

@@ -188,16 +188,15 @@ def test_choice_field_name_collision_across_event_types_rejected():
     errors = _errors_for(data)
     assert (
         "event_types[1].fields[0].key: choice field name 'animal_sighting_species' collides "
-        "with event_types[0].fields[0].key (choice-list field names are "
-        "'<event_type>_<field_key>' truncated to 100 chars and must be unique across the spec)"
-        in errors
+        "with event_types[0].fields[0].key (choice-list field names are derived from "
+        "'<event_type>_<field_key>' and must be unique across the spec)" in errors
     )
 
 
-def test_choice_field_name_truncation_collision_rejected():
+def test_long_keys_differing_past_truncation_stay_distinct():
+    # With hash-compressed names (ER's field column is varchar(40)), keys that
+    # differ only past the readable prefix derive distinct names and parse fine.
     common_prefix = "a" * 97
-    long_key_a = common_prefix + "1"
-    long_key_b = common_prefix + "2"
     data = {
         "category": {"value": "c1", "display": "C1"},
         "event_types": [
@@ -205,14 +204,24 @@ def test_choice_field_name_truncation_collision_rejected():
                 "value": "t1",
                 "display": "T1",
                 "fields": [
-                    {"key": long_key_a, "label": "A", "type": "select", "options": ["a"]},
-                    {"key": long_key_b, "label": "B", "type": "select", "options": ["a"]},
+                    {
+                        "key": common_prefix + "1",
+                        "label": "A",
+                        "type": "select",
+                        "options": ["a"],
+                    },
+                    {
+                        "key": common_prefix + "2",
+                        "label": "B",
+                        "type": "select",
+                        "options": ["a"],
+                    },
                 ],
             },
         ],
     }
-    errors = _errors_for(data)
-    assert any("collides with event_types[0].fields[0].key" in e for e in errors)
+    spec = parse_spec(data)
+    assert len(spec.event_types[0].fields) == 2
 
 
 def test_distinct_choice_fields_still_parse():

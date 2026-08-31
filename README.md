@@ -116,6 +116,7 @@ ambiguous.
 ER v2 event types store a `{json, ui}` schema envelope. Dropdown fields
 don't embed their options; they reference shared **Choice** records via
 `$ref: /api/v2.0/schemas/choices.json?field=<name>`. This tool derives
-`<name>` as `<event_type_value>_<field_key>` and manages those records
+`<name>` as `<event_type_value>_<field_key>` (compressed with a short
+hash suffix when longer than ER's 40-char field limit) and manages those records
 for you — creating, re-labelling, deactivating, and reactivating options
 to mirror your spec.

@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
+import hashlib
+
 from .dsl import EventTypeSpec, FieldSpec
 
 SECTION_ID = "section-1"
 VARCHAR_LIMIT = 100
+# ER's Choice.field column is varchar(40) — smaller than the varchar(100)
+# on value/display (das/choices/models.py).
+FIELD_NAME_LIMIT = 40
 _REF_TEMPLATE = "/api/v2.0/schemas/choices.json?field={field}"
 
 _SCALAR_JSON = {
@@ -32,7 +37,18 @@ _SCALAR_UI = {
 
 
 def choice_field_name(event_type_value: str, field_key: str) -> str:
-    return f"{event_type_value}_{field_key}"[:VARCHAR_LIMIT]
+    """Derive the Choice.field name for a select/multiselect field.
+
+    Names that fit ER's varchar(40) field column are used as-is (readable).
+    Longer ones keep a 31-char readable prefix plus an 8-char digest of the
+    full name, so distinct long fields stay distinct and re-applies derive
+    the same name every time.
+    """
+    full = f"{event_type_value}_{field_key}"
+    if len(full) <= FIELD_NAME_LIMIT:
+        return full
+    digest = hashlib.sha1(full.encode("utf-8")).hexdigest()[:8]
+    return f"{full[: FIELD_NAME_LIMIT - 9]}_{digest}"
 
 
 def build_property_pair(field: FieldSpec, event_type_value: str) -> tuple[dict, dict]:
