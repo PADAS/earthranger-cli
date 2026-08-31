@@ -1,35 +1,6 @@
 # Skipped constructs the DSL cannot express:
-#   - event type 'animal_control_rep', field 'animalcontrolrep_species': choice field name 'animalcontrolrep_species' does not match the derived 'animal_control_rep_animalcontro_c1b4ae86'; applying would rename the choice set; skipped
-#   - event type 'arrest_rep', field 'arrestrep_nationality': choice field name 'arrestrep_nationality' does not match the derived 'arrest_rep_arrestrep_nationality'; applying would rename the choice set; skipped
-#   - event type 'arrest_rep', field 'arrestrep_reaonforarrest': choice field name 'arrestrep_reasonforarrest' does not match the derived 'arrest_rep_arrestrep_reaonforarrest'; applying would rename the choice set; skipped
-#   - event type 'carcass_rep', field 'carcassrep_species': choice field name 'carcassrep_species' does not match the derived 'carcass_rep_carcassrep_species'; applying would rename the choice set; skipped
-#   - event type 'carcass_rep', field 'carcassrep_ageofanimal': choice field name 'carcassrep_ageofanimal' does not match the derived 'carcass_rep_carcassrep_ageofanimal'; applying would rename the choice set; skipped
-#   - event type 'carcass_rep', field 'carcassrep_trophystatus': choice field name 'carcassrep_trophystatus' does not match the derived 'carcass_rep_carcassrep_trophystatus'; applying would rename the choice set; skipped
-#   - event type 'carcass_rep', field 'carcassrep_sex': choice field name 'carcassrep_sex' does not match the derived 'carcass_rep_carcassrep_sex'; applying would rename the choice set; skipped
-#   - event type 'carcass_rep', field 'carcassrep_ageofcarcass': choice field name 'carcassrep_ageofcarcass' does not match the derived 'carcass_rep_carcassrep_ageofcarcass'; applying would rename the choice set; skipped
-#   - event type 'carcass_rep', field 'carcassrep_causeofdeath': choice field name 'carcassrep_causeofdeath' does not match the derived 'carcass_rep_carcassrep_causeofdeath'; applying would rename the choice set; skipped
-#   - event type 'carcass_rep': no fields could be expressed; skipped entirely
-#   - event type 'confiscation_rep', field 'confiscationrep_itemsconfiscated': choice field name 'confiscationrep_itemsconfiscated' does not match the derived 'confiscation_rep_confiscationre_8e2c3f92'; applying would rename the choice set; skipped
 #   - event type 'entry_alert': layout uses 2 sections; skipped entirely
-#   - event type 'illegal_fishing_sighting', field 'vessel_size': choice field name 'vessel_size' does not match the derived 'illegal_fishing_sighting_vessel_size'; applying would rename the choice set; skipped
-#   - event type 'illegal_fishing_sighting', field 'action': choice field name 'illegal_fishing_action' does not match the derived 'illegal_fishing_sighting_action'; applying would rename the choice set; skipped
 #   - event type 'incident_collection': layout uses 0 sections; skipped entirely
-#   - event type 'light_rep', field 'lightrep_whatdetected': choice field name 'lightrep_whatdetected' does not match the derived 'light_rep_lightrep_whatdetected'; applying would rename the choice set; skipped
-#   - event type 'medevac_rep', field 'medevacrep_security': choice field name 'medevacrep_security' does not match the derived 'medevac_rep_medevacrep_security'; applying would rename the choice set; skipped
-#   - event type 'medevac_rep', field 'medevacrep_specialequipment': choice field name 'medevacrep_specialequipment' does not match the derived 'medevac_rep_medevacrep_specialequipment'; applying would rename the choice set; skipped
-#   - event type 'contact_rep', field 'contactrep_patrolactivity': choice field name 'contactrep_patrolactivity' does not match the derived 'contact_rep_contactrep_patrolactivity'; applying would rename the choice set; skipped
-#   - event type 'contact_rep', field 'contactrep_whoinitiatedcontact': choice field name 'contactrep_whoinitiatedcontact' does not match the derived 'contact_rep_contactrep_whoiniti_c4a38dd0'; applying would rename the choice set; skipped
-#   - event type 'poacher_camp_rep', field 'poachercamprep_status': choice field name 'poachercamprep_status' does not match the derived 'poacher_camp_rep_poachercamprep_status'; applying would rename the choice set; skipped
-#   - event type 'ranger_shot_rep', field 'rangershotrep_typeofrounds': choice field name 'rangershotrep_typeofrounds' does not match the derived 'ranger_shot_rep_rangershotrep_t_843ff207'; applying would rename the choice set; skipped
-#   - event type 'ranger_shot_rep', field 'rangershotrep_target': choice field name 'rangershotrep_target' does not match the derived 'ranger_shot_rep_rangershotrep_target'; applying would rename the choice set; skipped
-#   - event type 'shot_rep', field 'shotrep_typeofshots': choice field name 'shotrep_typeofshot' does not match the derived 'shot_rep_shotrep_typeofshots'; applying would rename the choice set; skipped
-#   - event type 'shot_rep', field 'shotrep_estimatedcaliber': choice field name 'shotrep_estimatedcaliber' does not match the derived 'shot_rep_shotrep_estimatedcaliber'; applying would rename the choice set; skipped
-#   - event type 'snare_rep', field 'snarerep_action': choice field name 'snarerep_action' does not match the derived 'snare_rep_snarerep_action'; applying would rename the choice set; skipped
-#   - event type 'snare_rep', field 'snarerep_status': choice field name 'snarerep_status' does not match the derived 'snare_rep_snarerep_status'; applying would rename the choice set; skipped
-#   - event type 'spoor_rep', field 'spoorrep_type': choice field name 'spoorrep_type' does not match the derived 'spoor_rep_spoorrep_type'; applying would rename the choice set; skipped
-#   - event type 'spoor_rep', field 'spoorrep_age': choice field name 'spoorrep_age' does not match the derived 'spoor_rep_spoorrep_age'; applying would rename the choice set; skipped
-#   - event type 'traffic_rep', field 'trafficrep_sightingdescription': choice field name 'trafficrep_sightingdescription' does not match the derived 'traffic_rep_trafficrep_sighting_b14aaffa'; applying would rename the choice set; skipped
-#   - event type 'traffic_rep', field 'trafficrep_sightingactivity': choice field name 'trafficrep_sightingactivity' does not match the derived 'traffic_rep_trafficrep_sightingactivity'; applying would rename the choice set; skipped
 category:
   value: security
   display: Security
@@ -59,6 +30,24 @@ event_types:
     label: ''
     columns: 2
   fields:
+  - key: animalcontrolrep_species
+    label: Animal Species
+    type: select
+    choices_field: animalcontrolrep_species
+    options:
+    - baboon
+    - buffalo
+    - dog
+    - elephant
+    - hippo
+    - hyena
+    - leopard
+    - lion
+    - monkey
+    - warthog
+    - wildebeest
+    - zebra
+    - other
   - key: animalcontrolrep_reason
     label: Reason Animal Control Needed
     type: string
@@ -73,6 +62,7 @@ event_types:
     min: 0
     column: right
   required:
+  - animalcontrolrep_species
   - animalcontrolrep_numberanimals
 - value: arrest_rep
   display: Arrest
@@ -86,6 +76,43 @@ event_types:
   - key: arrestrep_dateofbirth
     label: Date of Birth
     type: datetime
+  - key: arrestrep_nationality
+    label: Nationality
+    type: select
+    choices_field: arrestrep_nationality
+    options:
+    - america
+    - angola
+    - botswana
+    - camaroon
+    - value: centralafricanrepublic
+      display: Central African Republic
+    - chad
+    - china
+    - value: congodrc
+      display: Congo (DRC)
+    - value: congobrazzaville
+      display: Congo (Brazzaville)
+    - ethiopia
+    - france
+    - gabon
+    - kenya
+    - malawi
+    - mozambique
+    - namibia
+    - rwanda
+    - somalia
+    - value: southafrica
+      display: South Africa
+    - value: sudansouth
+      display: Sudan (South)
+    - value: sudannorth
+      display: Sudan (North)
+    - tanzania
+    - uganda
+    - zambia
+    - zimbabwe
+    - other
   - key: arrestrep_timeofarrest
     label: Time of Arrest
     type: datetime
@@ -101,6 +128,36 @@ event_types:
     label: Village Name
     type: string
     column: right
+  - key: arrestrep_reaonforarrest
+    label: Reason for Arrest
+    type: select
+    choices_field: arrestrep_reasonforarrest
+    options:
+    - value: bushmeat
+      display: Bush Meat
+    - charcoal
+    - firearm
+    - fishing
+    - value: grazinglivestock
+      display: Grazing Livestock
+    - value: huntingdogs
+      display: Hunting Dogs
+    - ivory
+    - logging
+    - mining
+    - motorbike
+    - poaching
+    - value: resourceharvesting
+      display: Resource Harvesting
+    - value: rhinohorn
+      display: Rhino Horn
+    - snare
+    - speeding
+    - value: startingfires
+      display: Starting Fires
+    - tresspassing
+    - other
+    column: right
   - key: arrestrep_placeofarrest
     label: Place of Arrest
     type: string
@@ -111,6 +168,7 @@ event_types:
     column: right
   required:
   - arrestrep_name
+  - arrestrep_reaonforarrest
   - arrestrep_placeofarrest
 - value: cameratrap_rep
   display: Camera Trap
@@ -132,12 +190,134 @@ event_types:
     label: Detected
     type: string
     column: right
+- value: carcass_rep
+  display: Carcass
+  layout:
+    label: ''
+    columns: 2
+  fields:
+  - key: carcassrep_species
+    label: Species
+    type: select
+    choices_field: carcassrep_species
+    options:
+    - bongo
+    - buffalo
+    - cheetah
+    - chimpanzee
+    - crocodile
+    - eland
+    - elephant
+    - giraffe
+    - gorilla
+    - hippo
+    - hyena
+    - kob
+    - kudu
+    - lechwe
+    - leopard
+    - lion
+    - value: redriverhog
+      display: Red River Hog
+    - rhino
+    - sable
+    - shoebill
+    - topi
+    - tsessebe
+    - warthog
+    - waterbuck
+    - wildebeest
+    - value: wilddog
+      display: Wild Dog
+    - zebra
+    - other
+  - key: carcassrep_ageofanimal
+    label: Age of Animal
+    type: select
+    choices_field: carcassrep_ageofanimal
+    options:
+    - adult
+    - value: subadult
+      display: Sub-adult
+    - juvenile
+    - unknown
+  - key: carcassrep_trophystatus
+    label: Trophy Status
+    type: select
+    choices_field: carcassrep_trophystatus
+    options:
+    - intact
+    - removed
+    - value: naturallymissing
+      display: Naturally Missing
+  - key: carcassrep_sex
+    label: Sex of Animal
+    type: select
+    choices_field: carcassrep_sex
+    options:
+    - male
+    - female
+    - unknown
+    column: right
+  - key: carcassrep_ageofcarcass
+    label: Age of Carcass
+    type: select
+    choices_field: carcassrep_ageofcarcass
+    options:
+    - value: less_than_a_day
+      display: 1 Day or less
+    - value: within_a_week
+      display: Fresh (within a week)
+    - value: within_a_month
+      display: <1 Month
+    - value: more_than_a_month
+      display: <3 Months
+    - value: morethan3months
+      display: More than 3 months
+    column: right
+  - key: carcassrep_causeofdeath
+    label: Cause of Death
+    type: select
+    choices_field: carcassrep_causeofdeath
+    options:
+    - value: naturaldisease
+      display: Natural - Disease
+    - value: naturalfightinjury
+      display: Natural - Fight Injury
+    - value: naturaloldage
+      display: Natural - Old Age
+    - value: naturalpredation
+      display: Natural - Predation
+    - value: naturalother
+      display: Natural - Other
+    - value: unnaturalshot
+      display: Unnatural - Shot
+    - value: unnaturalsnare
+      display: Unnatural - Snare
+    - value: unnaturalpoisoned
+      display: Unnatural - Poisoned
+    - value: unnaturalother
+      display: Unnatural - Other
+    column: right
+  required:
+  - carcassrep_species
+  - carcassrep_ageofcarcass
 - value: confiscation_rep
   display: Confiscation
   layout:
     label: ''
     columns: 2
   fields:
+  - key: confiscationrep_itemsconfiscated
+    label: Items Confiscated
+    type: select
+    choices_field: confiscationrep_itemsconfiscated
+    options:
+    - trophies
+    - weapons
+    - value: bushmeat
+      display: Bush Beat
+    - other
   - key: confiscationrep_weightofitems
     label: Weight of Items (if appropriate)
     type: number
@@ -152,6 +332,7 @@ event_types:
     type: textarea
     column: right
   required:
+  - confiscationrep_itemsconfiscated
   - confiscationrep_numberofitems
 - value: illegal_fishing_sighting
   display: Illegal Fishing Sighting
@@ -168,6 +349,27 @@ event_types:
     label: Vessel Name
     type: string
     default: ''
+  - key: vessel_size
+    label: Vessel Size
+    type: select
+    choices_field: vessel_size
+    options:
+    - value: less_5_m
+      display: < 5m
+    - value: 5_to_15_m
+      display: 5 - 15m
+    - value: greater_15_m
+      display: '> 15m'
+    column: right
+  - key: action
+    label: Action
+    type: select
+    choices_field: illegal_fishing_action
+    options:
+    - Apprehend
+    - Chase
+    - Nothing
+    column: right
   required:
   - method
 - value: light_rep
@@ -176,6 +378,19 @@ event_types:
     label: ''
     columns: 2
   fields:
+  - key: lightrep_whatdetected
+    label: What was detected
+    type: select
+    choices_field: lightrep_whatdetected
+    options:
+    - value: bushfire
+      display: Bush Fire
+    - value: campfire
+      display: Camp Fire
+    - smoke
+    - value: torch
+      display: Torch/Light
+    - other
   - key: lightrep_distance
     label: Distance (m)
     type: number
@@ -193,6 +408,8 @@ event_types:
     label: Description of activity
     type: string
     column: right
+  required:
+  - lightrep_whatdetected
 - value: medevac_rep
   display: MedEvac
   layout:
@@ -214,6 +431,17 @@ event_types:
     label: Number of walking casualties
     type: number
     min: 0
+  - key: medevacrep_security
+    label: Security at Pickup Site
+    type: select
+    choices_field: medevacrep_security
+    options:
+    - value: areasecured
+      display: Area secured and safe
+    - value: possibleinterference
+      display: Possible interference from public/poachers (approach with caution)
+    - value: opposition
+      display: Opposition in area (armed escort required)
   - key: medevacrep_bestcommunication
     label: Communication method (radio frequency, patrol call sign, sat phone number, etc)
     type: string
@@ -222,6 +450,17 @@ event_types:
     label: Number of Priority Patients (within 6-12 hours)
     type: number
     min: 0
+    column: right
+  - key: medevacrep_specialequipment
+    label: Special Equipment Required
+    type: select
+    choices_field: medevacrep_specialequipment
+    options:
+    - value: emergencykit
+      display: Complete Emergency Kit
+    - value: stretcher
+      display: Stretcher and other mobilsation devices
+    - none
     column: right
   - key: medevacrep_stretchercasualties
     label: Number of stretcher casualties
@@ -270,6 +509,18 @@ event_types:
     label: Size of the Poaching Group
     type: number
     min: 0
+  - key: contactrep_patrolactivity
+    label: What happened? Patrol activity
+    type: select
+    choices_field: contactrep_patrolactivity
+    options:
+    - aware
+    - unaware
+    - ambushed
+    - patrolling
+    - value: incamp
+      display: In Camp
+    - other
   - key: contactrep_rangercasualties
     label: Ranger Casualties
     type: number
@@ -279,6 +530,14 @@ event_types:
   - key: contactrep_ammunitionusedbypatrol
     label: Ammunition used by patrol
     type: number
+  - key: contactrep_whoinitiatedcontact
+    label: Who initiated contact
+    type: select
+    choices_field: contactrep_whoinitiatedcontact
+    options:
+    - ranger
+    - poacher
+    column: right
   - key: contactrep_rangerresponse
     label: What is the response?
     type: string
@@ -293,6 +552,8 @@ event_types:
     column: right
   required:
   - contactrep_poachinggroupsize
+  - contactrep_whoinitiatedcontact
+  - contactrep_patrolactivity
   - contactrep_rangerresponse
 - value: poacher_camp_rep
   display: Poachers Camp
@@ -300,6 +561,13 @@ event_types:
     label: ''
     columns: 2
   fields:
+  - key: poachercamprep_status
+    label: Status of Camp
+    type: select
+    choices_field: poachercamprep_status
+    options:
+    - active
+    - inactive
   - key: poachercamprep_description
     label: Description of what was detected
     type: string
@@ -309,6 +577,7 @@ event_types:
     min: 0
     column: right
   required:
+  - poachercamprep_status
   - poachercamprep_numberofpeople
   - poachercamprep_description
 - value: ranger_shot_rep
@@ -320,13 +589,34 @@ event_types:
   - key: rangershotrep_ranger
     label: Name of Ranger
     type: string
+  - key: rangershotrep_typeofrounds
+    label: Type Of Rounds
+    type: select
+    choices_field: rangershotrep_typeofrounds
+    options:
+    - shot
+    - rubber
+    - slug
   - key: rangershotrep_numberofrounds
     label: Number Of Rounds
     type: number
     column: right
+  - key: rangershotrep_target
+    label: Target
+    type: select
+    choices_field: rangershotrep_target
+    options:
+    - game
+    - dog
+    - poacher
+    - value: hwc
+      display: HWC
+    column: right
   required:
   - rangershotrep_ranger
   - rangershotrep_numberofrounds
+  - rangershotrep_typeofrounds
+  - rangershotrep_target
 - value: shot_rep
   display: Shot
   layout:
@@ -340,6 +630,17 @@ event_types:
     label: Distance of Shots (m)
     type: number
     min: 0
+  - key: shotrep_typeofshots
+    label: Rate of Fire
+    type: select
+    choices_field: shotrep_typeofshot
+    options:
+    - value: singleshot
+      display: Single
+    - value: semiautomaticshot
+      display: Semi-automatic
+    - value: automaticshot
+      display: Automatic
   - key: shotrep_patrolresponse
     label: Patrols Response / Intent
     type: string
@@ -354,9 +655,22 @@ event_types:
     type: number
     min: 0
     column: right
+  - key: shotrep_estimatedcaliber
+    label: Estimated Caliber
+    type: select
+    choices_field: shotrep_estimatedcaliber
+    options:
+    - value: smallcalibershot
+      display: Small Caliber
+    - value: shotgunshot
+      display: Shot gun/muzzle loader
+    - value: largecalibershot
+      display: Large Caliber
+    column: right
   required:
   - shotrep_timeofshot
   - shotrep_numberofshots
+  - shotrep_typeofshots
   - shotrep_patrolresponse
 - value: sit_rep
   display: SIT-REP
@@ -386,18 +700,44 @@ event_types:
   - key: snarerep_numberofsnares
     label: Number of Snares Found
     type: number
+  - key: snarerep_action
+    label: Planned Action
+    type: select
+    choices_field: snarerep_action
+    options:
+    - remove
+    - ambushed
+  - key: snarerep_status
+    label: Status
+    type: select
+    choices_field: snarerep_status
+    options:
+    - set
+    - unset
+    column: right
   - key: snarerep_comments
     label: Comments
     type: string
     column: right
   required:
   - snarerep_numberofsnares
+  - snarerep_status
+  - snarerep_action
 - value: spoor_rep
   display: Spoor
   layout:
     label: ''
     columns: 2
   fields:
+  - key: spoorrep_type
+    label: Type of spoor
+    type: select
+    choices_field: spoorrep_type
+    options:
+    - footprint
+    - motorbike
+    - value: vehilce
+      display: Vehicle
   - key: spoorrep_bearing
     label: Bearing Spoor is going (0-360)
     type: number
@@ -411,6 +751,17 @@ event_types:
     type: number
     min: 0
     column: right
+  - key: spoorrep_age
+    label: Age of the spoor
+    type: select
+    choices_field: spoorrep_age
+    options:
+    - value: new
+      display: New/Fresh
+    - old
+    column: right
+  required:
+  - spoorrep_type
 - value: activity_rep
   display: Suspicious Activity
   layout:
@@ -442,6 +793,18 @@ event_types:
     label: ''
     columns: 2
   fields:
+  - key: trafficrep_sightingdescription
+    label: What was seen?
+    type: select
+    choices_field: trafficrep_sightingdescription
+    options:
+    - aircraft
+    - bicycles
+    - boats
+    - car
+    - motorbike
+    - truck
+    - other
   - key: trafficrep_distance
     label: Distance (m)
     type: number
@@ -458,7 +821,21 @@ event_types:
     min: 0
     max: 360
     column: right
+  - key: trafficrep_sightingactivity
+    label: Activity of vehicle
+    type: select
+    choices_field: trafficrep_sightingactivity
+    options:
+    - speeding
+    - value: drivingoffroad
+      display: Driving Off Road
+    - value: brokendown
+      display: Broken Down
+    - other
+    column: right
   - key: trafficrep_vehiclemakemodel
     label: Vehicle Make and Model
     type: string
     column: right
+  required:
+  - trafficrep_sightingdescription

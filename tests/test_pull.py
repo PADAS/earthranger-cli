@@ -155,6 +155,7 @@ def test_pull_unusable_choice_field_name_still_skipped():
 
 
 def test_pull_reports_layout_it_cannot_express():
+    # an empty section has no DSL form (sections require fields)
     fake = _server_from_spec(SPEC_DATA)
     et = fake.event_types[0]
     et["schema"]["ui"]["sections"]["section-2"] = {
@@ -164,11 +165,12 @@ def test_pull_reports_layout_it_cannot_express():
         "leftColumn": [],
         "rightColumn": [],
     }
+    et["schema"]["ui"]["order"] = ["section-1", "section-2"]
     result = pull_category(fake, "wm")
-    assert any("sighting" in w and "layout" in w for w in result.unsupported)
-    values = [t["value"] for t in result.spec["event_types"]]
-    assert "sighting" not in values  # whole event type skipped
-    assert "inactive_type" in values
+    assert any("sighting" in w and "layout" in w and "no fields" in w for w in result.unsupported)
+    # the fieldless section is dropped (a warning); the rest still pulls
+    pulled = next(t for t in result.spec["event_types"] if t["value"] == "sighting")
+    assert "sections" not in pulled  # collapsed back to the single-section form
 
 
 def test_pull_handles_json_stringified_v2_schema():
@@ -239,7 +241,8 @@ def test_pull_default_layout_omits_layout_key():
     assert all("layout" not in et for et in result.spec["event_types"])
 
 
-def test_pull_multi_section_message_names_the_construct():
+def test_pull_section_not_in_order_is_unsupported():
+    # a section missing from ui.order is a shape the generator never makes
     fake = _server_from_spec(SPEC_DATA)
     fake.event_types[0]["schema"]["ui"]["sections"]["section-2"] = {
         "label": "More",
@@ -249,7 +252,7 @@ def test_pull_multi_section_message_names_the_construct():
         "rightColumn": [],
     }
     result = pull_category(fake, "wm")
-    assert any("layout uses 2 sections" in w for w in result.unsupported)
+    assert any("layout" in w and "order" in w for w in result.unsupported)
 
 
 def test_pull_foreign_section_id_still_unsupported():
@@ -260,3 +263,47 @@ def test_pull_foreign_section_id_still_unsupported():
     ui["order"] = ["section-custom"]
     result = pull_category(fake, "wm")
     assert any("section-custom" in w and "layout" in w for w in result.unsupported)
+
+
+MULTI_SECTION_SPEC = {
+    "category": {"value": "wm", "display": "Wildlife Monitoring"},
+    "event_types": [
+        {
+            "value": "entry_alert",
+            "display": "Entry Alert",
+            "sections": [
+                {"label": "", "fields": [{"key": "at", "label": "Time", "type": "datetime"}]},
+                {
+                    "label": "",
+                    "columns": 2,
+                    "fields": [
+                        {"key": "lat", "label": "Lat", "type": "number"},
+                        {"key": "lon", "label": "Lon", "type": "number", "column": "right"},
+                    ],
+                },
+            ],
+            "required": ["at"],
+        }
+    ],
+}
+
+
+def test_pull_round_trips_multi_section():
+    fake = _server_from_spec(MULTI_SECTION_SPEC)
+    result = pull_category(fake, "wm")
+    assert result.unsupported == []
+    et = result.spec["event_types"][0]
+    assert "fields" not in et and "layout" not in et
+    assert [s.get("columns") for s in et["sections"]] == [None, 2]  # 1 omitted as default
+    assert [s.get("label") for s in et["sections"]] == ["", ""]
+    records = apply_spec(fake, parse_spec(result.spec))
+    assert {r.action for r in records} == {"unchanged"}
+    assert fake.writes() == []
+
+
+def test_pull_single_default_section_still_emits_flat_form():
+    fake = _server_from_spec(SPEC_DATA)
+    result = pull_category(fake, "wm")
+    for et in result.spec["event_types"]:
+        assert "sections" not in et
+        assert "fields" in et

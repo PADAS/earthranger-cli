@@ -520,3 +520,81 @@ def test_option_values_are_free_text():
     opts = spec.event_types[0].fields[0].options
     assert [o.value for o in opts] == ["Apprehend", "Chase"]
     assert [o.display for o in opts] == ["Apprehend", "Chase"]
+
+
+SECTIONED = {
+    "category": {"value": "c1", "display": "C1"},
+    "event_types": [
+        {
+            "value": "entry_alert",
+            "display": "Entry Alert",
+            "sections": [
+                {"label": "", "fields": [{"key": "at", "label": "Time", "type": "datetime"}]},
+                {
+                    "label": "",
+                    "columns": 2,
+                    "fields": [
+                        {"key": "lat", "label": "Lat", "type": "number"},
+                        {"key": "lon", "label": "Lon", "type": "number", "column": "right"},
+                    ],
+                },
+            ],
+            "required": ["at", "lat"],
+        }
+    ],
+}
+
+
+def test_sections_parse():
+    import copy
+
+    spec = parse_spec(copy.deepcopy(SECTIONED))
+    et = spec.event_types[0]
+    assert len(et.sections) == 2
+    assert (et.sections[0].label, et.sections[0].columns) == ("", 1)
+    assert (et.sections[1].label, et.sections[1].columns) == ("", 2)
+    assert [f.key for f in et.sections[1].fields] == ["lat", "lon"]
+    # flat view spans all sections (used by choices/required/collision checks)
+    assert [f.key for f in et.fields] == ["at", "lat", "lon"]
+    assert et.required == ["at", "lat"]
+
+
+def test_single_section_sugar_still_works():
+    spec = parse_spec(_spec_with_field({"key": "n", "label": "N", "type": "string"}))
+    et = spec.event_types[0]
+    assert len(et.sections) == 1
+    assert (et.sections[0].label, et.sections[0].columns) == ("Details", 1)
+    assert [f.key for f in et.sections[0].fields] == ["n"]
+
+
+def test_sections_mutually_exclusive_with_fields_and_layout():
+    import copy
+
+    data = copy.deepcopy(SECTIONED)
+    data["event_types"][0]["fields"] = [{"key": "x", "label": "X", "type": "string"}]
+    errors = _errors_for(data)
+    assert any("sections" in e and "fields" in e for e in errors)
+
+
+def test_sections_validation():
+    import copy
+
+    data = copy.deepcopy(SECTIONED)
+    data["event_types"][0]["sections"] = []
+    errors = _errors_for(data)
+    assert "event_types[0].sections: at least one section is required" in errors
+
+    data = copy.deepcopy(SECTIONED)
+    data["event_types"][0]["sections"][0]["fields"] = []
+    errors = _errors_for(data)
+    assert "event_types[0].sections[0].fields: at least one field is required" in errors
+
+    data = copy.deepcopy(SECTIONED)
+    data["event_types"][0]["sections"][1]["fields"][0]["key"] = "at"  # dup across sections
+    errors = _errors_for(data)
+    assert any("duplicate key 'at'" in e for e in errors)
+
+    data = copy.deepcopy(SECTIONED)
+    data["event_types"][0]["sections"][0]["fields"][0]["column"] = "right"  # 1-col section
+    errors = _errors_for(data)
+    assert any("'right' requires" in e and "columns: 2" in e for e in errors)

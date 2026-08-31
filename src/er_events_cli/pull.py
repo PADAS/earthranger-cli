@@ -17,7 +17,7 @@ import yaml
 
 from . import client as er
 from .dsl import CHOICES_FIELD_RE
-from .schema_gen import SECTION_ID, choice_field_name
+from .schema_gen import choice_field_name
 
 _REF_FIELD_RE = re.compile(r"choices\.json\?field=([^&\"']+)$")
 # JSON Schema format -> DSL: uri gets its own field type, the rest are formats.
@@ -96,23 +96,40 @@ def _invert_event_type(client, et: dict, unsupported: list[str]) -> dict | None:
     properties = json_block.get("properties") or {}
     ui_fields = ui_block.get("fields") or {}
 
-    layout_result = _read_layout(json_block, ui_block, properties, ui_fields)
-    if isinstance(layout_result, str):
-        unsupported.append(f"event type {value!r}: {layout_result}; skipped entirely")
+    sections_result = _read_sections(json_block, ui_block, properties, ui_fields)
+    if isinstance(sections_result, str):
+        unsupported.append(f"event type {value!r}: {sections_result}; skipped entirely")
         return None
-    order, right_keys, layout = layout_result
 
-    fields: list[dict] = []
+    out_sections: list[dict] = []
     kept_keys: set[str] = set()
-    for key in order:
-        f, reason = _invert_field(client, value, key, properties[key], ui_fields.get(key) or {})
-        if f is None:
-            unsupported.append(f"event type {value!r}, field {key!r}: {reason}; skipped")
+    for section in sections_result:
+        sec_fields: list[dict] = []
+        for key in section["order"]:
+            f, reason = _invert_field(client, value, key, properties[key], ui_fields.get(key) or {})
+            if f is None:
+                unsupported.append(f"event type {value!r}, field {key!r}: {reason}; skipped")
+                continue
+            if key in section["right"]:
+                f["column"] = "right"
+            sec_fields.append(f)
+            kept_keys.add(key)
+        if not sec_fields:
+            # a fieldless section has no DSL form; dropping it shifts the
+            # positional ids of later sections, so this stays lossy territory
+            unsupported.append(
+                f"event type {value!r}: layout section {section['label']!r} kept no fields; dropped"
+            )
             continue
-        fields.append(f)
-        kept_keys.add(key)
+        sec_out: dict = {}
+        if section["label"] != "Details":
+            sec_out["label"] = section["label"]
+        if section["columns"] != 1:
+            sec_out["columns"] = section["columns"]
+        sec_out["fields"] = sec_fields
+        out_sections.append(sec_out)
 
-    if not fields:
+    if not out_sections:
         unsupported.append(f"event type {value!r}: no fields could be expressed; skipped entirely")
         return None
 
@@ -121,46 +138,62 @@ def _invert_event_type(client, et: dict, unsupported: list[str]) -> dict | None:
         out["is_active"] = False
     if et.get("icon"):
         out["icon_id"] = et["icon"]
-    if layout != {"label": "Details", "columns": 1}:
-        out["layout"] = layout
-    for f in fields:
-        if f["key"] in right_keys:
-            f["column"] = "right"
-    out["fields"] = fields
+    if len(out_sections) == 1:
+        single = out_sections[0]
+        layout = {
+            "label": single.get("label", "Details"),
+            "columns": single.get("columns", 1),
+        }
+        if layout != {"label": "Details", "columns": 1}:
+            out["layout"] = layout
+        out["fields"] = single["fields"]
+    else:
+        out["sections"] = out_sections
     required = [k for k in (json_block.get("required") or []) if k in kept_keys]
     if required:
         out["required"] = required
     return out
 
 
-def _read_layout(json_block, ui_block, properties, ui_fields):
-    """Return (field_order, right_column_keys, layout_dict) for a single-section
-    schema the DSL can express, or a reason string when it cannot (multiple
-    sections, headers, conditions, or fields outside the section)."""
+def _read_sections(json_block, ui_block, properties, ui_fields):
+    """Return a list of {label, columns, order, right} for a sectioned schema
+    the DSL can express (positional section-N ids, no headers/conditions), or a
+    reason string when it cannot."""
     sections = ui_block.get("sections") or {}
-    if list(sections) != [SECTION_ID]:
-        if len(sections) != 1:
-            return f"layout uses {len(sections)} sections"
-        return f"layout section id {next(iter(sections))!r} differs from '{SECTION_ID}'"
+    order_ids = ui_block.get("order") or []
+    if not sections:
+        return "layout uses 0 sections"
+    if sorted(sections) != sorted(order_ids):
+        return "layout sections do not match ui.order"
+    expected_ids = [f"section-{i}" for i in range(1, len(order_ids) + 1)]
+    if order_ids != expected_ids:
+        return f"layout section ids {order_ids!r} are not positional {expected_ids!r}"
     if ui_block.get("headers"):
         return "layout uses headers"
     if json_block.get("allOf"):
         return "layout uses conditional sections"
-    section = sections[SECTION_ID]
-    if section.get("conditions"):
-        return "layout uses section conditions"
-    label = section.get("label")
-    columns = section.get("columns")
-    if not isinstance(label, str) or columns not in (1, 2):
-        return f"layout has label={label!r}, columns={columns!r}"
-    left = [e.get("name") for e in section.get("leftColumn") or [] if e.get("type") == "field"]
-    right = [e.get("name") for e in section.get("rightColumn") or [] if e.get("type") == "field"]
-    if columns == 1 and right:
-        return "layout puts fields in the right column of a 1-column section"
-    order = left + right
-    if set(order) != set(properties) or set(order) != set(ui_fields):
-        return "layout leaves fields outside the section"
-    return order, set(right), {"label": label, "columns": columns}
+
+    out: list[dict] = []
+    all_keys: list[str] = []
+    for sid in order_ids:
+        section = sections[sid]
+        if section.get("conditions"):
+            return "layout uses section conditions"
+        label = section.get("label")
+        columns = section.get("columns")
+        if not isinstance(label, str) or columns not in (1, 2):
+            return f"layout section {sid!r} has label={label!r}, columns={columns!r}"
+        left = [e.get("name") for e in section.get("leftColumn") or [] if e.get("type") == "field"]
+        right = [
+            e.get("name") for e in section.get("rightColumn") or [] if e.get("type") == "field"
+        ]
+        if columns == 1 and right:
+            return f"layout section {sid!r} puts fields in the right column of a 1-column section"
+        all_keys.extend(left + right)
+        out.append({"label": label, "columns": columns, "order": left + right, "right": set(right)})
+    if set(all_keys) != set(properties) or set(all_keys) != set(ui_fields):
+        return "layout leaves fields outside the sections"
+    return out
 
 
 def _invert_field(client, et_value, key, json_prop, ui_field):

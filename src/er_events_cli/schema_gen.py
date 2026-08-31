@@ -115,10 +115,26 @@ def _build_choice_pair(field: FieldSpec, event_type_value: str) -> tuple[dict, d
 def build_schema(et: EventTypeSpec) -> dict:
     properties: dict[str, dict] = {}
     ui_fields: dict[str, dict] = {}
-    for f in et.fields:
-        json_prop, ui_field = build_property_pair(f, et.value)
-        properties[f.key] = json_prop
-        ui_fields[f.key] = ui_field
+    sections: dict[str, dict] = {}
+    order: list[str] = []
+    for idx, sec in enumerate(et.sections or [], start=1):
+        sid = f"section-{idx}"
+        order.append(sid)
+        left: list[dict] = []
+        right: list[dict] = []
+        for f in sec.fields:
+            json_prop, ui_field = build_property_pair(f, et.value)
+            ui_field["parent"] = sid
+            properties[f.key] = json_prop
+            ui_fields[f.key] = ui_field
+            (right if f.column == "right" else left).append({"name": f.key, "type": "field"})
+        sections[sid] = {
+            "label": sec.label,
+            "columns": sec.columns,
+            "isActive": True,
+            "leftColumn": left,
+            "rightColumn": right,
+        }
     return {
         "json": {
             "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -130,20 +146,8 @@ def build_schema(et: EventTypeSpec) -> dict:
         "ui": {
             "fields": ui_fields,
             "headers": {},
-            "order": [SECTION_ID],
-            "sections": {
-                SECTION_ID: {
-                    "label": et.layout.label,
-                    "columns": et.layout.columns,
-                    "isActive": True,
-                    "leftColumn": [
-                        {"name": f.key, "type": "field"} for f in et.fields if f.column != "right"
-                    ],
-                    "rightColumn": [
-                        {"name": f.key, "type": "field"} for f in et.fields if f.column == "right"
-                    ],
-                }
-            },
+            "order": order,
+            "sections": sections,
         },
     }
 

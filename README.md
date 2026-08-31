@@ -151,7 +151,20 @@ set between fields (allowed only when both declare identical options).
 Per event type an optional `layout: {label, columns}` (default
 `{label: Details, columns: 1}`) controls the form section; with
 `columns: 2`, per-field `column: right` places a field in the right
-column.
+column. Multi-section forms use `sections:` instead of `fields:`/
+`layout:` — a list of `{label?, columns?, fields: [...]}` mappings,
+one per form section, in order:
+
+```yaml
+- value: entry_alert
+  display: Entry Alert
+  sections:
+    - label: ""
+      fields: [...]
+    - label: ""
+      columns: 2
+      fields: [...]
+```
 
 Per event type: `value`, `display`, `fields` (required);
 `required`, `is_active`, `icon_id` (optional; sent to ER as its writable

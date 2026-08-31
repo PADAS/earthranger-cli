@@ -249,3 +249,35 @@ def test_explicit_choices_field_used_in_ref():
     assert json_prop["anyOf"] == [
         {"$ref": "/api/v2.0/schemas/choices.json?field=illegal_fishing_action"}
     ]
+
+
+def test_multi_section_envelope():
+    from er_events_cli.dsl import SectionSpec
+
+    et = EventTypeSpec(
+        value="entry_alert",
+        display="Entry Alert",
+        fields=[],
+        sections=[
+            SectionSpec(
+                label="", columns=1, fields=[FieldSpec(key="at", label="T", type="datetime")]
+            ),
+            SectionSpec(
+                label="",
+                columns=2,
+                fields=[
+                    FieldSpec(key="lat", label="Lat", type="number"),
+                    FieldSpec(key="lon", label="Lon", type="number", column="right"),
+                ],
+            ),
+        ],
+    )
+    schema = build_schema(et)
+    ui = schema["ui"]
+    assert ui["order"] == ["section-1", "section-2"]
+    assert ui["sections"]["section-1"]["leftColumn"] == [{"name": "at", "type": "field"}]
+    assert ui["sections"]["section-2"]["columns"] == 2
+    assert ui["sections"]["section-2"]["rightColumn"] == [{"name": "lon", "type": "field"}]
+    assert ui["fields"]["at"]["parent"] == "section-1"
+    assert ui["fields"]["lon"]["parent"] == "section-2"
+    assert set(schema["json"]["properties"]) == {"at", "lat", "lon"}

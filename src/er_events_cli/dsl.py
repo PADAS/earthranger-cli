@@ -86,14 +86,33 @@ class LayoutSpec:
 
 
 @dataclass
+class SectionSpec:
+    label: str = "Details"
+    columns: int = 1
+    fields: list[FieldSpec] = field(default_factory=list)
+
+
+@dataclass
 class EventTypeSpec:
     value: str
     display: str
-    fields: list[FieldSpec]
+    fields: list[FieldSpec]  # flat view across sections
     required: list[str] = field(default_factory=list)
     is_active: bool = True
     icon_id: str | None = None
     layout: LayoutSpec = field(default_factory=LayoutSpec)
+    sections: list[SectionSpec] | None = None
+
+    def __post_init__(self):
+        if self.sections is None:
+            # single-section sugar: fields + layout describe one section
+            self.sections = [
+                SectionSpec(
+                    label=self.layout.label, columns=self.layout.columns, fields=self.fields
+                )
+            ]
+        elif not self.fields:
+            self.fields = [f for s in self.sections for f in s.fields]
 
 
 @dataclass
@@ -203,18 +222,26 @@ def _parse_event_type(raw: object, path: str, errors: list[str]) -> EventTypeSpe
     value = _required_slug(raw.get("value"), f"{path}.value", errors)
     display = _required_str(raw.get("display"), f"{path}.display", errors)
 
-    fields_raw = raw.get("fields")
+    sections_raw = raw.get("sections")
+    sections: list[SectionSpec] | None = None
     fields: list[FieldSpec] = []
-    if not isinstance(fields_raw, list) or not fields_raw:
-        errors.append(f"{path}.fields: at least one field is required")
+    if sections_raw is not None:
+        if raw.get("fields") is not None or raw.get("layout") is not None:
+            errors.append(f"{path}: 'sections' is mutually exclusive with 'fields' and 'layout'")
+        sections = _parse_sections(sections_raw, f"{path}.sections", errors)
+        fields = [f for sec in sections for f in sec.fields]
     else:
-        seen_keys: set[str] = set()
-        for j, f_raw in enumerate(fields_raw):
-            f = _parse_field(f_raw, f"{path}.fields[{j}]", errors)
-            if f.key and f.key in seen_keys:
-                errors.append(f"{path}.fields[{j}].key: duplicate key {f.key!r}")
-            seen_keys.add(f.key)
-            fields.append(f)
+        fields_raw = raw.get("fields")
+        if not isinstance(fields_raw, list) or not fields_raw:
+            errors.append(f"{path}.fields: at least one field is required")
+        else:
+            seen_keys: set[str] = set()
+            for j, f_raw in enumerate(fields_raw):
+                f = _parse_field(f_raw, f"{path}.fields[{j}]", errors)
+                if f.key and f.key in seen_keys:
+                    errors.append(f"{path}.fields[{j}].key: duplicate key {f.key!r}")
+                seen_keys.add(f.key)
+                fields.append(f)
 
     required_raw = raw.get("required") or []
     if not isinstance(required_raw, list):
@@ -235,9 +262,10 @@ def _parse_event_type(raw: object, path: str, errors: list[str]) -> EventTypeSpe
         errors.append(f"{path}.icon_id: must be a string")
         icon_id = None
     layout = _parse_layout(raw.get("layout"), f"{path}.layout", errors)
-    for j, f in enumerate(fields):
-        if f.column == "right" and layout.columns != 2:
-            errors.append(f"{path}.fields[{j}].column: 'right' requires layout columns: 2")
+    if sections is None:
+        for j, f in enumerate(fields):
+            if f.column == "right" and layout.columns != 2:
+                errors.append(f"{path}.fields[{j}].column: 'right' requires layout columns: 2")
     return EventTypeSpec(
         value=value,
         display=display,
@@ -246,7 +274,46 @@ def _parse_event_type(raw: object, path: str, errors: list[str]) -> EventTypeSpe
         is_active=is_active,
         icon_id=icon_id,
         layout=layout,
+        sections=sections,
     )
+
+
+def _parse_sections(raw: object, path: str, errors: list[str]) -> list[SectionSpec]:
+    if not isinstance(raw, list) or not raw:
+        errors.append(f"{path}: at least one section is required")
+        return []
+    sections: list[SectionSpec] = []
+    seen_keys: set[str] = set()
+    for k, sec_raw in enumerate(raw):
+        sec_path = f"{path}[{k}]"
+        if not isinstance(sec_raw, dict):
+            errors.append(f"{sec_path}: must be a mapping")
+            continue
+        label = sec_raw.get("label", "Details")
+        if not isinstance(label, str):
+            errors.append(f"{sec_path}.label: must be a string")
+            label = "Details"
+        columns = sec_raw.get("columns", 1)
+        if columns not in (1, 2):
+            errors.append(f"{sec_path}.columns: must be 1 or 2")
+            columns = 1
+        fields_raw = sec_raw.get("fields")
+        sec_fields: list[FieldSpec] = []
+        if not isinstance(fields_raw, list) or not fields_raw:
+            errors.append(f"{sec_path}.fields: at least one field is required")
+        else:
+            for j, f_raw in enumerate(fields_raw):
+                f = _parse_field(f_raw, f"{sec_path}.fields[{j}]", errors)
+                if f.key and f.key in seen_keys:
+                    errors.append(f"{sec_path}.fields[{j}].key: duplicate key {f.key!r}")
+                seen_keys.add(f.key)
+                if f.column == "right" and columns != 2:
+                    errors.append(
+                        f"{sec_path}.fields[{j}].column: 'right' requires section columns: 2"
+                    )
+                sec_fields.append(f)
+        sections.append(SectionSpec(label=label, columns=columns, fields=sec_fields))
+    return sections
 
 
 def _parse_layout(raw: object, path: str, errors: list[str]) -> LayoutSpec:
