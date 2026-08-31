@@ -1,0 +1,121 @@
+# er-events-cli
+
+A command-line utility for creating and **editing** EarthRanger event
+categories, choices, and v2 event types — and posting events — directly
+against the EarthRanger API, authenticated with a username and password.
+
+You describe what you want in a small YAML spec (no hand-written JSON
+Schema); `er-events apply` generates the ER v2 schema envelope and the
+shared Choice records, then idempotently creates what's missing and
+patches what changed. Nothing is ever deleted — removal means
+`is_active: false`.
+
+## Install
+
+```bash
+uv pip install -e .
+```
+
+## Authenticate
+
+Every command needs a server and credentials:
+
+```bash
+export ER_SERVER=myreserve          # site name, or a full https:// URL
+export ER_USERNAME=me
+export ER_PASSWORD=...              # omit to be prompted interactively
+```
+
+or pass `--server/--username/--password` before the subcommand.
+
+## Walkthrough
+
+1. Write a spec (start from `examples/wildlife_monitoring.yaml`):
+
+   ```yaml
+   category:
+     value: wildlife_monitoring
+     display: Wildlife Monitoring
+   event_types:
+     - value: animal_sighting
+       display: Animal Sighting
+       fields:
+         - key: species
+           label: Species
+           type: select
+           options: [elephant, lion]
+         - key: count
+           label: Number of animals
+           type: integer
+           min: 0
+       required: [species]
+   ```
+
+2. Preview what would change, then apply:
+
+   ```bash
+   er-events apply spec.yaml --dry-run
+   er-events apply spec.yaml
+   ```
+
+3. Post an event against the new type:
+
+   ```bash
+   er-events post-event --event-type animal_sighting \
+       --field species=elephant --field count=3 \
+       --location -1.286,36.817
+   ```
+
+4. Edit: change the spec (rename a display, add a field, drop an
+   option), dry-run again, re-apply. `apply` patches exactly what
+   differs; dropped options are deactivated, never deleted.
+
+## Commands
+
+| Command | What it does |
+|---|---|
+| `apply SPEC [--dry-run]` | Upsert category, choices, and event types from a spec |
+| `post-event --event-type V --field k=v ...` | Post one event (`--location LAT,LON`, `--time`, `--title`) |
+| `post-event --file events.yaml` | Post a batch; exits 1 if any fail |
+| `list categories` | List categories (inactive included) |
+| `list event-types [--category V]` | List event types |
+| `show event-type V` | Full v2 event-type JSON + its Choice records |
+
+## Spec reference
+
+Field types: `string`, `textarea`, `integer`, `number` (both take
+optional `min`/`max`), `boolean`, `date`, `datetime`, `select`,
+`multiselect` (both take `options`).
+
+Options are `{value, display}` mappings or bare strings
+(`lion` → value `lion`, display `Lion`). Slugs — category value, event
+type values, field keys, option values — must match `[a-z0-9_]+`.
+
+Per event type: `value`, `display`, `fields` (required);
+`required`, `is_active`, `icon_id` (optional).
+
+### What apply owns
+
+`apply` only manages what the spec declares: it never touches event
+types or categories that exist on the server but aren't in the spec
+(retire one by setting `is_active: false` in the spec). The exception
+is choice options within a spec-managed field — there the spec is
+authoritative, and removed options are deactivated on the server.
+
+### Why YAML and not JSON?
+
+Both work: spec files are parsed with a YAML parser, and YAML is a
+superset of JSON, so a pure-JSON spec file is accepted as-is. YAML is
+the documented format because spec files are hand-authored and reviewed
+— comments matter, and block style keeps nested fields readable. Watch
+YAML's implicit typing (`no` → false, `1.10` → a float): quote anything
+ambiguous.
+
+## v2 schemas and choices, briefly
+
+ER v2 event types store a `{json, ui}` schema envelope. Dropdown fields
+don't embed their options; they reference shared **Choice** records via
+`$ref: /api/v2.0/schemas/choices.json?field=<name>`. This tool derives
+`<name>` as `<event_type_value>_<field_key>` and manages those records
+for you — creating, re-labelling, deactivating, and reactivating options
+to mirror your spec.

@@ -30,8 +30,11 @@ def test_build_event_minimal_defaults_time():
 
 def test_build_event_with_location_time_title():
     event = build_event(
-        event_type="sighting", details={}, location="-1.286,36.817",
-        time="2026-08-31T12:00:00Z", title="Morning patrol",
+        event_type="sighting",
+        details={},
+        location="-1.286,36.817",
+        time="2026-08-31T12:00:00Z",
+        title="Morning patrol",
     )
     assert event["location"] == {"latitude": -1.286, "longitude": 36.817}
     assert event["time"] == "2026-08-31T12:00:00Z"

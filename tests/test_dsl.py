@@ -92,8 +92,13 @@ def test_bad_slug_rejected():
     errors = _errors_for(
         {
             "category": {"value": "Wildlife Monitoring", "display": "X"},
-            "event_types": [{"value": "t1", "display": "T1",
-                             "fields": [{"key": "notes", "label": "N", "type": "string"}]}],
+            "event_types": [
+                {
+                    "value": "t1",
+                    "display": "T1",
+                    "fields": [{"key": "notes", "label": "N", "type": "string"}],
+                }
+            ],
         }
     )
     assert "category.value: 'Wildlife Monitoring' must match [a-z0-9_]+" in errors
@@ -101,12 +106,16 @@ def test_bad_slug_rejected():
 
 def test_unknown_type_rejected():
     errors = _errors_for(_spec_with_field({"key": "f1", "label": "F", "type": "selects"}))
-    assert any(e.startswith("event_types[0].fields[0].type: unsupported type 'selects'") for e in errors)
+    assert any(
+        e.startswith("event_types[0].fields[0].type: unsupported type 'selects'") for e in errors
+    )
 
 
 def test_options_required_for_select_and_forbidden_otherwise():
     errors = _errors_for(_spec_with_field({"key": "f1", "label": "F", "type": "select"}))
-    assert "event_types[0].fields[0].options: required non-empty list for select/multiselect" in errors
+    assert (
+        "event_types[0].fields[0].options: required non-empty list for select/multiselect" in errors
+    )
     errors = _errors_for(
         _spec_with_field({"key": "f1", "label": "F", "type": "string", "options": ["a"]})
     )
@@ -129,16 +138,42 @@ def test_duplicates_rejected():
     data = {
         "category": {"value": "c1", "display": "C1"},
         "event_types": [
-            {"value": "t1", "display": "T1", "fields": [
-                {"key": "f1", "label": "F", "type": "string"},
-                {"key": "f1", "label": "F2", "type": "string"},
-                {"key": "f2", "label": "F3", "type": "select", "options": ["a", "a"]},
-            ]},
-            {"value": "t1", "display": "T1 again", "fields": [
-                {"key": "g1", "label": "G", "type": "string"}]},
+            {
+                "value": "t1",
+                "display": "T1",
+                "fields": [
+                    {"key": "f1", "label": "F", "type": "string"},
+                    {"key": "f1", "label": "F2", "type": "string"},
+                    {"key": "f2", "label": "F3", "type": "select", "options": ["a", "a"]},
+                ],
+            },
+            {
+                "value": "t1",
+                "display": "T1 again",
+                "fields": [{"key": "g1", "label": "G", "type": "string"}],
+            },
         ],
     }
     errors = _errors_for(data)
     assert "event_types[0].fields[1].key: duplicate key 'f1'" in errors
     assert "event_types[0].fields[2].options[1]: duplicate option value 'a'" in errors
     assert "event_types[1].value: duplicate event type value 't1'" in errors
+
+
+def test_shipped_example_spec_parses():
+    import pathlib
+
+    example = pathlib.Path(__file__).parent.parent / "examples" / "wildlife_monitoring.yaml"
+    spec = load_spec(str(example))
+    assert spec.category.value == "wildlife_monitoring"
+    assert {f.type for f in spec.event_types[0].fields} == {
+        "select",
+        "integer",
+        "number",
+        "boolean",
+        "date",
+        "datetime",
+        "multiselect",
+        "string",
+        "textarea",
+    }

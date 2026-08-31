@@ -99,11 +99,21 @@ import json
 
 
 def test_post_event_flags(fake):
-    result = _run([
-        "post-event", "--event-type", "sighting",
-        "--field", "species=elephant", "--field", "count=3",
-        "--location", "-1.286,36.817", "--title", "Morning",
-    ])
+    result = _run(
+        [
+            "post-event",
+            "--event-type",
+            "sighting",
+            "--field",
+            "species=elephant",
+            "--field",
+            "count=3",
+            "--location",
+            "-1.286,36.817",
+            "--title",
+            "Morning",
+        ]
+    )
     assert result.exit_code == 0
     assert "posted   sighting" in result.output
     posted = next(c[1] for c in fake.calls if c[0] == "post_event")
@@ -160,9 +170,13 @@ def test_list_event_types_filters_by_category(fake):
 
 
 def test_show_event_type_includes_choices(fake):
-    schema = {"json": {"properties": {
-        "species": {"anyOf": [{"$ref": "/api/v2.0/schemas/choices.json?field=s_species"}]}
-    }}}
+    schema = {
+        "json": {
+            "properties": {
+                "species": {"anyOf": [{"$ref": "/api/v2.0/schemas/choices.json?field=s_species"}]}
+            }
+        }
+    }
     fake.event_types = [
         {"value": "s", "display": "S", "category": "wm", "schema": schema},
     ]

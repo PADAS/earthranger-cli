@@ -14,8 +14,12 @@ SPEC_DATA = {
             "value": "sighting",
             "display": "Sighting",
             "fields": [
-                {"key": "species", "label": "Species", "type": "select",
-                 "options": [{"value": "elephant", "display": "Elephant"}]},
+                {
+                    "key": "species",
+                    "label": "Species",
+                    "type": "select",
+                    "options": [{"value": "elephant", "display": "Elephant"}],
+                },
                 {"key": "notes", "label": "Notes", "type": "string"},
             ],
         }
@@ -43,8 +47,14 @@ def _existing_state():
         event_types=[existing_type],
         choices={
             "sighting_species": [
-                {"id": "ch-1", "model": "activity.event", "field": "sighting_species",
-                 "value": "elephant", "display": "Elephant", "is_active": True},
+                {
+                    "id": "ch-1",
+                    "model": "activity.event",
+                    "field": "sighting_species",
+                    "value": "elephant",
+                    "display": "Elephant",
+                    "is_active": True,
+                },
             ]
         },
     )
@@ -59,11 +69,13 @@ def test_normalize_v2_schema_repairs_get_response():
 
 def test_extract_choice_fields():
     schema = {
-        "json": {"properties": {
-            "a": {"anyOf": [{"$ref": "/api/v2.0/schemas/choices.json?field=t_a"}]},
-            "b": {"items": {"anyOf": [{"$ref": "/api/v2.0/schemas/choices.json?field=t_b"}]}},
-            "c": {"type": "string"},
-        }}
+        "json": {
+            "properties": {
+                "a": {"anyOf": [{"$ref": "/api/v2.0/schemas/choices.json?field=t_a"}]},
+                "b": {"items": {"anyOf": [{"$ref": "/api/v2.0/schemas/choices.json?field=t_b"}]}},
+                "c": {"type": "string"},
+            }
+        }
     }
     assert extract_choice_fields(schema) == ["t_a", "t_b"]
 
@@ -95,7 +107,9 @@ def test_display_change_patches_event_type_with_id():
     spec = _spec()
     spec.event_types[0].display = "Animal Sighting"
     records = apply_spec(fake, spec)
-    assert ("event_type", "sighting") in {(r.kind, r.name) for r in records if r.action == "updated"}
+    assert ("event_type", "sighting") in {
+        (r.kind, r.name) for r in records if r.action == "updated"
+    }
     patched = next(c for c in fake.calls if c[0] == "patch_event_type")
     assert patched[1]["id"] == "et-1"
     assert patched[1]["display"] == "Animal Sighting"
@@ -114,8 +128,14 @@ def test_category_display_change_patches_category():
 def test_removed_option_is_deactivated():
     fake = _existing_state()
     fake.choices["sighting_species"].append(
-        {"id": "ch-2", "model": "activity.event", "field": "sighting_species",
-         "value": "rhino", "display": "Rhino", "is_active": True}
+        {
+            "id": "ch-2",
+            "model": "activity.event",
+            "field": "sighting_species",
+            "value": "rhino",
+            "display": "Rhino",
+            "is_active": True,
+        }
     )
     records = apply_spec(fake, _spec())
     assert any(r.action == "deactivated" and r.name == "sighting_species:rhino" for r in records)

@@ -52,9 +52,7 @@ def normalize_v2_schema(schema: dict) -> dict:
         return schema
     if "unevaluatedProperties" not in json_block:
         legacy = json_block.get("additionalProperties")
-        json_block["unevaluatedProperties"] = (
-            legacy if isinstance(legacy, bool) else False
-        )
+        json_block["unevaluatedProperties"] = legacy if isinstance(legacy, bool) else False
     json_block.pop("additionalProperties", None)
     return schema
 
@@ -93,8 +91,7 @@ def apply_spec(client, spec: Spec, dry_run: bool = False) -> list[ActionRecord]:
     for et in spec.event_types:
         records.append(
             _apply_event_type(
-                client, et, spec.category.value,
-                existing_by_value.get(et.value), dry_run
+                client, et, spec.category.value, existing_by_value.get(et.value), dry_run
             )
         )
     return records
@@ -116,42 +113,38 @@ def _apply_category(client, spec: Spec, dry_run: bool) -> ActionRecord:
             _write(
                 f"updating category {spec.category.value!r}",
                 client.patch_event_category,
-                {
-                    "id": cat["id"], "value": spec.category.value,
-                    "display": spec.category.display
-                },
+                {"id": cat["id"], "value": spec.category.value, "display": spec.category.display},
             )
         return ActionRecord(
-            "category", spec.category.value, "updated",
+            "category",
+            spec.category.value,
+            "updated",
             detail=f"display -> {spec.category.display!r}",
         )
     return ActionRecord("category", spec.category.value, "unchanged")
 
 
-def _apply_field_choices(
-    client, field_name: str, desired: list[dict], dry_run: bool
-):
+def _apply_field_choices(client, field_name: str, desired: list[dict], dry_run: bool):
     existing = er.get_choices(client, field_name)
     action_names = {
-        "create": "created", "update": "updated",
-        "deactivate": "deactivated", "unchanged": "unchanged"
+        "create": "created",
+        "update": "updated",
+        "deactivate": "deactivated",
+        "unchanged": "unchanged",
     }
     records = []
     for op in plan_field_choices(existing, desired):
         if op.action == "create" and not dry_run:
-            _write(
-                f"creating choice '{field_name}:{op.value}'", er.post_choice,
-                client, op.payload
-            )
+            _write(f"creating choice '{field_name}:{op.value}'", er.post_choice, client, op.payload)
         elif op.action in ("update", "deactivate") and not dry_run:
             _write(
                 f"updating choice '{field_name}:{op.value}'",
-                er.patch_choice, client, op.choice_id, op.payload,
+                er.patch_choice,
+                client,
+                op.choice_id,
+                op.payload,
             )
-        records.append(
-            ActionRecord("choice", f"{field_name}:{op.value}",
-                        action_names[op.action])
-        )
+        records.append(ActionRecord("choice", f"{field_name}:{op.value}", action_names[op.action]))
     return records
 
 
@@ -173,15 +166,15 @@ def _event_type_differs(payload: dict, existing: dict) -> bool:
     return payload["schema"] != normalize_v2_schema(existing.get("schema") or {})
 
 
-def _apply_event_type(
-    client, et, category_value: str, existing: dict | None, dry_run: bool
-):
+def _apply_event_type(client, et, category_value: str, existing: dict | None, dry_run: bool):
     payload = build_event_type_payload(et, category_value)
     if existing is None:
         if not dry_run:
             _write(
                 f"creating event_type {et.value!r}",
-                client.post_event_type, payload, version="v2.0",
+                client.post_event_type,
+                payload,
+                version="v2.0",
             )
         return ActionRecord("event_type", et.value, "created")
     if _event_type_differs(payload, existing):
@@ -189,7 +182,9 @@ def _apply_event_type(
         if not dry_run:
             _write(
                 f"updating event_type {et.value!r}",
-                client.patch_event_type, patch, version="v2.0",
+                client.patch_event_type,
+                patch,
+                version="v2.0",
             )
         return ActionRecord("event_type", et.value, "updated")
     return ActionRecord("event_type", et.value, "unchanged")

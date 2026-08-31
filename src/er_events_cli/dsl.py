@@ -13,8 +13,15 @@ from dataclasses import dataclass, field
 import yaml
 
 SUPPORTED_TYPES = {
-    "string", "textarea", "integer", "number", "boolean",
-    "date", "datetime", "select", "multiselect",
+    "string",
+    "textarea",
+    "integer",
+    "number",
+    "boolean",
+    "date",
+    "datetime",
+    "select",
+    "multiselect",
 }
 CHOICE_TYPES = {"select", "multiselect"}
 NUMERIC_TYPES = {"integer", "number"}
@@ -145,8 +152,12 @@ def _parse_event_type(raw: object, path: str, errors: list[str]) -> EventTypeSpe
         errors.append(f"{path}.icon_id: must be a string")
         icon_id = None
     return EventTypeSpec(
-        value=value, display=display, fields=fields,
-        required=required, is_active=is_active, icon_id=icon_id,
+        value=value,
+        display=display,
+        fields=fields,
+        required=required,
+        is_active=is_active,
+        icon_id=icon_id,
     )
 
 

@@ -1,0 +1,52 @@
+# Example spec for `er-events apply` — one category, one event type
+# exercising every supported field type.
+#
+# Slugs (category value, event type values, field keys, option values)
+# must match [a-z0-9_]+. Quote anything YAML might reinterpret
+# (e.g. "no", "1.10") — see "Why YAML?" in the README.
+
+category:
+  value: wildlife_monitoring
+  display: Wildlife Monitoring
+
+event_types:
+  - value: animal_sighting
+    display: Animal Sighting
+    icon_id: mammal_rep          # optional; must exist on your ER site
+    fields:
+      - key: species
+        label: Species
+        type: select             # becomes shared Choice records + a $ref
+        options:
+          - {value: elephant, display: Elephant}
+          - lion                 # shorthand: value=lion, display="Lion"
+          - {value: giraffe, display: Giraffe}
+      - key: count
+        label: Number of animals
+        type: integer
+        min: 0
+      - key: adult_ratio
+        label: Adult ratio
+        type: number
+        min: 0
+        max: 1
+      - key: injured
+        label: Injured animal present
+        type: boolean
+      - key: seen_on
+        label: Date seen
+        type: date
+      - key: exact_time
+        label: Exact time
+        type: datetime
+      - key: threats
+        label: Observed threats
+        type: multiselect        # array of choice values
+        options: [poaching, snares, habitat_loss]
+      - key: observer
+        label: Observer name
+        type: string
+      - key: notes
+        label: Notes
+        type: textarea
+    required: [species]

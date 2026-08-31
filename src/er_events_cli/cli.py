@@ -45,11 +45,11 @@ def _connect(ctx):
 
 
 @click.group()
-@click.option("--server", envvar="ER_SERVER",
-              help="ER site name (myreserve) or full https:// URL.")
+@click.option("--server", envvar="ER_SERVER", help="ER site name (myreserve) or full https:// URL.")
 @click.option("--username", envvar="ER_USERNAME", help="EarthRanger username.")
-@click.option("--password", envvar="ER_PASSWORD",
-              help="EarthRanger password (prompted if omitted).")
+@click.option(
+    "--password", envvar="ER_PASSWORD", help="EarthRanger password (prompted if omitted)."
+)
 @click.pass_context
 def main(ctx, server, username, password):
     """Create and edit EarthRanger event categories, choices, and v2 event types."""
@@ -82,13 +82,18 @@ def apply_cmd(ctx, spec_file, dry_run):
 
 @main.command("post-event")
 @click.option("--event-type", "event_type", help="Event type value (required unless --file).")
-@click.option("--field", "fields", multiple=True,
-              help="key=value; value parsed as a YAML scalar. Repeatable.")
+@click.option(
+    "--field", "fields", multiple=True, help="key=value; value parsed as a YAML scalar. Repeatable."
+)
 @click.option("--location", help="LAT,LON")
 @click.option("--time", "time_", help="ISO-8601 timestamp; defaults to now (UTC).")
 @click.option("--title", help="Event title.")
-@click.option("--file", "file_", type=click.Path(exists=True, dir_okay=False),
-              help="YAML list of events to post.")
+@click.option(
+    "--file",
+    "file_",
+    type=click.Path(exists=True, dir_okay=False),
+    help="YAML list of events to post.",
+)
 @click.pass_context
 @_api_errors
 def post_event_cmd(ctx, event_type, fields, location, time_, title, file_):
@@ -97,9 +102,15 @@ def post_event_cmd(ctx, event_type, fields, location, time_, title, file_):
         if file_:
             events = load_events_file(file_)
         elif event_type:
-            events = [build_event(event_type=event_type,
-                                  details=parse_field_args(list(fields)),
-                                  location=location, time=time_, title=title)]
+            events = [
+                build_event(
+                    event_type=event_type,
+                    details=parse_field_args(list(fields)),
+                    location=location,
+                    time=time_,
+                    title=title,
+                )
+            ]
         else:
             raise click.UsageError("Pass --event-type (with --field ...) or --file.")
     except FieldArgError as e:

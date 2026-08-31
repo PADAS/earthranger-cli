@@ -55,7 +55,17 @@ class FakeER:
 
     # helpers for assertions
     def writes(self):
-        return [c for c in self.calls if c[0] in (
-            "post_event_category", "patch_event_category",
-            "post_event_type", "patch_event_type", "_post", "_patch", "post_event",
-        )]
+        return [
+            c
+            for c in self.calls
+            if c[0]
+            in (
+                "post_event_category",
+                "patch_event_category",
+                "post_event_type",
+                "patch_event_type",
+                "_post",
+                "_patch",
+                "post_event",
+            )
+        ]

@@ -51,7 +51,9 @@ REF = "/api/v2.0/schemas/choices.json?field=t1_species"
 
 def _select_field(type_="select"):
     return FieldSpec(
-        key="species", label="Species", type=type_,
+        key="species",
+        label="Species",
+        type=type_,
         options=[OptionSpec("elephant", "Elephant")],
     )
 
@@ -88,7 +90,8 @@ def test_multiselect_field():
 
 def _event_type():
     return EventTypeSpec(
-        value="t1", display="T One",
+        value="t1",
+        display="T One",
         fields=[_select_field(), FieldSpec(key="notes", label="Notes", type="string")],
         required=["species"],
     )
