@@ -47,7 +47,10 @@ def build_event(
 
 def load_events_file(path: str) -> list[dict]:
     with open(path, encoding="utf-8") as f:
-        data = yaml.safe_load(f)
+        try:
+            data = yaml.safe_load(f)
+        except yaml.YAMLError as e:
+            raise FieldArgError(f"{path}: invalid YAML: {e}") from e
     if not isinstance(data, list):
         raise FieldArgError("events file must be a YAML list of event objects")
     events: list[dict] = []

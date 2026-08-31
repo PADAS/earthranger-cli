@@ -8,6 +8,7 @@ import json
 import sys
 
 import click
+import requests.exceptions
 from erclient.er_errors import ERClientException
 
 from . import client as er
@@ -24,7 +25,7 @@ def _api_errors(f):
     def wrapper(*args, **kwargs):
         try:
             return f(*args, **kwargs)
-        except (ApplyError, ERClientException) as e:
+        except (ApplyError, ERClientException, requests.exceptions.RequestException) as e:
             click.echo(f"error: {e}")
             sys.exit(1)
 

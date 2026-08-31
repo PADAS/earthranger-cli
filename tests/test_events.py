@@ -68,6 +68,15 @@ def test_load_events_file_rejects_non_list(tmp_path):
         load_events_file(str(p))
 
 
+def test_load_events_file_invalid_yaml_raises_field_arg_error(tmp_path):
+    p = tmp_path / "events.yaml"
+    p.write_text("category: {value: [\n")
+    with pytest.raises(FieldArgError) as exc:
+        load_events_file(str(p))
+    assert "invalid YAML" in str(exc.value)
+    assert str(p) in str(exc.value)
+
+
 def test_post_events_reports_per_event_outcomes():
     fake = FakeER()
 

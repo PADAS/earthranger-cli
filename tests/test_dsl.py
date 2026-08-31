@@ -160,6 +160,100 @@ def test_duplicates_rejected():
     assert "event_types[1].value: duplicate event type value 't1'" in errors
 
 
+def test_choice_field_name_collision_across_event_types_rejected():
+    data = {
+        "category": {"value": "c1", "display": "C1"},
+        "event_types": [
+            {
+                "value": "animal",
+                "display": "Animal",
+                "fields": [
+                    {
+                        "key": "sighting_species",
+                        "label": "Species",
+                        "type": "select",
+                        "options": ["a"],
+                    }
+                ],
+            },
+            {
+                "value": "animal_sighting",
+                "display": "Animal Sighting",
+                "fields": [
+                    {"key": "species", "label": "Species", "type": "select", "options": ["a"]}
+                ],
+            },
+        ],
+    }
+    errors = _errors_for(data)
+    assert (
+        "event_types[1].fields[0].key: choice field name 'animal_sighting_species' collides "
+        "with event_types[0].fields[0].key (choice-list field names are "
+        "'<event_type>_<field_key>' truncated to 100 chars and must be unique across the spec)"
+        in errors
+    )
+
+
+def test_choice_field_name_truncation_collision_rejected():
+    common_prefix = "a" * 97
+    long_key_a = common_prefix + "1"
+    long_key_b = common_prefix + "2"
+    data = {
+        "category": {"value": "c1", "display": "C1"},
+        "event_types": [
+            {
+                "value": "t1",
+                "display": "T1",
+                "fields": [
+                    {"key": long_key_a, "label": "A", "type": "select", "options": ["a"]},
+                    {"key": long_key_b, "label": "B", "type": "select", "options": ["a"]},
+                ],
+            },
+        ],
+    }
+    errors = _errors_for(data)
+    assert any("collides with event_types[0].fields[0].key" in e for e in errors)
+
+
+def test_distinct_choice_fields_still_parse():
+    data = {
+        "category": {"value": "c1", "display": "C1"},
+        "event_types": [
+            {
+                "value": "animal",
+                "display": "Animal",
+                "fields": [
+                    {"key": "species", "label": "Species", "type": "select", "options": ["a"]}
+                ],
+            },
+            {
+                "value": "plant",
+                "display": "Plant",
+                "fields": [
+                    {
+                        "key": "species",
+                        "label": "Species",
+                        "type": "multiselect",
+                        "options": ["a"],
+                    }
+                ],
+            },
+        ],
+    }
+    spec = parse_spec(data)
+    assert len(spec.event_types) == 2
+
+
+def test_load_spec_invalid_yaml_raises_spec_error(tmp_path):
+    p = tmp_path / "bad.yaml"
+    p.write_text("category: {value: [\n")
+    with pytest.raises(SpecError) as exc:
+        load_spec(str(p))
+    assert len(exc.value.errors) == 1
+    assert "invalid YAML" in exc.value.errors[0]
+    assert str(p) in exc.value.errors[0]
+
+
 def test_shipped_example_spec_parses():
     import pathlib
 

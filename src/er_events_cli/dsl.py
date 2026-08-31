@@ -74,7 +74,10 @@ class Spec:
 
 def load_spec(path: str) -> Spec:
     with open(path, encoding="utf-8") as f:
-        data = yaml.safe_load(f)
+        try:
+            data = yaml.safe_load(f)
+        except yaml.YAMLError as e:
+            raise SpecError([f"{path}: invalid YAML: {e}"]) from e
     return parse_spec(data)
 
 
@@ -84,9 +87,38 @@ def parse_spec(data: object) -> Spec:
         raise SpecError(["spec must be a mapping with 'category' and 'event_types' keys"])
     category = _parse_category(data.get("category"), errors)
     event_types = _parse_event_types(data.get("event_types"), errors)
+    _check_choice_field_name_collisions(event_types, errors)
     if errors:
         raise SpecError(errors)
     return Spec(category=category, event_types=event_types)
+
+
+def _check_choice_field_name_collisions(
+    event_types: list[EventTypeSpec], errors: list[str]
+) -> None:
+    """Choice-list field names are '<event_type>_<field_key>' truncated to VARCHAR_LIMIT
+    chars (see schema_gen.choice_field_name). Two distinct fields anywhere in the spec
+    can produce the same name; that silently corrupts the server's choice set on apply,
+    so it's rejected here rather than at apply time.
+    """
+    from .schema_gen import choice_field_name  # local import: schema_gen imports from dsl
+
+    seen: dict[str, str] = {}  # choice field name -> path of first field that produced it
+    for i, et in enumerate(event_types):
+        for j, f in enumerate(et.fields):
+            if f.type not in CHOICE_TYPES or not f.key:
+                continue
+            name = choice_field_name(et.value, f.key)
+            path = f"event_types[{i}].fields[{j}].key"
+            first = seen.get(name)
+            if first is not None:
+                errors.append(
+                    f"{path}: choice field name {name!r} collides with {first} "
+                    "(choice-list field names are '<event_type>_<field_key>' truncated to "
+                    "100 chars and must be unique across the spec)"
+                )
+            else:
+                seen[name] = path
 
 
 def _parse_category(raw: object, errors: list[str]) -> CategorySpec:

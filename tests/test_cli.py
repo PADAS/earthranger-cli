@@ -58,6 +58,13 @@ def test_apply_bad_spec_lists_all_errors_and_exits_1(fake):
     assert fake.calls == []
 
 
+def test_apply_invalid_yaml_exits_cleanly(fake):
+    result = _run(["apply", "spec.yaml"], spec_text="category: {value: [\n")
+    assert result.exit_code == 1
+    assert "error:" in result.output
+    assert "invalid YAML" in result.output
+
+
 def test_connect_requires_server(monkeypatch):
     monkeypatch.delenv("ER_SERVER", raising=False)
     monkeypatch.delenv("ER_USERNAME", raising=False)
@@ -95,6 +102,19 @@ def test_api_errors_print_cleanly_and_exit_1(fake):
     assert "error: Invalid credentials given." in result.output
 
 
+def test_network_errors_print_cleanly_and_exit_1(fake):
+    import requests.exceptions
+
+    def connection_error(include_inactive=False):
+        raise requests.exceptions.ConnectionError("boom")
+
+    fake.get_event_categories = connection_error
+    result = _run(["apply", "spec.yaml"])
+    assert result.exit_code == 1
+    assert "error:" in result.output
+    assert "boom" in result.output
+
+
 import json
 
 
@@ -120,6 +140,17 @@ def test_post_event_flags(fake):
     assert posted["event_details"] == {"species": "elephant", "count": 3}
     assert posted["location"] == {"latitude": -1.286, "longitude": 36.817}
     assert posted["title"] == "Morning"
+
+
+def test_post_event_file_invalid_yaml_exits_cleanly(fake):
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        with open("events.yaml", "w") as f:
+            f.write("category: {value: [\n")
+        result = runner.invoke(main, ["post-event", "--file", "events.yaml"])
+    assert result.exit_code == 1
+    assert "error:" in result.output
+    assert "invalid YAML" in result.output
 
 
 def test_post_event_requires_type_or_file(fake):
