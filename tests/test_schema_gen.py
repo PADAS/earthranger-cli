@@ -1,5 +1,5 @@
-from er_events_cli.dsl import FieldSpec
-from er_events_cli.schema_gen import build_property_pair, choice_field_name
+from er_events_cli.dsl import EventTypeSpec, FieldSpec, OptionSpec
+from er_events_cli.schema_gen import build_event_type_payload, build_property_pair, build_schema, choice_field_name
 
 
 def test_choice_field_name_joins_and_truncates_to_100():
@@ -39,3 +39,83 @@ def test_number_boolean_date_datetime():
     assert ui == {"type": "DATE_TIME", "parent": "section-1"}
     json_prop, _ = build_property_pair(FieldSpec(key="dt", label="At", type="datetime"), "t1")
     assert json_prop == {"type": "string", "format": "date-time", "title": "At"}
+
+
+REF = "/api/v2.0/schemas/choices.json?field=t1_species"
+
+
+def _select_field(type_="select"):
+    return FieldSpec(
+        key="species", label="Species", type=type_,
+        options=[OptionSpec("elephant", "Elephant")],
+    )
+
+
+def test_select_field():
+    json_prop, ui = build_property_pair(_select_field(), "t1")
+    assert json_prop == {"type": "string", "title": "Species", "anyOf": [{"$ref": REF}]}
+    assert ui == {
+        "type": "CHOICE_LIST",
+        "inputType": "DROPDOWN",
+        "placeholder": "",
+        "choices": {
+            "type": "EXISTING_CHOICE_LIST",
+            "existingChoiceList": ["t1_species"],
+            "eventTypeCategories": [],
+            "featureCategories": [],
+            "myDataType": "",
+            "subjectGroups": [],
+            "subjectSubtypes": [],
+        },
+        "parent": "section-1",
+    }
+
+
+def test_multiselect_field():
+    json_prop, _ = build_property_pair(_select_field("multiselect"), "t1")
+    assert json_prop == {
+        "type": "array",
+        "title": "Species",
+        "uniqueItems": True,
+        "items": {"type": "string", "anyOf": [{"$ref": REF}]},
+    }
+
+
+def _event_type():
+    return EventTypeSpec(
+        value="t1", display="T One",
+        fields=[_select_field(), FieldSpec(key="notes", label="Notes", type="string")],
+        required=["species"],
+    )
+
+
+def test_build_schema_envelope():
+    schema = build_schema(_event_type())
+    assert schema["json"]["$schema"] == "https://json-schema.org/draft/2020-12/schema"
+    assert schema["json"]["type"] == "object"
+    assert schema["json"]["unevaluatedProperties"] is False
+    assert schema["json"]["required"] == ["species"]
+    assert list(schema["json"]["properties"]) == ["species", "notes"]
+    section = schema["ui"]["sections"]["section-1"]
+    assert section["label"] == "Details"
+    assert section["leftColumn"] == [
+        {"name": "species", "type": "field"},
+        {"name": "notes", "type": "field"},
+    ]
+    assert schema["ui"]["order"] == ["section-1"]
+    assert schema["ui"]["headers"] == {}
+    assert list(schema["ui"]["fields"]) == ["species", "notes"]
+
+
+def test_build_event_type_payload():
+    payload = build_event_type_payload(_event_type(), "wildlife_monitoring")
+    assert payload["value"] == "t1"
+    assert payload["display"] == "T One"
+    assert payload["category"] == "wildlife_monitoring"
+    assert payload["is_active"] is True
+    assert payload["readonly"] is False
+    assert payload["schema"] == build_schema(_event_type())
+    assert "icon_id" not in payload
+    et = _event_type()
+    et.icon_id = "mammal_rep"
+    assert build_event_type_payload(et, "c")["icon_id"] == "mammal_rep"

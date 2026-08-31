@@ -45,4 +45,76 @@ def build_property_pair(field: FieldSpec, event_type_value: str) -> tuple[dict, 
 
 
 def _build_choice_pair(field: FieldSpec, event_type_value: str) -> tuple[dict, dict]:
-    raise NotImplementedError  # Task 4
+    name = choice_field_name(event_type_value, field.key)
+    ref = _REF_TEMPLATE.format(field=name)
+    ui_field = {
+        "type": "CHOICE_LIST",
+        "inputType": "DROPDOWN",
+        "placeholder": "",
+        "choices": {
+            "type": "EXISTING_CHOICE_LIST",
+            "existingChoiceList": [name],
+            "eventTypeCategories": [],
+            "featureCategories": [],
+            "myDataType": "",
+            "subjectGroups": [],
+            "subjectSubtypes": [],
+        },
+        "parent": SECTION_ID,
+    }
+    if field.type == "multiselect":
+        json_prop = {
+            "type": "array",
+            "title": field.label,
+            "uniqueItems": True,
+            "items": {"type": "string", "anyOf": [{"$ref": ref}]},
+        }
+    else:
+        json_prop = {"type": "string", "title": field.label, "anyOf": [{"$ref": ref}]}
+    return json_prop, ui_field
+
+
+def build_schema(et: EventTypeSpec) -> dict:
+    properties: dict[str, dict] = {}
+    ui_fields: dict[str, dict] = {}
+    for f in et.fields:
+        json_prop, ui_field = build_property_pair(f, et.value)
+        properties[f.key] = json_prop
+        ui_fields[f.key] = ui_field
+    return {
+        "json": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "type": "object",
+            "unevaluatedProperties": False,
+            "properties": properties,
+            "required": list(et.required),
+        },
+        "ui": {
+            "fields": ui_fields,
+            "headers": {},
+            "order": [SECTION_ID],
+            "sections": {
+                SECTION_ID: {
+                    "label": "Details",
+                    "columns": 1,
+                    "isActive": True,
+                    "leftColumn": [{"name": f.key, "type": "field"} for f in et.fields],
+                    "rightColumn": [],
+                }
+            },
+        },
+    }
+
+
+def build_event_type_payload(et: EventTypeSpec, category_value: str) -> dict:
+    payload = {
+        "value": et.value,
+        "display": et.display,
+        "category": category_value,
+        "is_active": et.is_active,
+        "readonly": False,
+        "schema": build_schema(et),
+    }
+    if et.icon_id:
+        payload["icon_id"] = et.icon_id
+    return payload
