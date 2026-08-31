@@ -16,7 +16,9 @@ _REF_TEMPLATE = "/api/v2.0/schemas/choices.json?field={field}"
 _SCALAR_JSON = {
     "string": {"type": "string"},
     "textarea": {"type": "string"},
-    "integer": {"type": "integer"},
+    # ER's meta-schema has no integer variant (numeric type is const "number"),
+    # so integer is advisory in the DSL and emits number on the wire.
+    "integer": {"type": "number"},
     "number": {"type": "number"},
     "boolean": {"type": "boolean"},
     "date": {"type": "string", "format": "date"},
@@ -53,7 +55,8 @@ def choice_field_name(event_type_value: str, field_key: str) -> str:
 
 def build_property_pair(field: FieldSpec, event_type_value: str) -> tuple[dict, dict]:
     if field.type in _SCALAR_JSON:
-        json_prop = {**_SCALAR_JSON[field.type], "title": field.label}
+        # ER's meta-schema requires "deprecated" on every json property.
+        json_prop = {**_SCALAR_JSON[field.type], "title": field.label, "deprecated": False}
         if field.min is not None:
             json_prop["minimum"] = field.min
         if field.max is not None:
@@ -65,30 +68,24 @@ def build_property_pair(field: FieldSpec, event_type_value: str) -> tuple[dict, 
 def _build_choice_pair(field: FieldSpec, event_type_value: str) -> tuple[dict, dict]:
     name = choice_field_name(event_type_value, field.key)
     ref = _REF_TEMPLATE.format(field=name)
-    ui_field = {
-        "type": "CHOICE_LIST",
-        "inputType": "DROPDOWN",
-        "placeholder": "",
-        "choices": {
-            "type": "EXISTING_CHOICE_LIST",
-            "existingChoiceList": [name],
-            "eventTypeCategories": [],
-            "featureCategories": [],
-            "myDataType": "",
-            "subjectGroups": [],
-            "subjectSubtypes": [],
-        },
-        "parent": SECTION_ID,
-    }
+    # ER's meta-schema rejects extra UI keys (the legacy builder-only "choices"
+    # block included); the json $ref is the sole linkage to the Choice records.
+    ui_field = {"type": "CHOICE_LIST", "inputType": "DROPDOWN", "parent": SECTION_ID}
     if field.type == "multiselect":
         json_prop = {
             "type": "array",
             "title": field.label,
+            "deprecated": False,
             "uniqueItems": True,
             "items": {"type": "string", "anyOf": [{"$ref": ref}]},
         }
     else:
-        json_prop = {"type": "string", "title": field.label, "anyOf": [{"$ref": ref}]}
+        json_prop = {
+            "type": "string",
+            "title": field.label,
+            "deprecated": False,
+            "anyOf": [{"$ref": ref}],
+        }
     return json_prop, ui_field
 
 

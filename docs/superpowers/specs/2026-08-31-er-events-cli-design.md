@@ -150,23 +150,27 @@ Anticipated user question; the README will carry this answer too.
 Each DSL field generates a `json.properties` entry and a `ui.fields`
 entry (all UI fields carry `parent: "section-1"`):
 
+Every json property also carries `"deprecated": false` — ER's meta-schema
+(das `eventtype_meta_schemas.py`) requires it on every field variant.
+
 | DSL type      | json property                                          | ui field                                  |
 |---------------|--------------------------------------------------------|-------------------------------------------|
 | `string`      | `{"type": "string", "title": ...}`                     | `TEXT` / inputType `SHORT_TEXT`            |
 | `textarea`    | `{"type": "string", "title": ...}`                     | `TEXT` / inputType `LONG_TEXT`             |
-| `integer`     | `{"type": "integer", "title": ..., "minimum"/"maximum" if set}` | `NUMERIC`                         |
+| `integer`     | `{"type": "number", "title": ..., "minimum"/"maximum" if set}` (ER has no integer variant; integer is advisory in the DSL) | `NUMERIC` |
 | `number`      | `{"type": "number", ...}` (min/max as above)           | `NUMERIC`                                  |
 | `boolean`     | `{"type": "boolean", "title": ...}`                    | `BOOLEAN`                                  |
 | `date`        | `{"type": "string", "format": "date", "title": ...}`   | `DATE_TIME`                                |
 | `datetime`    | `{"type": "string", "format": "date-time", "title": ...}` | `DATE_TIME`                             |
-| `select`      | `{"type": "string", "title": ..., "anyOf": [{"$ref": REF}]}` | `CHOICE_LIST` / `DROPDOWN` + choices block |
-| `multiselect` | `{"type": "array", "title": ..., "uniqueItems": true, "items": {"type": "string", "anyOf": [{"$ref": REF}]}}` | `CHOICE_LIST` / `DROPDOWN` + choices block |
+| `url`         | `{"type": "string", "format": "uri", "title": ...}`    | `TEXT` / inputType `SHORT_TEXT`            |
+| `select`      | `{"type": "string", "title": ..., "anyOf": [{"$ref": REF}]}` | `CHOICE_LIST` / `DROPDOWN`           |
+| `multiselect` | `{"type": "array", "title": ..., "uniqueItems": true, "items": {"type": "string", "anyOf": [{"$ref": REF}]}}` | `CHOICE_LIST` / `DROPDOWN` |
 
-Where `REF = f"/api/v2.0/schemas/choices.json?field={choice_field}"` and
-the CHOICE_LIST ui field carries the choices block
-`{"type": "EXISTING_CHOICE_LIST", "existingChoiceList": [choice_field],
-"eventTypeCategories": [], "featureCategories": [], "myDataType": "",
-"subjectGroups": [], "subjectSubtypes": []}`.
+Where `REF = f"/api/v2.0/schemas/choices.json?field={choice_field}"`. The
+CHOICE_LIST ui field is exactly `{"type": "CHOICE_LIST", "inputType":
+"DROPDOWN", "parent": "section-1"}` — ER removed the legacy builder-only
+`choices`/`EXISTING_CHOICE_LIST` block from its meta-schema (ERA-13201)
+and now rejects it; the json `$ref` is the sole linkage to Choice records.
 
 `choice_field = f"{event_type_value}_{field_key}"` when that fits ER's
 varchar(40) `Choice.field` column; longer names are compressed to exactly

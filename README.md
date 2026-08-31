@@ -83,7 +83,8 @@ or pass `--server/--username/--password` before the subcommand.
 
 ## Spec reference
 
-Field types: `string`, `textarea`, `integer`, `number` (both take
+Field types: `string`, `textarea`, `integer` (advisory — ER stores it as
+`number` on the wire), `number` (both take
 optional `min`/`max`), `boolean`, `date`, `datetime`, `url`, `select`,
 `multiselect` (both take `options`).
 

@@ -32,7 +32,7 @@ def test_choice_field_name_long_names_deterministic_and_distinct():
 
 def test_string_field():
     json_prop, ui = build_property_pair(FieldSpec(key="n", label="Notes", type="string"), "t1")
-    assert json_prop == {"type": "string", "title": "Notes"}
+    assert json_prop == {"type": "string", "title": "Notes", "deprecated": False}
     assert ui == {"type": "TEXT", "inputType": "SHORT_TEXT", "parent": "section-1"}
 
 
@@ -45,28 +45,50 @@ def test_integer_with_min_max():
     json_prop, ui = build_property_pair(
         FieldSpec(key="c", label="Count", type="integer", min=0, max=500), "t1"
     )
-    assert json_prop == {"type": "integer", "title": "Count", "minimum": 0, "maximum": 500}
+    # ER's meta-schema has no integer variant; integer is advisory and emits number.
+    assert json_prop == {
+        "type": "number",
+        "title": "Count",
+        "deprecated": False,
+        "minimum": 0,
+        "maximum": 500,
+    }
     assert ui == {"type": "NUMERIC", "parent": "section-1"}
 
 
 def test_number_boolean_date_datetime():
     json_prop, _ = build_property_pair(FieldSpec(key="r", label="Ratio", type="number"), "t1")
-    assert json_prop == {"type": "number", "title": "Ratio"}
+    assert json_prop == {"type": "number", "title": "Ratio", "deprecated": False}
     json_prop, ui = build_property_pair(FieldSpec(key="i", label="Injured", type="boolean"), "t1")
-    assert json_prop == {"type": "boolean", "title": "Injured"}
+    assert json_prop == {"type": "boolean", "title": "Injured", "deprecated": False}
     assert ui == {"type": "BOOLEAN", "parent": "section-1"}
     json_prop, ui = build_property_pair(FieldSpec(key="d", label="Seen on", type="date"), "t1")
-    assert json_prop == {"type": "string", "format": "date", "title": "Seen on"}
+    assert json_prop == {
+        "type": "string",
+        "format": "date",
+        "title": "Seen on",
+        "deprecated": False,
+    }
     assert ui == {"type": "DATE_TIME", "parent": "section-1"}
     json_prop, _ = build_property_pair(FieldSpec(key="dt", label="At", type="datetime"), "t1")
-    assert json_prop == {"type": "string", "format": "date-time", "title": "At"}
+    assert json_prop == {
+        "type": "string",
+        "format": "date-time",
+        "title": "At",
+        "deprecated": False,
+    }
 
 
 def test_url_field():
     json_prop, ui = build_property_pair(
         FieldSpec(key="link", label="Source link", type="url"), "t1"
     )
-    assert json_prop == {"type": "string", "format": "uri", "title": "Source link"}
+    assert json_prop == {
+        "type": "string",
+        "format": "uri",
+        "title": "Source link",
+        "deprecated": False,
+    }
     assert ui == {"type": "TEXT", "inputType": "SHORT_TEXT", "parent": "section-1"}
 
 
@@ -84,22 +106,15 @@ def _select_field(type_="select"):
 
 def test_select_field():
     json_prop, ui = build_property_pair(_select_field(), "t1")
-    assert json_prop == {"type": "string", "title": "Species", "anyOf": [{"$ref": REF}]}
-    assert ui == {
-        "type": "CHOICE_LIST",
-        "inputType": "DROPDOWN",
-        "placeholder": "",
-        "choices": {
-            "type": "EXISTING_CHOICE_LIST",
-            "existingChoiceList": ["t1_species"],
-            "eventTypeCategories": [],
-            "featureCategories": [],
-            "myDataType": "",
-            "subjectGroups": [],
-            "subjectSubtypes": [],
-        },
-        "parent": "section-1",
+    assert json_prop == {
+        "type": "string",
+        "title": "Species",
+        "deprecated": False,
+        "anyOf": [{"$ref": REF}],
     }
+    # ER removed the builder-only "choices" block from its meta-schema
+    # (additionalProperties: False now rejects it); the $ref is the linkage.
+    assert ui == {"type": "CHOICE_LIST", "inputType": "DROPDOWN", "parent": "section-1"}
 
 
 def test_multiselect_field():
@@ -107,6 +122,7 @@ def test_multiselect_field():
     assert json_prop == {
         "type": "array",
         "title": "Species",
+        "deprecated": False,
         "uniqueItems": True,
         "items": {"type": "string", "anyOf": [{"$ref": REF}]},
     }
