@@ -137,8 +137,16 @@ fields take `format: url | email | uuid` — the builder's "Format
 Validation" (`url` is sent as JSON Schema `uri`).
 
 Options are `{value, display}` mappings or bare strings
-(`lion` → value `lion`, display `Lion`). Slugs — category value, event
-type values, field keys, option values — must match `[a-z0-9_]+`.
+(`lion` → value `lion`, display `Lion`); option values are free text
+(ER stores them as-is). Category and event-type values must match
+`[a-z0-9_]+` (they appear in URLs); field keys follow ER's own rule,
+`[a-zA-Z0-9_-]+`.
+
+Select/multiselect fields take an optional `choices_field` naming the
+exact ER Choice set to use, overriding the derived
+`<event_type>_<field_key>` name — needed for stock event types whose
+choice sets predate this tool, and for deliberately sharing one choice
+set between fields (allowed only when both declare identical options).
 
 Per event type an optional `layout: {label, columns}` (default
 `{label: Details, columns: 1}`) controls the form section; with

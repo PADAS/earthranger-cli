@@ -186,3 +186,20 @@ def test_stringified_schema_from_get_still_compares_unchanged():
     records = apply_spec(fake, _spec())
     assert {r.action for r in records} == {"unchanged"}
     assert fake.writes() == []
+
+
+def test_server_echo_noise_still_compares_unchanged():
+    """ER's GET injects icon_id/image_url into the schema dict and stores
+    empty-string description/placeholder where the generator omits the key;
+    none of that is a real difference."""
+    fake = _existing_state()
+    schema = fake.event_types[0]["schema"]
+    schema["icon_id"] = "sighting"
+    schema["image_url"] = "https://x.pamdas.org/static/sighting-black.svg"
+    schema["json"]["properties"]["notes"]["description"] = ""
+    schema["ui"]["fields"]["notes"]["placeholder"] = ""
+    schema["ui"]["fields"]["notes"]["conditionalDependents"] = []
+    schema["ui"]["sections"]["section-1"]["conditions"] = []
+    records = apply_spec(fake, _spec())
+    assert {r.action for r in records} == {"unchanged"}
+    assert fake.writes() == []

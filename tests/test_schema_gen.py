@@ -240,3 +240,12 @@ def test_two_column_layout_section():
         {"name": "c", "type": "field"},
     ]
     assert section["rightColumn"] == [{"name": "b", "type": "field"}]
+
+
+def test_explicit_choices_field_used_in_ref():
+    f = _select_field()
+    f.choices_field = "illegal_fishing_action"
+    json_prop, _ = build_property_pair(f, "t1")
+    assert json_prop["anyOf"] == [
+        {"$ref": "/api/v2.0/schemas/choices.json?field=illegal_fishing_action"}
+    ]

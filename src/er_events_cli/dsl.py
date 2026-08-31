@@ -27,6 +27,13 @@ SUPPORTED_TYPES = {
 CHOICE_TYPES = {"select", "multiselect"}
 NUMERIC_TYPES = {"integer", "number"}
 _SLUG_RE = re.compile(r"^[a-z0-9_]+$")
+# ER's own field-name rule (das FORM_ELEMENT_SEGMENT_PATTERN): stock event
+# types use hyphens and uppercase in field keys, so keys are looser than the
+# category/event-type value slugs (which appear in URLs).
+FIELD_KEY_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
+# Explicit choices_field names: ER Choice.field is varchar(40); characters kept
+# to what survives the $ref query string and ER's stock naming.
+CHOICES_FIELD_RE = re.compile(r"^[A-Za-z0-9_-]{1,40}$")
 
 
 class SpecError(Exception):
@@ -54,6 +61,7 @@ class FieldSpec:
     default: object = None  # None means "not set" (False/"" are real defaults)
     format: str | None = None  # string fields only: url | email | uuid
     column: str = "left"  # "right" needs layout columns: 2
+    choices_field: str | None = None  # explicit Choice.field name (overrides derivation)
 
 
 # Types whose ER UI variant has a placeholder slot (boolean/date/datetime don't).
@@ -130,24 +138,38 @@ def _check_choice_field_name_collisions(
     produce the same name; that silently corrupts the server's choice set on apply,
     so it's rejected here rather than at apply time.
     """
-    from .schema_gen import choice_field_name  # local import: schema_gen imports from dsl
+    from .schema_gen import effective_choice_field  # local: schema_gen imports from dsl
 
-    seen: dict[str, str] = {}  # choice field name -> path of first field that produced it
+    # name -> (path, explicit?, options) of the first field that produced it
+    seen: dict[str, tuple[str, bool, list]] = {}
     for i, et in enumerate(event_types):
         for j, f in enumerate(et.fields):
             if f.type not in CHOICE_TYPES or not f.key:
                 continue
-            name = choice_field_name(et.value, f.key)
+            name = effective_choice_field(et.value, f)
             path = f"event_types[{i}].fields[{j}].key"
+            explicit = f.choices_field is not None
             first = seen.get(name)
-            if first is not None:
-                errors.append(
-                    f"{path}: choice field name {name!r} collides with {first} "
-                    "(choice-list field names are derived from '<event_type>_<field_key>' "
-                    "and must be unique across the spec)"
-                )
-            else:
-                seen[name] = path
+            if first is None:
+                seen[name] = (path, explicit, f.options or [])
+                continue
+            first_path, first_explicit, first_options = first
+            if explicit and first_explicit:
+                # Intentional sharing of one Choice set is fine only when both
+                # sides carry the same options; otherwise apply would see-saw
+                # the shared set (each apply deactivating the other's options).
+                if (f.options or []) != first_options:
+                    errors.append(
+                        f"{path}: choices_field {name!r} is shared with {first_path} "
+                        "but the two fields declare different options; shared choice "
+                        "sets must declare identical options"
+                    )
+                continue
+            errors.append(
+                f"{path}: choice field name {name!r} collides with {first_path} "
+                "(choice-list field names are derived from '<event_type>_<field_key>' "
+                "and must be unique across the spec)"
+            )
 
 
 def _parse_category(raw: object, errors: list[str]) -> CategorySpec:
@@ -248,7 +270,9 @@ def _parse_field(raw: object, path: str, errors: list[str]) -> FieldSpec:
     if not isinstance(raw, dict):
         errors.append(f"{path}: must be a mapping")
         return FieldSpec(key="", label="", type="string")
-    key = _required_slug(raw.get("key"), f"{path}.key", errors)
+    key = _required_str(raw.get("key"), f"{path}.key", errors)
+    if key and not FIELD_KEY_RE.match(key):
+        errors.append(f"{path}.key: {key!r} must match [a-zA-Z0-9_-]+")
     label = _required_str(raw.get("label"), f"{path}.label", errors)
     ftype = raw.get("type")
     if ftype not in SUPPORTED_TYPES:
@@ -302,6 +326,17 @@ def _parse_field(raw: object, path: str, errors: list[str]) -> FieldSpec:
                 errors.append(f"{path}.default: must be {label_} for type {ftype!r}")
                 default = None
 
+    choices_field = raw.get("choices_field")
+    if choices_field is not None:
+        if ftype not in CHOICE_TYPES:
+            errors.append(f"{path}.choices_field: only allowed on select/multiselect")
+            choices_field = None
+        elif not isinstance(choices_field, str) or not CHOICES_FIELD_RE.match(choices_field):
+            errors.append(
+                f"{path}.choices_field: must match [A-Za-z0-9_-] and be at most 40 characters"
+            )
+            choices_field = None
+
     column = raw.get("column", "left")
     if column not in ("left", "right"):
         errors.append(f"{path}.column: must be 'left' or 'right'")
@@ -329,6 +364,7 @@ def _parse_field(raw: object, path: str, errors: list[str]) -> FieldSpec:
         default=default,
         format=fmt,
         column=column,
+        choices_field=choices_field,
     )
 
 
@@ -361,8 +397,8 @@ def _parse_option(item: object, path: str, errors: list[str]) -> OptionSpec | No
     else:
         errors.append(f"{path}: option must be a string or a value/display mapping")
         return None
-    if not _SLUG_RE.match(value):
-        errors.append(f"{path}: option value {value!r} must match [a-z0-9_]+")
+    # Option values are free text on ER (Choice.value is an unconstrained
+    # varchar(100), truncated at generation time); no slug rule here.
     return OptionSpec(value=value, display=display)
 
 

@@ -408,3 +408,115 @@ def test_layout_validation():
         _spec_with_field({"key": "n", "label": "N", "type": "string", "column": "right"})
     )
     assert "event_types[0].fields[0].column: 'right' requires layout columns: 2" in errors
+
+
+def test_choices_field_parses_and_validates():
+    spec = parse_spec(
+        _spec_with_field(
+            {
+                "key": "action",
+                "label": "Action",
+                "type": "select",
+                "choices_field": "illegal_fishing_action",
+                "options": ["stopped"],
+            }
+        )
+    )
+    assert spec.event_types[0].fields[0].choices_field == "illegal_fishing_action"
+
+    errors = _errors_for(
+        _spec_with_field({"key": "n", "label": "N", "type": "string", "choices_field": "x"})
+    )
+    assert "event_types[0].fields[0].choices_field: only allowed on select/multiselect" in errors
+
+    errors = _errors_for(
+        _spec_with_field(
+            {
+                "key": "s",
+                "label": "S",
+                "type": "select",
+                "options": ["a"],
+                "choices_field": "bad name!",
+            }
+        )
+    )
+    assert any("choices_field: must match" in e for e in errors)
+
+    errors = _errors_for(
+        _spec_with_field(
+            {
+                "key": "s",
+                "label": "S",
+                "type": "select",
+                "options": ["a"],
+                "choices_field": "x" * 41,
+            }
+        )
+    )
+    assert any("choices_field: must match" in e for e in errors)
+
+
+def _two_fields_sharing(name, options_a, options_b):
+    return {
+        "category": {"value": "c1", "display": "C1"},
+        "event_types": [
+            {
+                "value": "t1",
+                "display": "T1",
+                "fields": [
+                    {
+                        "key": "a",
+                        "label": "A",
+                        "type": "select",
+                        "choices_field": name,
+                        "options": options_a,
+                    }
+                ],
+            },
+            {
+                "value": "t2",
+                "display": "T2",
+                "fields": [
+                    {
+                        "key": "b",
+                        "label": "B",
+                        "type": "select",
+                        "choices_field": name,
+                        "options": options_b,
+                    }
+                ],
+            },
+        ],
+    }
+
+
+def test_shared_choices_field_allowed_when_options_identical():
+    spec = parse_spec(_two_fields_sharing("shared_actions", ["stop", "go"], ["stop", "go"]))
+    assert len(spec.event_types) == 2
+
+
+def test_shared_choices_field_rejected_when_options_differ():
+    errors = _errors_for(_two_fields_sharing("shared_actions", ["stop"], ["go"]))
+    assert any("shared_actions" in e and "identical options" in e for e in errors)
+
+
+def test_field_keys_accept_er_charset():
+    # das FORM_ELEMENT_SEGMENT_PATTERN is [a-zA-Z0-9_-]+ — stock types use
+    # hyphens and uppercase (cameratraprep_camera-name, mistrep_Method).
+    spec = parse_spec(
+        _spec_with_field({"key": "cameratraprep_camera-name", "label": "N", "type": "string"})
+    )
+    assert spec.event_types[0].fields[0].key == "cameratraprep_camera-name"
+    errors = _errors_for(_spec_with_field({"key": "bad key!", "label": "N", "type": "string"}))
+    assert any("must match [a-zA-Z0-9_-]+" in e for e in errors)
+
+
+def test_option_values_are_free_text():
+    spec = parse_spec(
+        _spec_with_field(
+            {"key": "s", "label": "S", "type": "select", "options": ["Apprehend", "Chase"]}
+        )
+    )
+    opts = spec.event_types[0].fields[0].options
+    assert [o.value for o in opts] == ["Apprehend", "Chase"]
+    assert [o.display for o in opts] == ["Apprehend", "Chase"]

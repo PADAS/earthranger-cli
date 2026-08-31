@@ -130,13 +130,28 @@ def test_pull_reports_unsupported_field_shapes():
     assert "sighting" in values
 
 
-def test_pull_reports_foreign_choice_field_name():
+def test_pull_foreign_choice_field_name_becomes_choices_field():
     fake = _server_from_spec(SPEC_DATA)
     et = fake.event_types[0]
     prop = et["schema"]["json"]["properties"]["species"]
     prop["anyOf"] = [{"$ref": "/api/v2.0/schemas/choices.json?field=handmade_name"}]
+    fake.choices["handmade_name"] = [{"id": "h1", "value": "x", "display": "X", "is_active": True}]
     result = pull_category(fake, "wm")
-    assert any("handmade_name" in w for w in result.unsupported)
+    assert result.unsupported == []
+    field = result.spec["event_types"][0]["fields"][0]
+    assert field["choices_field"] == "handmade_name"
+    assert field["options"] == ["x"]
+    records = apply_spec(fake, parse_spec(result.spec))
+    assert {r.action for r in records} == {"unchanged"}
+
+
+def test_pull_unusable_choice_field_name_still_skipped():
+    fake = _server_from_spec(SPEC_DATA)
+    et = fake.event_types[0]
+    prop = et["schema"]["json"]["properties"]["species"]
+    prop["anyOf"] = [{"$ref": "/api/v2.0/schemas/choices.json?field=bad.na%20me"}]
+    result = pull_category(fake, "wm")
+    assert any("bad.na%20me" in w for w in result.unsupported)
 
 
 def test_pull_reports_layout_it_cannot_express():

@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 from .client import CHOICE_MODEL
 from .dsl import EventTypeSpec
-from .schema_gen import VARCHAR_LIMIT, choice_field_name
+from .schema_gen import VARCHAR_LIMIT, effective_choice_field
 
 
 @dataclass
@@ -22,7 +22,7 @@ def desired_choice_records(et: EventTypeSpec) -> dict[str, list[dict]]:
     for f in et.fields:
         if f.options is None:
             continue
-        name = choice_field_name(et.value, f.key)
+        name = effective_choice_field(et.value, f)
         out[name] = [
             {
                 "model": CHOICE_MODEL,

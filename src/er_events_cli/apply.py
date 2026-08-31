@@ -8,6 +8,7 @@ deactivated, never deleted).
 
 from __future__ import annotations
 
+import copy
 import json
 import re
 from dataclasses import dataclass
@@ -160,6 +161,30 @@ def _category_value(raw: object) -> str | None:
     return raw
 
 
+def _canonical_schema(schema) -> object:
+    """Comparison form of a schema: normalized, with server-echo noise removed
+    (schema-level icon_id/image_url that ER injects on GET, and empty-string
+    description/placeholder, which are wire-equivalent to omitting the key)."""
+    schema = normalize_v2_schema(copy.deepcopy(schema))
+    if not isinstance(schema, dict):
+        return schema
+    schema.pop("icon_id", None)
+    schema.pop("image_url", None)
+    for prop in (schema.get("json", {}).get("properties") or {}).values():
+        if isinstance(prop, dict) and prop.get("description") == "":
+            del prop["description"]
+    for ui_field in (schema.get("ui", {}).get("fields") or {}).values():
+        if isinstance(ui_field, dict):
+            if ui_field.get("placeholder") == "":
+                del ui_field["placeholder"]
+            if ui_field.get("conditionalDependents") == []:
+                del ui_field["conditionalDependents"]
+    for section in (schema.get("ui", {}).get("sections") or {}).values():
+        if isinstance(section, dict) and section.get("conditions") == []:
+            del section["conditions"]
+    return schema
+
+
 def _event_type_differs(payload: dict, existing: dict) -> bool:
     if payload["display"] != existing.get("display"):
         return True
@@ -169,7 +194,7 @@ def _event_type_differs(payload: dict, existing: dict) -> bool:
         return True
     if "icon" in payload and payload["icon"] != existing.get("icon"):
         return True
-    return payload["schema"] != normalize_v2_schema(existing.get("schema") or {})
+    return _canonical_schema(payload["schema"]) != _canonical_schema(existing.get("schema") or {})
 
 
 def _apply_event_type(client, et, category_value: str, existing: dict | None, dry_run: bool):

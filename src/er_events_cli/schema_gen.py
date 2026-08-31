@@ -53,6 +53,12 @@ def choice_field_name(event_type_value: str, field_key: str) -> str:
     return f"{full[: FIELD_NAME_LIMIT - 9]}_{digest}"
 
 
+def effective_choice_field(event_type_value: str, field: FieldSpec) -> str:
+    """The Choice.field name a select/multiselect actually uses: an explicit
+    choices_field (stock ER types predate our derivation) or the derived name."""
+    return field.choices_field or choice_field_name(event_type_value, field.key)
+
+
 # DSL format values -> JSON Schema format strings (ER's builder calls uri "URL").
 _FORMAT_WIRE = {"url": "uri", "email": "email", "uuid": "uuid"}
 
@@ -79,7 +85,7 @@ def build_property_pair(field: FieldSpec, event_type_value: str) -> tuple[dict, 
 
 
 def _build_choice_pair(field: FieldSpec, event_type_value: str) -> tuple[dict, dict]:
-    name = choice_field_name(event_type_value, field.key)
+    name = effective_choice_field(event_type_value, field)
     ref = _REF_TEMPLATE.format(field=name)
     # ER's meta-schema rejects extra UI keys (the legacy builder-only "choices"
     # block included); the json $ref is the sole linkage to the Choice records.

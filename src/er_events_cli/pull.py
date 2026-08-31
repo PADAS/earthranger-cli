@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 import yaml
 
 from . import client as er
+from .dsl import CHOICES_FIELD_RE
 from .schema_gen import SECTION_ID, choice_field_name
 
 _REF_FIELD_RE = re.compile(r"choices\.json\?field=([^&\"']+)$")
@@ -225,10 +226,14 @@ def _invert_choice_field(client, et_value, key, json_prop, ui_field, out):
         return None, f"unrecognized $ref {refs[0]['$ref']!r}"
     name = m.group(1)
     if name != choice_field_name(et_value, key):
-        return None, (
-            f"choice field name {name!r} does not match the derived "
-            f"'{choice_field_name(et_value, key)}'; applying would rename the choice set"
-        )
+        # A stock/hand-built type owns its choice-field name; carry it as an
+        # explicit choices_field so apply keeps using it instead of renaming.
+        if not CHOICES_FIELD_RE.match(name):
+            return None, (
+                f"choice field name {name!r} cannot be expressed as a choices_field "
+                "(character set or length)"
+            )
+        out["choices_field"] = name
     options = []
     for record in er.get_choices(client, name):
         if not record.get("is_active", True):

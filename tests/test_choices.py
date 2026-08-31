@@ -108,3 +108,11 @@ def test_plan_leaves_already_inactive_removed_options_alone():
     existing = [{"id": "3", "value": "rhino", "display": "Rhino", "is_active": False}]
     ops = plan_field_choices(existing, DESIRED)
     assert [op.action for op in ops] == ["create", "create"]
+
+
+def test_desired_records_use_explicit_choices_field():
+    et = _et()
+    et.fields[0].choices_field = "shared_species"
+    records = desired_choice_records(et)
+    assert list(records) == ["shared_species"]
+    assert records["shared_species"][0]["field"] == "shared_species"
