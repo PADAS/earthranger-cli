@@ -93,3 +93,88 @@ def test_api_errors_print_cleanly_and_exit_1(fake):
     result = _run(["apply", "spec.yaml"])
     assert result.exit_code == 1
     assert "error: Invalid credentials given." in result.output
+
+
+import json
+
+
+def test_post_event_flags(fake):
+    result = _run([
+        "post-event", "--event-type", "sighting",
+        "--field", "species=elephant", "--field", "count=3",
+        "--location", "-1.286,36.817", "--title", "Morning",
+    ])
+    assert result.exit_code == 0
+    assert "posted   sighting" in result.output
+    posted = next(c[1] for c in fake.calls if c[0] == "post_event")
+    assert posted["event_details"] == {"species": "elephant", "count": 3}
+    assert posted["location"] == {"latitude": -1.286, "longitude": 36.817}
+    assert posted["title"] == "Morning"
+
+
+def test_post_event_requires_type_or_file(fake):
+    result = _run(["post-event"])
+    assert result.exit_code != 0
+
+
+def test_post_event_batch_partial_failure_exits_1(fake):
+    def failing_post(event):
+        if event["event_details"].get("species") == "lion":
+            raise RuntimeError("boom")
+        return event
+
+    fake.post_event = failing_post
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        with open("events.yaml", "w") as f:
+            f.write(
+                "- event_type: s\n  event_details: {species: elephant}\n"
+                "- event_type: s\n  event_details: {species: lion}\n"
+            )
+        result = runner.invoke(main, ["post-event", "--file", "events.yaml"])
+    assert result.exit_code == 1
+    assert "posted   s" in result.output
+    assert "FAILED   s: boom" in result.output
+
+
+def test_list_categories(fake):
+    fake.categories = [
+        {"value": "wm", "display": "Wildlife Monitoring", "is_active": True},
+        {"value": "old", "display": "Old Category", "is_active": False},
+    ]
+    result = _run(["list", "categories"])
+    assert result.exit_code == 0
+    assert "wm" in result.output
+    assert "(inactive)" in result.output
+
+
+def test_list_event_types_filters_by_category(fake):
+    fake.event_types = [
+        {"value": "a", "display": "A", "category": {"value": "wm"}, "is_active": True},
+        {"value": "b", "display": "B", "category": "other", "is_active": True},
+    ]
+    result = _run(["list", "event-types", "--category", "wm"])
+    assert result.exit_code == 0
+    assert "a" in result.output
+    assert " b " not in result.output
+
+
+def test_show_event_type_includes_choices(fake):
+    schema = {"json": {"properties": {
+        "species": {"anyOf": [{"$ref": "/api/v2.0/schemas/choices.json?field=s_species"}]}
+    }}}
+    fake.event_types = [
+        {"value": "s", "display": "S", "category": "wm", "schema": schema},
+    ]
+    fake.choices = {"s_species": [{"id": "1", "value": "elephant", "display": "Elephant"}]}
+    result = _run(["show", "event-type", "s"])
+    assert result.exit_code == 0
+    data = json.loads(result.output)
+    assert data["event_type"]["value"] == "s"
+    assert data["choices"]["s_species"][0]["value"] == "elephant"
+
+
+def test_show_event_type_missing_exits_1(fake):
+    result = _run(["show", "event-type", "nope"])
+    assert result.exit_code == 1
+    assert "no event type with value 'nope'" in result.output
