@@ -1,5 +1,14 @@
 """FakeER: an in-memory stand-in for erclient.ERClient covering the calls we make."""
 
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _isolated_token_cache(tmp_path, monkeypatch):
+    """Point the token cache at a per-test directory so tests never read or
+    write the developer's real ~/.config/er-events."""
+    monkeypatch.setenv("ER_EVENTS_CONFIG_DIR", str(tmp_path / "er-events-config"))
+
 
 class FakeER:
     def __init__(self, categories=None, event_types=None, choices=None):
@@ -7,6 +16,12 @@ class FakeER:
         self.event_types = event_types or []
         self.choices = choices or {}  # field name -> list[dict]
         self.calls = []  # (method, ...) tuples, appended for every call
+        self.auth = None  # token dict, set by token_store.apply_to_client
+        self.auth_expires = None
+
+    def auth_headers(self):
+        self.calls.append(("auth_headers",))
+        return {"Authorization": "Bearer fake"}
 
     # --- categories ---
     def get_event_categories(self, include_inactive=False):

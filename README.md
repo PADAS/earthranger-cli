@@ -18,15 +18,32 @@ uv pip install -e .
 
 ## Authenticate
 
-Every command needs a server and credentials:
+The easiest way: log in once and let the CLI cache your tokens.
 
 ```bash
 export ER_SERVER=myreserve          # site name, or a full https:// URL
-export ER_USERNAME=me
-export ER_PASSWORD=...              # omit to be prompted interactively
+er-events auth login --username me  # prompts for your password
 ```
 
-or pass `--server/--username/--password` before the subcommand.
+`auth login` verifies your credentials and caches the access and refresh
+tokens (never your password) in `~/.config/er-events/tokens/<host>.json`
+(0600). Subsequent commands on that server just work — expired access
+tokens are refreshed automatically and the rotated tokens re-cached.
+`er-events auth status` shows the cached session; `er-events auth logout`
+deletes it. One cache per server host: logging in again (as anyone)
+replaces it.
+
+You can always bypass the cache with an explicit password — it takes
+precedence when present:
+
+```bash
+export ER_USERNAME=me
+export ER_PASSWORD=...              # or --password; omit both to be prompted
+```
+
+If the cached session's refresh token has expired, commands fail with
+`error: cached session for <host> expired or invalid — run 'er-events
+auth login'`.
 
 ## Walkthrough
 

@@ -223,3 +223,123 @@ def test_show_event_type_missing_exits_1(fake):
     result = _run(["show", "event-type", "nope"])
     assert result.exit_code == 1
     assert "no event type with value 'nope'" in result.output
+
+
+# --- auth subcommands & cached-token connection ---
+
+from datetime import UTC, datetime, timedelta
+
+from er_events_cli import token_store
+
+FUTURE = datetime.now(UTC) + timedelta(days=30)
+PAST = datetime.now(UTC) - timedelta(days=1)
+AUTH = {"access_token": "acc-1", "refresh_token": "ref-1", "token_type": "Bearer"}
+
+
+class FakeLoginClient(FakeER):
+    def __init__(self, succeed=True):
+        super().__init__()
+        self._succeed = succeed
+
+    def login(self):
+        if self._succeed:
+            self.auth = dict(AUTH)
+            self.auth_expires = FUTURE
+        return self._succeed
+
+
+def test_auth_login_caches_token(monkeypatch):
+    monkeypatch.setattr(cli_mod, "make_client", lambda **kw: FakeLoginClient())
+    result = _run(["--server", "sandbox", "--username", "u", "auth", "login"], input="pw\n")
+    assert result.exit_code == 0
+    assert "Authenticated. Token cached for sandbox.pamdas.org." in result.output
+    data = token_store.load_token("sandbox.pamdas.org")
+    assert data["access_token"] == "acc-1"
+    assert data["username"] == "u"
+
+
+def test_auth_login_failure_exits_1(monkeypatch):
+    monkeypatch.setattr(cli_mod, "make_client", lambda **kw: FakeLoginClient(succeed=False))
+    result = _run(["--server", "sandbox", "--username", "u", "--password", "bad", "auth", "login"])
+    assert result.exit_code == 1
+    assert "error: login failed for 'u' at sandbox.pamdas.org" in result.output
+    assert token_store.load_token("sandbox.pamdas.org") is None
+
+
+def test_auth_status_and_logout():
+    result = _run(["--server", "sandbox", "auth", "status"])
+    assert "sandbox.pamdas.org: not authenticated" in result.output
+    token_store.save_token("sandbox.pamdas.org", AUTH, FUTURE, "chris")
+    result = _run(["--server", "sandbox", "auth", "status"])
+    assert "sandbox.pamdas.org: valid as chris" in result.output
+    token_store.save_token("sandbox.pamdas.org", AUTH, PAST, "chris")
+    result = _run(["--server", "sandbox", "auth", "status"])
+    assert "sandbox.pamdas.org: expired" in result.output
+    result = _run(["--server", "sandbox", "auth", "logout"])
+    assert "Logged out." in result.output
+    result = _run(["--server", "sandbox", "auth", "logout"])
+    assert "No cached token." in result.output
+
+
+def test_connect_uses_cached_token_without_password(monkeypatch):
+    token_store.save_token("sandbox.pamdas.org", AUTH, FUTURE, "chris")
+    fake = FakeER()
+    monkeypatch.setattr(cli_mod, "make_token_client", lambda **kw: fake)
+    result = _run(["--server", "sandbox", "list", "categories"])
+    assert result.exit_code == 0
+    assert fake.auth["access_token"] == "acc-1"
+    assert ("auth_headers",) in fake.calls
+
+
+def test_connect_explicit_password_beats_cache(monkeypatch):
+    token_store.save_token("sandbox.pamdas.org", AUTH, FUTURE, "chris")
+    captured = {}
+
+    def fake_make_client(*, server, username, password):
+        captured.update(username=username, password=password)
+        return FakeER()
+
+    monkeypatch.setattr(cli_mod, "make_client", fake_make_client)
+    result = _run(
+        ["--server", "sandbox", "--username", "u", "--password", "pw", "list", "categories"]
+    )
+    assert result.exit_code == 0
+    assert captured == {"username": "u", "password": "pw"}
+
+
+def test_connect_expired_cached_session_message(monkeypatch):
+    from erclient.er_errors import ERClientException
+
+    token_store.save_token("sandbox.pamdas.org", AUTH, PAST, "chris")
+    fake = FakeER()
+
+    def failing_auth_headers():
+        raise ERClientException("Login failed.")
+
+    fake.auth_headers = failing_auth_headers
+    monkeypatch.setattr(cli_mod, "make_token_client", lambda **kw: fake)
+    result = _run(["--server", "sandbox", "list", "categories"])
+    assert result.exit_code == 1
+    assert (
+        "error: cached session for sandbox.pamdas.org expired or invalid — "
+        "run 'er-events auth login'" in result.output
+    )
+
+
+def test_rotated_token_is_persisted_after_command(monkeypatch):
+    token_store.save_token("sandbox.pamdas.org", AUTH, PAST, "chris")
+    fake = FakeER()
+
+    def rotating_auth_headers():
+        fake.auth = {"access_token": "acc-2", "refresh_token": "ref-2", "token_type": "Bearer"}
+        fake.auth_expires = FUTURE
+        return {}
+
+    fake.auth_headers = rotating_auth_headers
+    monkeypatch.setattr(cli_mod, "make_token_client", lambda **kw: fake)
+    result = _run(["--server", "sandbox", "list", "categories"])
+    assert result.exit_code == 0
+    data = token_store.load_token("sandbox.pamdas.org")
+    assert data["access_token"] == "acc-2"
+    assert data["refresh_token"] == "ref-2"
+    assert data["username"] == "chris"

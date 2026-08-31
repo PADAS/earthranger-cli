@@ -30,6 +30,15 @@ def make_client(*, server: str, username: str, password: str) -> ERClient:
     )
 
 
+def make_token_client(*, server: str) -> ERClient:
+    """Client with no credentials; the caller restores a cached token onto it
+    (token_store.apply_to_client). client_id is still needed for refreshes."""
+    return ERClient(
+        service_root=normalize_server(server),
+        client_id=DEFAULT_CLIENT_ID,
+    )
+
+
 def get_choices(client, field_name: str) -> list[dict]:
     """All Choice records for (model=activity.event, field=field_name), inactive included.
 

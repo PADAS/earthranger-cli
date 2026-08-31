@@ -12,8 +12,9 @@ import requests.exceptions
 from erclient.er_errors import ERClientException
 
 from . import client as er
+from . import token_store
 from .apply import ApplyError, apply_spec, extract_choice_fields
-from .client import make_client
+from .client import make_client, make_token_client
 from .dsl import SpecError, load_spec
 from .events import FieldArgError, build_event, load_events_file, parse_field_args, post_events
 
@@ -32,17 +33,53 @@ def _api_errors(f):
     return wrapper
 
 
-def _connect(ctx):
+def _require_server(ctx) -> str:
     server = ctx.obj["server"]
-    username = ctx.obj["username"]
-    password = ctx.obj["password"]
     if not server:
         raise click.UsageError("Missing server: pass --server or set ER_SERVER.")
+    return server
+
+
+def _connect(ctx):
+    """Build an authenticated client.
+
+    Precedence: an explicit password (flag or ER_PASSWORD) wins; else a token
+    cached by `er-events auth login`; else an interactive password prompt.
+    """
+    server = _require_server(ctx)
+    username = ctx.obj["username"]
+    password = ctx.obj["password"]
+    if not password:
+        cached = token_store.load_token(token_store.server_host(server))
+        if cached:
+            return _connect_with_cached_token(ctx, server, cached)
     if not username:
         raise click.UsageError("Missing username: pass --username or set ER_USERNAME.")
     if not password:
         password = click.prompt("Password", hide_input=True)
     return make_client(server=server, username=username, password=password)
+
+
+def _connect_with_cached_token(ctx, server: str, cached: dict):
+    host = token_store.server_host(server)
+    client = make_token_client(server=server)
+    token_store.apply_to_client(client, cached)
+    try:
+        # Eager: refreshes an expired access token now (via the refresh token),
+        # so a dead session fails here with a clear message instead of mid-command.
+        client.auth_headers()
+    except ERClientException as e:
+        raise ERClientException(
+            f"cached session for {host} expired or invalid — run 'er-events auth login'"
+        ) from e
+
+    def _persist_rotation():
+        auth = getattr(client, "auth", None) or {}
+        if auth.get("access_token") and auth["access_token"] != cached["access_token"]:
+            token_store.save_token(host, auth, client.auth_expires, cached.get("username") or "")
+
+    ctx.call_on_close(_persist_rotation)
+    return client
 
 
 @click.group()
@@ -185,3 +222,51 @@ def show_event_type(ctx, value):
     fields = extract_choice_fields(et.get("schema") or {})
     choices = {f: er.get_choices(client, f) for f in fields}
     click.echo(json.dumps({"event_type": et, "choices": choices}, indent=2))
+
+
+@main.group("auth")
+def auth_group():
+    """Authenticate and manage cached tokens."""
+
+
+@auth_group.command("login")
+@click.pass_context
+@_api_errors
+def auth_login(ctx):
+    """Log in with username/password and cache the tokens for this server."""
+    server = _require_server(ctx)
+    username = ctx.obj["username"]
+    password = ctx.obj["password"]
+    if not username:
+        raise click.UsageError("Missing username: pass --username or set ER_USERNAME.")
+    if not password:
+        password = click.prompt("Password", hide_input=True)
+    host = token_store.server_host(server)
+    client = make_client(server=server, username=username, password=password)
+    if not client.login():
+        click.echo(f"error: login failed for {username!r} at {host}")
+        sys.exit(1)
+    token_store.save_token(host, client.auth, client.auth_expires, username)
+    click.echo(f"Authenticated. Token cached for {host}.")
+
+
+@auth_group.command("logout")
+@click.pass_context
+def auth_logout(ctx):
+    """Delete the cached token for this server."""
+    host = token_store.server_host(_require_server(ctx))
+    click.echo("Logged out." if token_store.delete_token(host) else "No cached token.")
+
+
+@auth_group.command("status")
+@click.pass_context
+def auth_status(ctx):
+    """Report whether a cached token exists for this server, and its expiry."""
+    host = token_store.server_host(_require_server(ctx))
+    data = token_store.load_token(host)
+    if not data:
+        click.echo(f"{host}: not authenticated")
+        return
+    state = "expired" if token_store.is_expired(data) else "valid"
+    as_user = f" as {data['username']}" if data.get("username") else ""
+    click.echo(f"{host}: {state}{as_user} (access token expires {data['expires_at']})")
