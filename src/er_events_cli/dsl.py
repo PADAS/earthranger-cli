@@ -20,6 +20,7 @@ SUPPORTED_TYPES = {
     "boolean",
     "date",
     "datetime",
+    "url",
     "select",
     "multiselect",
 }

@@ -270,4 +270,21 @@ def test_shipped_example_spec_parses():
         "multiselect",
         "string",
         "textarea",
+        "url",
     }
+
+
+def test_url_type_accepted():
+    spec = parse_spec(
+        {
+            "category": {"value": "c1", "display": "C1"},
+            "event_types": [
+                {
+                    "value": "t1",
+                    "display": "T1",
+                    "fields": [{"key": "link", "label": "Link", "type": "url"}],
+                }
+            ],
+        }
+    )
+    assert spec.event_types[0].fields[0].type == "url"

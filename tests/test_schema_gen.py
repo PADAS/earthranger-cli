@@ -46,6 +46,14 @@ def test_number_boolean_date_datetime():
     assert json_prop == {"type": "string", "format": "date-time", "title": "At"}
 
 
+def test_url_field():
+    json_prop, ui = build_property_pair(
+        FieldSpec(key="link", label="Source link", type="url"), "t1"
+    )
+    assert json_prop == {"type": "string", "format": "uri", "title": "Source link"}
+    assert ui == {"type": "TEXT", "inputType": "SHORT_TEXT", "parent": "section-1"}
+
+
 REF = "/api/v2.0/schemas/choices.json?field=t1_species"
 
 

@@ -16,6 +16,7 @@ _SCALAR_JSON = {
     "boolean": {"type": "boolean"},
     "date": {"type": "string", "format": "date"},
     "datetime": {"type": "string", "format": "date-time"},
+    "url": {"type": "string", "format": "uri"},
 }
 
 _SCALAR_UI = {
@@ -26,6 +27,7 @@ _SCALAR_UI = {
     "boolean": {"type": "BOOLEAN"},
     "date": {"type": "DATE_TIME"},
     "datetime": {"type": "DATE_TIME"},
+    "url": {"type": "TEXT", "inputType": "SHORT_TEXT"},
 }
 
 

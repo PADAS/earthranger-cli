@@ -46,6 +46,9 @@ event_types:
       - key: observer
         label: Observer name
         type: string
+      - key: photo_link
+        label: Photo link
+        type: url                # string with format: uri
       - key: notes
         label: Notes
         type: textarea
