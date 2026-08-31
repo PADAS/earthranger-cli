@@ -421,3 +421,92 @@ def test_pull_missing_category_exits_1(fake):
     result = _run(["pull", "nope"])
     assert result.exit_code == 1
     assert "error: no category with value 'nope'" in result.output
+
+
+# --- profiles ---
+
+from er_events_cli import config_store
+
+
+def test_profile_add_use_list_remove():
+    result = _run(["profile", "add", "sandbox", "--server", "sandbox", "--username", "chris"])
+    assert result.exit_code == 0
+    assert "Added profile 'sandbox' (sandbox.pamdas.org); now active." in result.output
+    result = _run(["profile", "add", "prod", "--server", "myreserve"])
+    assert "Added profile 'prod' (myreserve.pamdas.org)." in result.output
+    result = _run(["profile", "list"])
+    assert result.exit_code == 0
+    lines = result.output.splitlines()
+    assert any(ln.startswith("* sandbox") and "chris" in ln for ln in lines)
+    assert any(ln.startswith("  prod") for ln in lines)
+    result = _run(["profile", "use", "prod"])
+    assert "Active profile: prod" in result.output
+    assert config_store.active_profile()[0] == "prod"
+    result = _run(["profile", "remove", "prod"])
+    assert "Removed profile 'prod' (was active)." in result.output
+    result = _run(["profile", "remove", "prod"])
+    assert result.exit_code == 1
+    assert "error: no profile named 'prod'" in result.output
+
+
+def test_profile_use_unknown_exits_1():
+    result = _run(["profile", "use", "zzz"])
+    assert result.exit_code == 1
+    assert "error: no profile named 'zzz'" in result.output
+
+
+def test_active_profile_supplies_server_and_username(monkeypatch):
+    config_store.add_profile("sandbox", server="sandbox", username="chris")
+    captured = {}
+
+    def fake_make_client(*, server, username, password):
+        captured.update(server=server, username=username, password=password)
+        return FakeLoginClient()
+
+    monkeypatch.setattr(cli_mod, "make_client", fake_make_client)
+    monkeypatch.delenv("ER_SERVER", raising=False)
+    monkeypatch.delenv("ER_USERNAME", raising=False)
+    result = _run(["auth", "login"], input="pw\n")  # only the password is prompted
+    assert result.exit_code == 0
+    assert captured == {"server": "sandbox", "username": "chris", "password": "pw"}
+
+
+def test_profile_flag_overrides_active(monkeypatch):
+    config_store.add_profile("sandbox", server="sandbox")
+    config_store.add_profile("prod", server="myreserve", username="ops")
+    config_store.set_active("sandbox")
+    token_store.save_token("myreserve.pamdas.org", AUTH, FUTURE, "ops")
+    fake = FakeER()
+    seen = {}
+
+    def fake_token_client(*, server):
+        seen["server"] = server
+        return fake
+
+    monkeypatch.setattr(cli_mod, "make_token_client", fake_token_client)
+    monkeypatch.delenv("ER_SERVER", raising=False)
+    result = _run(["--profile", "prod", "list", "categories"])
+    assert result.exit_code == 0
+    assert seen["server"] == "myreserve"
+
+
+def test_explicit_server_flag_overrides_profile(monkeypatch):
+    config_store.add_profile("sandbox", server="sandbox")
+    token_store.save_token("other.pamdas.org", AUTH, FUTURE, "x")
+    fake = FakeER()
+    seen = {}
+
+    def fake_token_client(*, server):
+        seen["server"] = server
+        return fake
+
+    monkeypatch.setattr(cli_mod, "make_token_client", fake_token_client)
+    result = _run(["--server", "other", "list", "categories"])
+    assert result.exit_code == 0
+    assert seen["server"] == "other"
+
+
+def test_unknown_profile_flag_is_usage_error():
+    result = _run(["--profile", "zzz", "list", "categories"])
+    assert result.exit_code != 0
+    assert "Unknown profile 'zzz'" in result.output

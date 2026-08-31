@@ -12,7 +12,7 @@ import requests.exceptions
 from erclient.er_errors import ERClientException
 
 from . import client as er
-from . import token_store
+from . import config_store, token_store
 from .apply import ApplyError, apply_spec, extract_choice_fields
 from .client import make_client, make_token_client
 from .dsl import SpecError, load_spec
@@ -30,6 +30,7 @@ def _api_errors(f):
         except (
             ApplyError,
             PullError,
+            config_store.ConfigError,
             ERClientException,
             requests.exceptions.RequestException,
         ) as e:
@@ -39,11 +40,31 @@ def _api_errors(f):
     return wrapper
 
 
-def _require_server(ctx) -> str:
+def _resolve_connection(ctx) -> tuple[str, str | None]:
+    """Resolve (server, username) from flags/env, a --profile, or the active
+    profile. Explicit --server/--username always win; a profile named with
+    --profile is consulted next; the active profile only when no server was
+    given at all."""
     server = ctx.obj["server"]
+    username = ctx.obj["username"]
+    profile = None
+    name = ctx.obj.get("profile")
+    if name:
+        profile = config_store.get_profile(name)
+        if profile is None:
+            raise click.UsageError(f"Unknown profile {name!r}. See 'er-events profile list'.")
+    elif not server:
+        active = config_store.active_profile()
+        if active:
+            profile = active[1]
+    if profile:
+        server = server or profile.get("server")
+        username = username or profile.get("username")
     if not server:
-        raise click.UsageError("Missing server: pass --server or set ER_SERVER.")
-    return server
+        raise click.UsageError(
+            "Missing server: pass --server, set ER_SERVER, or 'er-events profile use NAME'."
+        )
+    return server, username
 
 
 def _connect(ctx):
@@ -52,8 +73,7 @@ def _connect(ctx):
     Precedence: an explicit password (flag or ER_PASSWORD) wins; else a token
     cached by `er-events auth login`; else an interactive password prompt.
     """
-    server = _require_server(ctx)
-    username = ctx.obj["username"]
+    server, username = _resolve_connection(ctx)
     password = ctx.obj["password"]
     if not password:
         cached = token_store.load_token(token_store.server_host(server))
@@ -94,10 +114,13 @@ def _connect_with_cached_token(ctx, server: str, cached: dict):
 @click.option(
     "--password", envvar="ER_PASSWORD", help="EarthRanger password (prompted if omitted)."
 )
+@click.option(
+    "--profile", envvar="ER_PROFILE", help="Named profile to use (see 'er-events profile')."
+)
 @click.pass_context
-def main(ctx, server, username, password):
+def main(ctx, server, username, password, profile):
     """Create and edit EarthRanger event categories, choices, and v2 event types."""
-    ctx.obj = {"server": server, "username": username, "password": password}
+    ctx.obj = {"server": server, "username": username, "password": password, "profile": profile}
 
 
 @main.command("apply")
@@ -240,8 +263,7 @@ def auth_group():
 @_api_errors
 def auth_login(ctx):
     """Log in with username/password and cache the tokens for this server."""
-    server = _require_server(ctx)
-    username = ctx.obj["username"]
+    server, username = _resolve_connection(ctx)
     password = ctx.obj["password"]
     if not username:
         raise click.UsageError("Missing username: pass --username or set ER_USERNAME.")
@@ -260,7 +282,8 @@ def auth_login(ctx):
 @click.pass_context
 def auth_logout(ctx):
     """Delete the cached token for this server."""
-    host = token_store.server_host(_require_server(ctx))
+    server, _ = _resolve_connection(ctx)
+    host = token_store.server_host(server)
     click.echo("Logged out." if token_store.delete_token(host) else "No cached token.")
 
 
@@ -268,7 +291,8 @@ def auth_logout(ctx):
 @click.pass_context
 def auth_status(ctx):
     """Report whether a cached token exists for this server, and its expiry."""
-    host = token_store.server_host(_require_server(ctx))
+    server, _ = _resolve_connection(ctx)
+    host = token_store.server_host(server)
     data = token_store.load_token(host)
     if not data:
         click.echo(f"{host}: not authenticated")
@@ -307,3 +331,65 @@ def pull_cmd(ctx, category_value, output, skip_unsupported):
         click.echo(f"Wrote {output}")
     else:
         click.echo(text, nl=False)
+
+
+def _auth_state(server: str) -> str:
+    data = token_store.load_token(token_store.server_host(server))
+    if not data:
+        return "not authenticated"
+    return "expired" if token_store.is_expired(data) else "valid"
+
+
+@main.group("profile")
+def profile_group():
+    """Manage named site profiles."""
+
+
+@profile_group.command("add")
+@click.argument("name")
+@click.option("--server", "p_server", required=True, help="ER site name or full https:// URL.")
+@click.option("--username", "p_username", help="Default username for this profile.")
+@_api_errors
+def profile_add(name, p_server, p_username):
+    """Add (or overwrite) a profile."""
+    had_active = config_store.active_profile() is not None
+    config_store.add_profile(name, server=p_server, username=p_username)
+    suffix = "." if had_active else "; now active."
+    click.echo(f"Added profile {name!r} ({token_store.server_host(p_server)}){suffix}")
+
+
+@profile_group.command("use")
+@click.argument("name")
+@_api_errors
+def profile_use(name):
+    """Make NAME the active profile for future commands."""
+    config_store.set_active(name)
+    click.echo(f"Active profile: {name}")
+
+
+@profile_group.command("list")
+def profile_list():
+    """List profiles: active marker, server, username, auth state."""
+    profiles = config_store.list_profiles()
+    if not profiles:
+        click.echo("No profiles. Add one with 'er-events profile add NAME --server ...'.")
+        return
+    active = config_store.active_profile()
+    active_name = active[0] if active else None
+    for name in sorted(profiles):
+        p = profiles[name]
+        marker = "*" if name == active_name else " "
+        username = p.get("username") or "-"
+        host = token_store.server_host(p.get("server") or "")
+        click.echo(f"{marker} {name:<16} {host:<40} {username:<16} {_auth_state(p['server'])}")
+
+
+@profile_group.command("remove")
+@click.argument("name")
+@_api_errors
+def profile_remove(name):
+    """Delete a profile (its cached token, keyed by host, is left alone)."""
+    was_active = (config_store.active_profile() or (None,))[0] == name
+    if not config_store.remove_profile(name):
+        raise config_store.ConfigError(f"no profile named {name!r}")
+    click.echo(f"Removed profile {name!r}{' (was active)' if was_active else ''}.")

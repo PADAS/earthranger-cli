@@ -10,20 +10,12 @@ defaults to ``~/.config/er-events`` and can be overridden with
 from __future__ import annotations
 
 import json
-import os
-import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import urlparse
 
 from .client import normalize_server
-
-
-def config_dir() -> Path:
-    override = os.environ.get("ER_EVENTS_CONFIG_DIR")
-    if override:
-        return Path(override).expanduser()
-    return Path("~/.config/er-events").expanduser()
+from .config_store import config_dir, write_private
 
 
 def tokens_dir() -> Path:
@@ -52,7 +44,7 @@ def save_token(host: str, auth: dict, expires_at: datetime, username: str) -> No
         "expires_at": expires_at.isoformat(),
         "username": username,
     }
-    _write_private(path, json.dumps(payload, indent=2))
+    write_private(path, json.dumps(payload, indent=2))
 
 
 def load_token(host: str) -> dict | None:
@@ -111,19 +103,3 @@ def _is_valid_token_data(data) -> bool:
     # Must be tz-aware; a naive timestamp would crash comparisons against
     # erclient's timezone-aware "now".
     return parsed.tzinfo is not None
-
-
-def _write_private(path: Path, text: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    os.chmod(path.parent, 0o700)
-    fd, tmp = tempfile.mkstemp(dir=path.parent)  # mkstemp creates 0600
-    try:
-        with os.fdopen(fd, "w") as f:
-            f.write(text)
-        os.replace(tmp, path)
-    except OSError:
-        try:
-            os.unlink(tmp)
-        except OSError:
-            pass
-        raise

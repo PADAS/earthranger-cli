@@ -25,6 +25,20 @@ export ER_SERVER=myreserve          # site name, or a full https:// URL
 er-events auth login --username me  # prompts for your password
 ```
 
+Working across sites? Save each as a profile and switch with one command:
+
+```bash
+er-events profile add sandbox --server sandbox --username me
+er-events profile add prod --server myreserve --username me
+er-events profile use prod        # future commands target prod
+er-events --profile sandbox list categories   # one-off override
+er-events profile list            # active marker, host, username, auth state
+```
+
+A profile supplies the server and default username when you don't pass
+them; explicit `--server`/`--username` flags always win, and the active
+profile is only consulted when no server is given at all.
+
 `auth login` verifies your credentials and caches the access and refresh
 tokens (never your password) in `~/.config/er-events/tokens/<host>.json`
 (0600). Subsequent commands on that server just work — expired access
@@ -107,6 +121,7 @@ auth login'`.
 | `list event-types [--category V]` | List event types |
 | `show event-type V` | Full v2 event-type JSON + its Choice records |
 | `pull CATEGORY [-o FILE] [--skip-unsupported]` | Reconstruct a DSL spec from the server (reverse of apply) |
+| `profile add/use/list/remove` | Named site profiles; `--profile NAME` on any command |
 
 ## Spec reference
 
