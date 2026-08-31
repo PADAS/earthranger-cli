@@ -9,6 +9,7 @@ server object, so the caller decides whether to drop those pieces.
 
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass, field
 
@@ -73,6 +74,22 @@ def _category_value(raw: object) -> str | None:
 def _invert_event_type(client, et: dict, unsupported: list[str]) -> dict | None:
     value = et.get("value") or ""
     schema = et.get("schema") or {}
+    if isinstance(schema, str):
+        # ER sometimes returns schemas JSON-stringified on GET.
+        try:
+            schema = json.loads(schema)
+        except (json.JSONDecodeError, TypeError):
+            schema = None
+    if (
+        not isinstance(schema, dict)
+        or not isinstance(schema.get("json"), dict)
+        or not isinstance(schema.get("ui"), dict)
+    ):
+        unsupported.append(
+            f"event type {value!r}: schema is not a v2 json/ui envelope "
+            "(a v1 event type?); skipped entirely"
+        )
+        return None
     json_block = schema.get("json") or {}
     ui_block = schema.get("ui") or {}
     properties = json_block.get("properties") or {}

@@ -154,3 +154,31 @@ def test_pull_reports_layout_it_cannot_express():
     values = [t["value"] for t in result.spec["event_types"]]
     assert "sighting" not in values  # whole event type skipped
     assert "inactive_type" in values
+
+
+def test_pull_handles_json_stringified_v2_schema():
+    import json as _json
+
+    fake = _server_from_spec(SPEC_DATA)
+    et = fake.event_types[0]
+    et["schema"] = _json.dumps(et["schema"])  # ER sometimes stringifies on GET
+    result = pull_category(fake, "wm")
+    assert result.unsupported == []
+    assert "sighting" in [t["value"] for t in result.spec["event_types"]]
+
+
+def test_pull_skips_v1_event_types():
+    fake = _server_from_spec(SPEC_DATA)
+    fake.event_types.append(
+        {
+            "id": "id-old",
+            "value": "legacy_v1",
+            "display": "Legacy",
+            "category": {"value": "wm"},
+            "is_active": True,
+            "schema": '{\n "schema": {"$schema": "http://json-schema.org/draft-04/schema#"},\n "definition": []\n}',
+        }
+    )
+    result = pull_category(fake, "wm")
+    assert any("legacy_v1" in w and "v2 json/ui envelope" in w for w in result.unsupported)
+    assert "legacy_v1" not in [t["value"] for t in result.spec["event_types"]]
