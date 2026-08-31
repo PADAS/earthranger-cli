@@ -127,6 +127,24 @@ Parsed into small dataclasses (`Spec`, `CategorySpec`, `EventTypeSpec`,
 `FieldSpec`, `OptionSpec`) — plain stdlib `dataclasses`, no pydantic
 needed at this size.
 
+### Why YAML and not JSON?
+
+Anticipated user question; the README will carry this answer too.
+
+- JSON is accepted: spec files are parsed with `yaml.safe_load`, and
+  YAML is a superset of JSON, so a pure-JSON spec file works as-is.
+  This is a documented, tested promise, not an accident of the parser.
+- YAML is the primary format because the spec file is hand-authored,
+  versioned, and reviewed — comments matter (JSON has none), and block
+  style plus inline lists (`options: [poaching, snares]`) keep nested
+  field definitions readable and diffs clean.
+- Precedent: human-authored config in this ecosystem is YAML
+  (er-smart-sync's `sync.yaml`, GitHub Actions, k8s); JSON remains the
+  machine-facing format, which is why `show event-type` emits JSON.
+- YAML's implicit-typing gotchas (`no` → false, `1.10` → float) are
+  mitigated by slug validation and by quoting ambiguous scalars in the
+  shipped examples.
+
 ## Field type mapping
 
 Each DSL field generates a `json.properties` entry and a `ui.fields`
