@@ -152,7 +152,9 @@ def _invert_event_type(client, et: dict, unsupported: list[str]) -> dict | None:
         extra_required.extend(section["extra_required"])
         sec_fields: list[dict] = []
         for key in section["order"]:
-            f, reason = _invert_field(client, value, key, sec_props[key], ui_fields.get(key) or {})
+            f, reason = _invert_field(
+                client, value, key, sec_props[key], ui_fields.get(key) or {}, ui_fields
+            )
             if f is None:
                 unsupported.append(f"event type {value!r}, field {key!r}: {reason}; skipped")
                 continue
@@ -299,13 +301,15 @@ def _read_sections(json_block, ui_block, properties, ui_fields):
     return out
 
 
-def _invert_field(client, et_value, key, json_prop, ui_field):
+def _invert_field(client, et_value, key, json_prop, ui_field, all_ui_fields=None):
     """Return (dsl_field_dict, None) or (None, reason)."""
     ui_type = ui_field.get("type")
     out: dict = {"key": key, "label": json_prop.get("title")}
     if json_prop.get("deprecated"):
         out["active"] = False
 
+    if ui_type == "COLLECTION":
+        return _invert_collection(client, key, json_prop, ui_field, all_ui_fields or {}, out)
     if ui_type == "CHOICE_LIST":
         return _invert_choice_field(client, et_value, key, json_prop, ui_field, out)
     if ui_type == "TEXT":
@@ -344,6 +348,55 @@ def _invert_field(client, et_value, key, json_prop, ui_field):
     else:
         return None, f"UI field type {ui_type!r} has no DSL equivalent"
 
+    _copy_extras(json_prop, ui_field, out)
+    return out, None
+
+
+def _invert_collection(client, key, json_prop, ui_field, all_ui_fields, out):
+    out["type"] = "collection"
+    out["item_name"] = ui_field.get("itemName")
+    if ui_field.get("buttonText"):
+        out["button_text"] = ui_field["buttonText"]
+    if ui_field.get("itemIdentifier"):
+        out["item_identifier"] = ui_field["itemIdentifier"]
+    if ui_field.get("columns") == 2:
+        out["columns"] = 2
+    items = json_prop.get("items") or {}
+    props = items.get("properties") or {}
+    if not props:
+        return None, "collection has no sub-fields"
+    left = list(ui_field.get("leftColumn") or [])
+    right = set(ui_field.get("rightColumn") or [])
+    sub_fields: list[dict] = []
+    seen: set[str] = set()
+    for dotted in left + sorted(right):
+        sub_key = dotted.split(".", 1)[1] if "." in dotted else dotted
+        seen.add(sub_key)
+        sub_json = props.get(sub_key)
+        if sub_json is None:
+            return None, f"collection sub-field {sub_key!r} has no json property"
+        sub_ui = all_ui_fields.get(dotted) or {}
+        if sub_ui.get("type") in ("COLLECTION", "CHOICE_LIST"):
+            return None, (
+                f"collection sub-field {sub_key!r} is a {sub_ui.get('type')}, "
+                "which is not supported inside a collection yet"
+            )
+        sub, reason = _invert_field(client, "", sub_key, sub_json, sub_ui, all_ui_fields)
+        if sub is None:
+            return None, f"collection sub-field {sub_key!r}: {reason}"
+        if dotted in right:
+            sub["column"] = "right"
+        sub_fields.append(sub)
+    if seen != set(props):
+        return None, "collection layout leaves sub-fields outside its columns"
+    if json_prop.get("minItems") is not None:
+        out["min"] = json_prop["minItems"]
+    if json_prop.get("maxItems") is not None:
+        out["max"] = json_prop["maxItems"]
+    out["fields"] = sub_fields
+    required = list(items.get("required") or [])
+    if required:
+        out["required"] = required
     _copy_extras(json_prop, ui_field, out)
     return out, None
 
@@ -393,7 +446,8 @@ def _copy_extras(json_prop: dict, ui_field: dict, out: dict) -> None:
         out["hint"] = ui_field["placeholder"]
     if json_prop.get("description"):
         out["description"] = json_prop["description"]
-    if "default" in json_prop:
+    if "default" in json_prop and json_prop["default"] != "":
+        # default: "" is builder echo noise, wire-equivalent to no default
         out["default"] = json_prop["default"]
 
 

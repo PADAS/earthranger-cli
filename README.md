@@ -151,6 +151,25 @@ Field types: `string`, `textarea`, `integer` (advisory — ER stores it as
 optional `min`/`max`), `boolean`, `date`, `datetime`, `url`, `select`,
 `multiselect` (both take `options`).
 
+Sub-forms are `type: collection` fields: repeating groups of scalar
+sub-fields (`item_name` labels one entry; optional `button_text`,
+`item_identifier`, `columns: 2` with sub-field `column: right`,
+`min`/`max` item counts, and a `required:` list of sub-field keys):
+
+```yaml
+- key: sightings
+  label: Sightings
+  type: collection
+  item_name: sighting
+  fields:
+    - {key: species_note, label: Species note, type: string}
+    - {key: count, label: Count, type: integer}
+  required: [species_note]
+```
+
+Choice-list or nested-collection sub-fields aren't supported yet and
+are refused by name.
+
 Every field also takes optional `active: false` (the field is
 deprecated/hidden on ER but its historical data remains), `hint` (ER's
 placeholder, max 32 chars; not on `boolean`/`date`/`datetime`),

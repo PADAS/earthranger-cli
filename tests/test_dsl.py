@@ -131,7 +131,9 @@ def test_empty_options_list_is_valid():
 
 def test_min_only_on_numeric():
     errors = _errors_for(_spec_with_field({"key": "f1", "label": "F", "type": "string", "min": 0}))
-    assert "event_types[0].fields[0].min: only allowed on integer/number fields" in errors
+    assert (
+        "event_types[0].fields[0].min: only allowed on integer/number/collection fields" in errors
+    )
 
 
 def test_required_must_name_declared_field():
@@ -967,3 +969,58 @@ def test_field_active_false_parses():
         _spec_with_field({"key": "old", "label": "Old", "type": "string", "active": "no"})
     )
     assert any("active: must be true or false" in e for e in errors)
+
+
+COLLECTION_FIELD = {
+    "key": "sightings",
+    "label": "Sightings",
+    "type": "collection",
+    "item_name": "sighting",
+    "button_text": "Add sighting",
+    "fields": [
+        {"key": "text_1", "label": "Text 1", "type": "string"},
+        {"key": "count", "label": "Count", "type": "integer"},
+    ],
+    "required": ["text_1"],
+}
+
+
+def test_collection_field_parses():
+    import copy
+
+    spec = parse_spec(_spec_with_field(copy.deepcopy(COLLECTION_FIELD)))
+    f = spec.event_types[0].fields[0]
+    assert f.type == "collection"
+    assert f.item_name == "sighting"
+    assert f.button_text == "Add sighting"
+    assert [sub.key for sub in f.fields] == ["text_1", "count"]
+    assert f.required == ["text_1"]
+
+
+def test_collection_validation():
+    import copy
+
+    data = copy.deepcopy(COLLECTION_FIELD)
+    del data["item_name"]
+    errors = _errors_for(_spec_with_field(data))
+    assert any("item_name" in e and "required" in e for e in errors)
+
+    data = copy.deepcopy(COLLECTION_FIELD)
+    data["fields"] = []
+    errors = _errors_for(_spec_with_field(data))
+    assert any("fields" in e and "at least one" in e for e in errors)
+
+    data = copy.deepcopy(COLLECTION_FIELD)
+    data["fields"].append({"key": "species", "label": "S", "type": "select", "options": ["a"]})
+    errors = _errors_for(_spec_with_field(data))
+    assert any("'select' is not supported inside a collection" in e for e in errors)
+
+    data = copy.deepcopy(COLLECTION_FIELD)
+    data["required"] = ["nope"]
+    errors = _errors_for(_spec_with_field(data))
+    assert any("'nope' is not a declared" in e for e in errors)
+
+    data = copy.deepcopy(COLLECTION_FIELD)
+    data["fields"][1]["key"] = "text_1"
+    errors = _errors_for(_spec_with_field(data))
+    assert any("duplicate key 'text_1'" in e for e in errors)

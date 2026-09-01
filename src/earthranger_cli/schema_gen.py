@@ -63,6 +63,57 @@ def effective_choice_field(event_type_value: str, field: FieldSpec) -> str:
 _FORMAT_WIRE = {"url": "uri", "email": "email", "uuid": "uuid"}
 
 
+def _build_collection(field: FieldSpec) -> tuple[dict, dict, dict]:
+    """Return (json_prop, ui_field, extra_ui_fields) for a collection (sub-form).
+
+    Sub-fields are ordinary json properties under items.properties; their UI
+    entries live in ui.fields under dotted '<collection>.<sub>' keys with the
+    collection as parent, and the collection's own leftColumn/rightColumn hold
+    those dotted names as plain strings (unlike section columns).
+    """
+    items_props: dict[str, dict] = {}
+    extra_ui: dict[str, dict] = {}
+    left: list[str] = []
+    right: list[str] = []
+    for sub in field.fields or []:
+        json_prop, ui_field = build_property_pair(sub, "")
+        items_props[sub.key] = json_prop
+        dotted = f"{field.key}.{sub.key}"
+        ui_field["parent"] = field.key
+        extra_ui[dotted] = ui_field
+        (right if sub.column == "right" else left).append(dotted)
+    json_prop = {
+        "type": "array",
+        "title": field.label,
+        "deprecated": not field.active,
+        "items": {
+            "type": "object",
+            "unevaluatedProperties": False,
+            "properties": items_props,
+            "required": list(field.required),
+        },
+        "unevaluatedItems": False,
+    }
+    if field.description is not None:
+        json_prop["description"] = field.description
+    if field.min is not None:
+        json_prop["minItems"] = field.min
+    if field.max is not None:
+        json_prop["maxItems"] = field.max
+    ui_field = {
+        "type": "COLLECTION",
+        "parent": SECTION_ID,
+        "columns": field.columns,
+        "itemIdentifier": field.item_identifier or "",
+        "itemName": field.item_name,
+        "leftColumn": left,
+        "rightColumn": right,
+    }
+    if field.button_text:
+        ui_field["buttonText"] = field.button_text
+    return json_prop, ui_field, extra_ui
+
+
 def build_property_pair(field: FieldSpec, event_type_value: str) -> tuple[dict, dict]:
     if field.type in _SCALAR_JSON:
         # ER's meta-schema requires "deprecated" on every json property.
@@ -133,7 +184,11 @@ def build_schema(et: EventTypeSpec) -> dict:
         right: list[dict] = []
         sec_props: dict[str, dict] = {}
         for f in sec.fields:
-            json_prop, ui_field = build_property_pair(f, et.value)
+            if f.type == "collection":
+                json_prop, ui_field, extra_ui = _build_collection(f)
+                ui_fields.update(extra_ui)
+            else:
+                json_prop, ui_field = build_property_pair(f, et.value)
             ui_field["parent"] = sid
             sec_props[f.key] = json_prop
             ui_fields[f.key] = ui_field

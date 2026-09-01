@@ -580,8 +580,8 @@ def test_pull_tolerates_collection_subfield_ui_keys():
     }
     schema["ui"]["sections"]["section-1"]["leftColumn"].append({"name": "stuff", "type": "field"})
     result = pull_category(fake, "wm")
-    # the collection field is skipped field-level; the event type still pulls
-    assert any("stuff" in w and "COLLECTION" in w for w in result.unsupported)
+    # the malformed (empty) collection is skipped field-level; the type pulls
+    assert any("stuff" in w and "no sub-fields" in w for w in result.unsupported)
     assert "sighting" in [t["value"] for t in result.spec["event_types"]]
 
 
@@ -596,3 +596,79 @@ def test_pull_deprecated_field_round_trips_as_inactive():
     assert notes["active"] is False
     records = apply_spec(fake, parse_spec(result.spec))
     assert {r.action for r in records} == {"unchanged"}
+
+
+COLLECTION_SPEC = {
+    "category": {"value": "wm", "display": "Wildlife Monitoring"},
+    "event_types": [
+        {
+            "value": "fire",
+            "display": "Fire",
+            "fields": [
+                {"key": "title", "label": "Title", "type": "string"},
+                {
+                    "key": "Demo1",
+                    "label": "Demo1",
+                    "type": "collection",
+                    "item_name": "demo",
+                    "button_text": "button1",
+                    "fields": [
+                        {"key": "Text_1", "label": "Text 1", "type": "string"},
+                        {"key": "Count", "label": "Count", "type": "number"},
+                    ],
+                    "required": ["Text_1"],
+                },
+            ],
+        }
+    ],
+}
+
+
+def test_pull_round_trips_collections():
+    fake = _server_from_spec(COLLECTION_SPEC)
+    # simulate ER builder echo noise inside the collection's items
+    items = fake.event_types[0]["schema"]["json"]["properties"]["Demo1"]["items"]
+    for prop in items["properties"].values():
+        prop["description"] = ""
+        prop["default"] = ""
+    result = pull_category(fake, "wm")
+    assert result.unsupported == []
+    pulled = result.spec["event_types"][0]
+    coll = next(f for f in pulled["fields"] if f["key"] == "Demo1")
+    assert coll["type"] == "collection"
+    assert coll["item_name"] == "demo"
+    assert coll["button_text"] == "button1"
+    assert [sub["key"] for sub in coll["fields"]] == ["Text_1", "Count"]
+    assert coll["required"] == ["Text_1"]
+    records = apply_spec(fake, parse_spec(result.spec))
+    assert {r.action for r in records} == {"unchanged"}
+    assert fake.writes() == []
+
+
+def test_pull_nested_collection_refused_by_name():
+    fake = _server_from_spec(COLLECTION_SPEC)
+    items = fake.event_types[0]["schema"]["json"]["properties"]["Demo1"]["items"]
+    items["properties"]["inner"] = {
+        "type": "array",
+        "title": "Inner",
+        "deprecated": False,
+        "items": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "unevaluatedProperties": False,
+        },
+        "unevaluatedItems": False,
+    }
+    ui = fake.event_types[0]["schema"]["ui"]["fields"]
+    ui["Demo1.inner"] = {
+        "type": "COLLECTION",
+        "parent": "Demo1",
+        "columns": 1,
+        "itemName": "x",
+        "leftColumn": [],
+        "rightColumn": [],
+    }
+    ui["Demo1"]["leftColumn"].append("Demo1.inner")
+    result = pull_category(fake, "wm")
+    assert any("Demo1" in w and "inner" in w for w in result.unsupported)

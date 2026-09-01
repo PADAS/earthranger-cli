@@ -23,6 +23,7 @@ SUPPORTED_TYPES = {
     "url",
     "select",
     "multiselect",
+    "collection",
 }
 CHOICE_TYPES = {"select", "multiselect"}
 # EventType.default_priority vocabulary (das activity/constants.py)
@@ -70,6 +71,13 @@ class FieldSpec:
     column: str = "left"  # "right" needs layout columns: 2
     choices_field: str | None = None  # explicit Choice.field name (overrides derivation)
     active: bool = True  # false -> the field is deprecated/hidden on ER
+    # collection (sub-form) fields only:
+    fields: list[FieldSpec] | None = None  # sub-fields (scalar types only)
+    item_name: str | None = None  # ui itemName (required for collections)
+    button_text: str | None = None
+    item_identifier: str | None = None
+    columns: int = 1  # collection's own column layout; sub-fields may use column: right
+    required: list[str] = field(default_factory=list)  # required sub-field keys
 
 
 # Types whose ER UI variant has a placeholder slot (boolean/date/datetime don't).
@@ -539,11 +547,13 @@ def _parse_field(raw: object, path: str, errors: list[str]) -> FieldSpec:
     maximum = raw.get("max")
     for name, val in (("min", minimum), ("max", maximum)):
         if val is not None:
-            if ftype not in NUMERIC_TYPES:
-                errors.append(f"{path}.{name}: only allowed on integer/number fields")
+            if ftype not in NUMERIC_TYPES and ftype != "collection":
+                errors.append(f"{path}.{name}: only allowed on integer/number/collection fields")
             elif isinstance(val, bool) or not isinstance(val, (int, float)):
                 errors.append(f"{path}.{name}: must be a number")
-    if ftype not in NUMERIC_TYPES:
+            elif ftype == "collection" and (not isinstance(val, int) or val < 0):
+                errors.append(f"{path}.{name}: must be a non-negative integer for a collection")
+    if ftype not in NUMERIC_TYPES and ftype != "collection":
         minimum = maximum = None
 
     hint = raw.get("hint")
@@ -591,6 +601,61 @@ def _parse_field(raw: object, path: str, errors: list[str]) -> FieldSpec:
         errors.append(f"{path}.active: must be true or false")
         field_active = True
 
+    sub_fields: list[FieldSpec] | None = None
+    item_name = raw.get("item_name")
+    button_text = raw.get("button_text")
+    item_identifier = raw.get("item_identifier")
+    sub_required: list = []
+    coll_columns = 1
+    if ftype == "collection":
+        if not isinstance(item_name, str) or not item_name:
+            errors.append(f"{path}.item_name: required string for a collection")
+            item_name = None
+        for name, val in (("button_text", button_text), ("item_identifier", item_identifier)):
+            if val is not None and not isinstance(val, str):
+                errors.append(f"{path}.{name}: must be a string")
+        coll_columns = raw.get("columns", 1)
+        if coll_columns not in (1, 2):
+            errors.append(f"{path}.columns: must be 1 or 2")
+            coll_columns = 1
+        sub_raw = raw.get("fields")
+        sub_fields = []
+        if not isinstance(sub_raw, list) or not sub_raw:
+            errors.append(f"{path}.fields: at least one sub-field is required")
+        else:
+            seen_sub: set[str] = set()
+            for j, f_raw in enumerate(sub_raw):
+                sub = _parse_field(f_raw, f"{path}.fields[{j}]", errors)
+                if sub.type in CHOICE_TYPES or sub.type == "collection":
+                    errors.append(
+                        f"{path}.fields[{j}].type: {sub.type!r} is not supported "
+                        "inside a collection yet"
+                    )
+                    continue
+                if sub.key and sub.key in seen_sub:
+                    errors.append(f"{path}.fields[{j}].key: duplicate key {sub.key!r}")
+                seen_sub.add(sub.key)
+                if sub.column == "right" and coll_columns != 2:
+                    errors.append(
+                        f"{path}.fields[{j}].column: 'right' requires collection columns: 2"
+                    )
+                sub_fields.append(sub)
+        sub_required_raw = raw.get("required") or []
+        if not isinstance(sub_required_raw, list):
+            errors.append(f"{path}.required: must be a list of sub-field keys")
+            sub_required_raw = []
+        sub_keys = {f.key for f in sub_fields}
+        for r in sub_required_raw:
+            if r not in sub_keys:
+                errors.append(f"{path}.required: {r!r} is not a declared sub-field key")
+        sub_required = [r for r in sub_required_raw if r in sub_keys]
+    else:
+        for name in ("item_name", "button_text", "item_identifier"):
+            if raw.get(name) is not None:
+                errors.append(f"{path}.{name}: only allowed on collection fields")
+        if raw.get("fields") is not None:
+            errors.append(f"{path}.fields: only allowed on collection fields")
+
     column = raw.get("column", "left")
     if column not in ("left", "right"):
         errors.append(f"{path}.column: must be 'left' or 'right'")
@@ -620,6 +685,12 @@ def _parse_field(raw: object, path: str, errors: list[str]) -> FieldSpec:
         column=column,
         choices_field=choices_field,
         active=field_active,
+        fields=sub_fields,
+        item_name=item_name if ftype == "collection" else None,
+        button_text=button_text if ftype == "collection" else None,
+        item_identifier=item_identifier if ftype == "collection" else None,
+        columns=coll_columns,
+        required=sub_required,
     )
 
 
