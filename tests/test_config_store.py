@@ -12,27 +12,22 @@ def test_add_get_list_round_trip():
     assert config_store.get_profile("nope") is None
 
 
-def test_first_profile_becomes_active():
-    config_store.add_profile("sandbox", server="sandbox")
-    assert config_store.active_profile() == ("sandbox", {"server": "sandbox"})
-    config_store.add_profile("prod", server="prod")
-    assert config_store.active_profile()[0] == "sandbox"  # later adds don't steal active
-
-
-def test_set_active():
-    config_store.add_profile("a", server="a")
-    config_store.add_profile("b", server="b")
-    config_store.set_active("b")
-    assert config_store.active_profile()[0] == "b"
-    with pytest.raises(config_store.ConfigError, match="no profile named 'zzz'"):
-        config_store.set_active("zzz")
-
-
-def test_remove_profile_clears_active():
+def test_remove_profile():
     config_store.add_profile("a", server="a")
     assert config_store.remove_profile("a") is True
-    assert config_store.active_profile() is None
     assert config_store.remove_profile("a") is False
+
+
+def test_legacy_active_key_is_ignored():
+    import json
+
+    config_store.add_profile("a", server="a")
+    # old config files carried a global "active" pointer; it is now ignored
+    f = config_store.config_file()
+    data = json.loads(f.read_text())
+    data["active"] = "a"
+    f.write_text(json.dumps(data))
+    assert config_store.list_profiles() == {"a": {"server": "a"}}
 
 
 def test_invalid_profile_name_rejected():
@@ -45,4 +40,3 @@ def test_corrupt_config_is_a_miss():
     config_store.add_profile("a", server="a")
     config_store.config_file().write_text("{broken")
     assert config_store.list_profiles() == {}
-    assert config_store.active_profile() is None

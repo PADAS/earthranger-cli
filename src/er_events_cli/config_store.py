@@ -1,7 +1,8 @@
 """Named site profiles and the shared private config directory.
 
-Profiles map a name to {server, username?} plus an ``active`` pointer, stored
-in ``<config>/config.json`` — no secrets (tokens live in token_store). The
+Profiles map a name to {server, username?}, stored in ``<config>/config.json``
+— no secrets (tokens live in token_store). Profile selection is per invocation
+(--profile flag or ER_PROFILE env var); there is no global active pointer. The
 config directory defaults to ``~/.config/er-events`` and can be overridden
 with ``ER_EVENTS_CONFIG_DIR``.
 """
@@ -51,14 +52,15 @@ def write_private(path: Path, text: str) -> None:
 def _load() -> dict:
     path = config_file()
     if not path.exists():
-        return {"profiles": {}, "active": None}
+        return {"profiles": {}}
     try:
         data = json.loads(path.read_text())
     except (OSError, ValueError):
-        return {"profiles": {}, "active": None}  # corrupt config == empty
+        return {"profiles": {}}  # corrupt config == empty
     if not isinstance(data, dict) or not isinstance(data.get("profiles"), dict):
-        return {"profiles": {}, "active": None}
-    return {"profiles": data["profiles"], "active": data.get("active")}
+        return {"profiles": {}}
+    # legacy files may carry an "active" pointer; selection is per-shell now
+    return {"profiles": data["profiles"]}
 
 
 def _save(cfg: dict) -> None:
@@ -75,8 +77,6 @@ def add_profile(name: str, *, server: str, username: str | None = None) -> None:
     if username:
         profile["username"] = username
     cfg["profiles"][name] = profile
-    if cfg["active"] is None:
-        cfg["active"] = name
     _save(cfg)
 
 
@@ -88,28 +88,10 @@ def list_profiles() -> dict:
     return _load()["profiles"]
 
 
-def active_profile() -> tuple[str, dict] | None:
-    cfg = _load()
-    name = cfg.get("active")
-    if name and name in cfg["profiles"]:
-        return name, cfg["profiles"][name]
-    return None
-
-
-def set_active(name: str) -> None:
-    cfg = _load()
-    if name not in cfg["profiles"]:
-        raise ConfigError(f"no profile named {name!r}; see 'er-events profile list'")
-    cfg["active"] = name
-    _save(cfg)
-
-
 def remove_profile(name: str) -> bool:
     cfg = _load()
     if name not in cfg["profiles"]:
         return False
     del cfg["profiles"][name]
-    if cfg["active"] == name:
-        cfg["active"] = None
     _save(cfg)
     return True

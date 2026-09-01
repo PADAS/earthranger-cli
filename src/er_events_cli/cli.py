@@ -41,10 +41,10 @@ def _api_errors(f):
 
 
 def _resolve_connection(ctx) -> tuple[str, str | None]:
-    """Resolve (server, username) from flags/env, a --profile, or the active
-    profile. Explicit --server/--username always win; a profile named with
-    --profile is consulted next; the active profile only when no server was
-    given at all."""
+    """Resolve (server, username) from flags/env or a selected profile.
+    Explicit --server/--username always win; a profile named with --profile
+    (or ER_PROFILE, e.g. via the er-use shell helper) supplies the defaults.
+    Profile selection is per invocation — there is no global active profile."""
     server = ctx.obj["server"]
     username = ctx.obj["username"]
     profile = None
@@ -53,16 +53,13 @@ def _resolve_connection(ctx) -> tuple[str, str | None]:
         profile = config_store.get_profile(name)
         if profile is None:
             raise click.UsageError(f"Unknown profile {name!r}. See 'er-events profile list'.")
-    elif not server:
-        active = config_store.active_profile()
-        if active:
-            profile = active[1]
     if profile:
         server = server or profile.get("server")
         username = username or profile.get("username")
     if not server:
         raise click.UsageError(
-            "Missing server: pass --server, set ER_SERVER, or 'er-events profile use NAME'."
+            "Missing server: pass --server, set ER_SERVER, or select a profile "
+            "(--profile NAME / ER_PROFILE)."
         )
     return server, username
 
@@ -355,30 +352,19 @@ def profile_group():
 @_api_errors
 def profile_add(name, p_server, p_username):
     """Add (or overwrite) a profile."""
-    had_active = config_store.active_profile() is not None
     config_store.add_profile(name, server=p_server, username=p_username)
-    suffix = "." if had_active else "; now active."
-    click.echo(f"Added profile {name!r} ({token_store.server_host(p_server)}){suffix}")
-
-
-@profile_group.command("use")
-@click.argument("name")
-@_api_errors
-def profile_use(name):
-    """Make NAME the active profile for future commands."""
-    config_store.set_active(name)
-    click.echo(f"Active profile: {name}")
+    click.echo(f"Added profile {name!r} ({token_store.server_host(p_server)}).")
 
 
 @profile_group.command("list")
-def profile_list():
-    """List profiles: active marker, server, username, auth state."""
+@click.pass_context
+def profile_list(ctx):
+    """List profiles: selection marker (--profile/ER_PROFILE), server, username, auth state."""
     profiles = config_store.list_profiles()
     if not profiles:
         click.echo("No profiles. Add one with 'er-events profile add NAME --server ...'.")
         return
-    active = config_store.active_profile()
-    active_name = active[0] if active else None
+    active_name = ctx.obj.get("profile")
     for name in sorted(profiles):
         p = profiles[name]
         marker = "*" if name == active_name else " "
@@ -392,16 +378,16 @@ def profile_list():
 @_api_errors
 def profile_remove(name):
     """Delete a profile (its cached token, keyed by host, is left alone)."""
-    was_active = (config_store.active_profile() or (None,))[0] == name
     if not config_store.remove_profile(name):
         raise config_store.ConfigError(f"no profile named {name!r}")
-    click.echo(f"Removed profile {name!r}{' (was active)' if was_active else ''}.")
+    click.echo(f"Removed profile {name!r}.")
 
 
 @profile_group.command("current")
-def profile_current():
-    """Print the active profile name (exit 1 if none) — for scripts and prompts."""
-    active = config_store.active_profile()
-    if active is None:
+@click.pass_context
+def profile_current(ctx):
+    """Print this invocation's selected profile (--profile/ER_PROFILE); exit 1 if none."""
+    name = ctx.obj.get("profile")
+    if not name:
         sys.exit(1)
-    click.echo(active[0])
+    click.echo(name)

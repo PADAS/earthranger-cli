@@ -25,19 +25,28 @@ export ER_SERVER=myreserve          # site name, or a full https:// URL
 er-events auth login --username me  # prompts for your password
 ```
 
-Working across sites? Save each as a profile and switch with one command:
+Working across sites? Save each as a profile and select one per shell
+or per command — selection is never global:
 
 ```bash
 er-events profile add sandbox --server sandbox --username me
 er-events profile add prod --server myreserve --username me
-er-events profile use prod        # future commands target prod
+export ER_PROFILE=prod                        # this shell targets prod
 er-events --profile sandbox list categories   # one-off override
-er-events profile list            # active marker, host, username, auth state
+er-events profile list                        # marker shows this shell's selection
+er-events profile current                     # prints it (exit 1 if none) — prompt-friendly
 ```
 
-A profile supplies the server and default username when you don't pass
-them; explicit `--server`/`--username` flags always win, and the active
-profile is only consulted when no server is given at all.
+A selected profile supplies the server and default username when you
+don't pass them; explicit `--server`/`--username` flags always win. A
+small zsh helper makes switching ergonomic and can drive a prompt
+indicator:
+
+```zsh
+er-use() { [[ -z $1 ]] && unset ER_PROFILE || export ER_PROFILE="$1"; }
+_er_prompt() { [[ -n $ER_PROFILE ]] && print -n "%F{yellow}(er:$ER_PROFILE)%f "; }
+setopt PROMPT_SUBST; PROMPT='$(_er_prompt)'"$PROMPT"
+```
 
 `auth login` verifies your credentials and caches the access and refresh
 tokens (never your password) in `~/.config/er-events/tokens/<host>.json`
@@ -123,7 +132,7 @@ auth login'`.
 | `show event-type V` | Full v2 event-type JSON + its Choice records |
 | `pull CATEGORY [-o FILE] [--skip-unsupported]` | Reconstruct a DSL spec from the server (reverse of apply) |
 | `auth login/status/logout` | Cache/inspect/clear the token for the current `--server` |
-| `profile add/use/list/remove` | Named site profiles; `--profile NAME` on any command |
+| `profile add/list/remove/current` | Named site profiles; selected per shell via `--profile NAME` or `ER_PROFILE` |
 
 ## Spec reference
 
