@@ -396,3 +396,12 @@ def profile_remove(name):
     if not config_store.remove_profile(name):
         raise config_store.ConfigError(f"no profile named {name!r}")
     click.echo(f"Removed profile {name!r}{' (was active)' if was_active else ''}.")
+
+
+@profile_group.command("current")
+def profile_current():
+    """Print the active profile name (exit 1 if none) — for scripts and prompts."""
+    active = config_store.active_profile()
+    if active is None:
+        sys.exit(1)
+    click.echo(active[0])

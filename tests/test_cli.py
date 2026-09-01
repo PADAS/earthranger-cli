@@ -557,3 +557,13 @@ def test_unknown_profile_flag_is_usage_error():
     result = _run(["--profile", "zzz", "list", "categories"])
     assert result.exit_code != 0
     assert "Unknown profile 'zzz'" in result.output
+
+
+def test_profile_current():
+    result = _run(["profile", "current"])
+    assert result.exit_code == 1
+    assert result.output == ""
+    config_store.add_profile("sandbox", server="sandbox")
+    result = _run(["profile", "current"])
+    assert result.exit_code == 0
+    assert result.output == "sandbox\n"
