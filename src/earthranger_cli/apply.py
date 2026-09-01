@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from erclient.er_errors import ERClientException
 
 from . import client as er
-from .choices import desired_choice_records, plan_field_choices
+from .choices import desired_choice_sets, plan_field_choices
 from .dsl import Spec
 from .schema_gen import build_event_type_payload
 
@@ -88,9 +88,8 @@ def extract_choice_fields(schema: dict) -> list[str]:
 
 def apply_spec(client, spec: Spec, dry_run: bool = False) -> list[ActionRecord]:
     records = [_apply_category(client, spec, dry_run)]
-    for et in spec.event_types:
-        for field_name, desired in desired_choice_records(et).items():
-            records.extend(_apply_field_choices(client, field_name, desired, dry_run))
+    for field_name, desired in desired_choice_sets(spec).items():
+        records.extend(_apply_field_choices(client, field_name, desired, dry_run))
     existing_types = client.get_event_types(
         include_inactive=True, include_schema=True, version="v2.0"
     )

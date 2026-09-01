@@ -46,6 +46,7 @@ class SpecError(Exception):
 class OptionSpec:
     value: str
     display: str
+    icon: str | None = None
 
 
 @dataclass
@@ -126,6 +127,8 @@ class CategorySpec:
 class Spec:
     category: CategorySpec
     event_types: list[EventTypeSpec]
+    # top-level shared choice sets: Choice.field name -> options
+    choices: dict[str, list[OptionSpec]] = field(default_factory=dict)
 
 
 def load_spec(path: str) -> Spec:
@@ -142,58 +145,83 @@ def parse_spec(data: object) -> Spec:
     if not isinstance(data, dict):
         raise SpecError(["spec must be a mapping with 'category' and 'event_types' keys"])
     category = _parse_category(data.get("category"), errors)
+    choice_sets = _parse_choice_sets(data.get("choices"), errors)
     event_types = _parse_event_types(data.get("event_types"), errors)
-    _check_choice_field_name_collisions(event_types, errors)
+    _check_choice_sets(choice_sets, event_types, errors)
     if errors:
         raise SpecError(errors)
-    return Spec(category=category, event_types=event_types)
+    return Spec(category=category, event_types=event_types, choices=choice_sets)
 
 
-def _check_choice_field_name_collisions(
-    event_types: list[EventTypeSpec], errors: list[str]
+def _parse_choice_sets(raw: object, errors: list[str]) -> dict[str, list[OptionSpec]]:
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        errors.append("choices: must be a mapping of choice-set name -> options list")
+        return {}
+    out: dict[str, list[OptionSpec]] = {}
+    for name, opts_raw in raw.items():
+        if not isinstance(name, str) or not CHOICES_FIELD_RE.match(name):
+            errors.append(
+                f"choices: set name {name!r} must match [A-Za-z0-9_-] and be at most 40 characters"
+            )
+            continue
+        out[name] = _parse_options(opts_raw, f"choices.{name}", errors)
+    return out
+
+
+def _check_choice_sets(
+    choice_sets: dict[str, list[OptionSpec]],
+    event_types: list[EventTypeSpec],
+    errors: list[str],
 ) -> None:
-    """Choice-list field names are derived from '<event_type>_<field_key>' (see
-    schema_gen.choice_field_name; ER's Choice.field column is varchar(40), so long
-    names are hash-compressed). Two distinct fields anywhere in the spec can still
-    produce the same name; that silently corrupts the server's choice set on apply,
-    so it's rejected here rather than at apply time — UNLESS the two fields
-    declare identical options, in which case sharing is presumably intentional
-    (an explicit choices_field naming another field's derived name, or two
-    explicit choices_field values naming the same set) and is allowed. Two
-    *implicit* (derived) names colliding is always rejected regardless of
-    options: that shape only arises by accident, never on purpose.
-    """
-    from .schema_gen import effective_choice_field  # local: schema_gen imports from dsl
+    """Choice-set coherence across the whole spec.
 
-    # name -> (path, explicit?, options) of the first field that produced it
-    seen: dict[str, tuple[str, bool, list]] = {}
+    Effective names (see schema_gen.effective_choice_field) must be unique
+    unless deliberately shared: referencing a top-level set, or explicit
+    choices_field declarations with identical inline options. Accidental
+    derived-name collisions still error — apply would corrupt the server's
+    choice set otherwise.
+    """
+    from .schema_gen import effective_choice_field  # local import: schema_gen imports from dsl
+
+    # name -> (path, kind: toplevel|explicit|derived, options)
+    seen: dict[str, tuple[str, str, list]] = {
+        name: (f"choices.{name}", "toplevel", opts) for name, opts in choice_sets.items()
+    }
     for i, et in enumerate(event_types):
         for j, f in enumerate(et.fields):
             if f.type not in CHOICE_TYPES or not f.key:
                 continue
             name = effective_choice_field(et.value, f)
-            path = f"event_types[{i}].fields[{j}].key"
-            explicit = f.choices_field is not None
+            path = f"event_types[{i}].fields[{j}]"
+            if f.options is None:
+                if name not in choice_sets:
+                    errors.append(
+                        f"{path}.choices_field: {name!r} references an undeclared "
+                        "top-level choice set"
+                    )
+                continue
             first = seen.get(name)
             if first is None:
-                seen[name] = (path, explicit, f.options or [])
+                kind = "explicit" if f.choices_field else "derived"
+                seen[name] = (f"{path}.key", kind, f.options)
                 continue
-            first_path, first_explicit, first_options = first
-            if not explicit and not first_explicit:
-                # Both names were derived, not chosen — an accidental
-                # derivation collision, not intentional sharing.
+            first_path, kind, first_options = first
+            if kind == "toplevel":
                 errors.append(
-                    f"{path}: choice field name {name!r} collides with {first_path} "
+                    f"{path}.options: choice set {name!r} is declared top-level; drop "
+                    "the inline options and reference it with choices_field"
+                )
+            elif kind == "derived" and f.choices_field is None:
+                errors.append(
+                    f"{path}.key: choice field name {name!r} collides with {first_path} "
                     "(choice-list field names are derived from '<event_type>_<field_key>' "
                     "and must be unique across the spec)"
                 )
-                continue
-            # At least one side is explicit: sharing is fine only when both
-            # sides carry the same options; otherwise apply would see-saw the
-            # shared set (each apply deactivating the other's options).
-            if (f.options or []) != first_options:
+            elif f.options != first_options:
                 errors.append(
-                    f"{path}: choice field name {name!r} is shared with {first_path} "
+                    f"{path}.key: choices_field {name!r} is shared with {first_path} "
                     "but the two fields declare different options; shared choice "
                     "sets must declare identical options"
                 )
@@ -362,7 +390,10 @@ def _parse_field(raw: object, path: str, errors: list[str]) -> FieldSpec:
 
     options: list[OptionSpec] | None = None
     if ftype in CHOICE_TYPES:
-        options = _parse_options(raw.get("options"), f"{path}.options", errors)
+        if raw.get("options") is None and raw.get("choices_field") is not None:
+            options = None  # references a top-level choice set (validated spec-wide)
+        else:
+            options = _parse_options(raw.get("options"), f"{path}.options", errors)
     elif raw.get("options") is not None:
         errors.append(f"{path}.options: not allowed for type {ftype!r}")
 
@@ -466,6 +497,7 @@ def _parse_options(raw: object, path: str, errors: list[str]) -> list[OptionSpec
 
 
 def _parse_option(item: object, path: str, errors: list[str]) -> OptionSpec | None:
+    icon = None
     if isinstance(item, str):
         value, display = item, item.replace("_", " ").title()
     elif isinstance(item, dict):
@@ -474,12 +506,16 @@ def _parse_option(item: object, path: str, errors: list[str]) -> OptionSpec | No
         if not isinstance(value, str) or not value or not isinstance(display, str) or not display:
             errors.append(f"{path}: option mapping needs 'value' and 'display' strings")
             return None
+        icon = item.get("icon")
+        if icon is not None and not isinstance(icon, str):
+            errors.append(f"{path}.icon: must be a string")
+            icon = None
     else:
         errors.append(f"{path}: option must be a string or a value/display mapping")
         return None
     # Option values are free text on ER (Choice.value is an unconstrained
     # varchar(100), truncated at generation time); no slug rule here.
-    return OptionSpec(value=value, display=display)
+    return OptionSpec(value=value, display=display, icon=icon)
 
 
 def _required_str(val: object, path: str, errors: list[str]) -> str:

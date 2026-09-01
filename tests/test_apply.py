@@ -54,6 +54,7 @@ def _existing_state():
                     "value": "elephant",
                     "display": "Elephant",
                     "is_active": True,
+                    "ordernum": 0,
                 },
             ]
         },

@@ -704,3 +704,87 @@ def test_explicit_empty_fields_and_is_collection():
         }
     )
     assert "event_types[0].fields: at least one field is required" in errors
+
+
+TOPLEVEL_CHOICES = {
+    "category": {"value": "c1", "display": "C1"},
+    "choices": {
+        "shared_actions": [
+            {"value": "stopped", "display": "Stopped", "icon": "stop_icon"},
+            "warned",
+        ]
+    },
+    "event_types": [
+        {
+            "value": "t1",
+            "display": "T1",
+            "fields": [
+                {
+                    "key": "action",
+                    "label": "Action",
+                    "type": "select",
+                    "choices_field": "shared_actions",
+                },
+            ],
+        },
+        {
+            "value": "t2",
+            "display": "T2",
+            "fields": [
+                {
+                    "key": "response",
+                    "label": "Response",
+                    "type": "multiselect",
+                    "choices_field": "shared_actions",
+                },
+            ],
+        },
+    ],
+}
+
+
+def test_toplevel_choices_parse():
+    import copy
+
+    spec = parse_spec(copy.deepcopy(TOPLEVEL_CHOICES))
+    opts = spec.choices["shared_actions"]
+    assert [(o.value, o.display, o.icon) for o in opts] == [
+        ("stopped", "Stopped", "stop_icon"),
+        ("warned", "Warned", None),
+    ]
+    # both fields reference the set; no inline options
+    assert spec.event_types[0].fields[0].options is None
+    assert spec.event_types[1].fields[0].options is None
+
+
+def test_choices_field_reference_validation():
+    import copy
+
+    data = copy.deepcopy(TOPLEVEL_CHOICES)
+    data["event_types"][0]["fields"][0]["choices_field"] = "nope"
+    errors = _errors_for(data)
+    assert any("references an undeclared top-level choice set" in e for e in errors)
+
+    data = copy.deepcopy(TOPLEVEL_CHOICES)
+    data["event_types"][0]["fields"][0]["options"] = ["stopped"]
+    errors = _errors_for(data)
+    assert any("declared top-level" in e and "inline" in e for e in errors)
+
+    data = copy.deepcopy(TOPLEVEL_CHOICES)
+    data["choices"] = {"Bad Name!": ["a"]}
+    errors = _errors_for(data)
+    assert any("choices" in e and "must match" in e for e in errors)
+
+
+def test_option_icon_validation():
+    errors = _errors_for(
+        _spec_with_field(
+            {
+                "key": "s",
+                "label": "S",
+                "type": "select",
+                "options": [{"value": "a", "display": "A", "icon": 3}],
+            }
+        )
+    )
+    assert any("icon: must be a string" in e for e in errors)

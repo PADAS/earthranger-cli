@@ -51,9 +51,10 @@ SPEC_DATA = {
 
 def _server_from_spec(spec_data):
     """Build FakeER state as ER's GET would return it for an applied spec."""
+    from earthranger_cli.choices import desired_choice_sets
+
     spec = parse_spec(copy.deepcopy(spec_data))
     event_types = []
-    choices = {}
     for et in spec.event_types:
         payload = build_event_type_payload(et, spec.category.value)
         record = copy.deepcopy(payload)
@@ -61,20 +62,10 @@ def _server_from_spec(spec_data):
         record["category"] = {"value": spec.category.value}
         record["icon"] = record.pop("icon", None)
         event_types.append(record)
-        for f in et.fields:
-            if f.options is None:
-                continue
-            name = f"{et.value}_{f.key}"
-            choices[name] = [
-                {
-                    "id": f"ch-{name}-{o.value}",
-                    "field": name,
-                    "value": o.value,
-                    "display": o.display,
-                    "is_active": True,
-                }
-                for o in f.options
-            ]
+    choices = {
+        name: [{**rec, "id": f"ch-{name}-{rec['value']}"} for rec in recs]
+        for name, recs in desired_choice_sets(spec).items()
+    }
     return FakeER(
         categories=[
             {"id": "cat-1", "value": spec.category.value, "display": spec.category.display}
@@ -135,7 +126,9 @@ def test_pull_foreign_choice_field_name_becomes_choices_field():
     et = fake.event_types[0]
     prop = et["schema"]["json"]["properties"]["species"]
     prop["anyOf"] = [{"$ref": "/api/v2.0/schemas/choices.json?field=handmade_name"}]
-    fake.choices["handmade_name"] = [{"id": "h1", "value": "x", "display": "X", "is_active": True}]
+    fake.choices["handmade_name"] = [
+        {"id": "h1", "value": "x", "display": "X", "is_active": True, "ordernum": 0}
+    ]
     result = pull_category(fake, "wm")
     assert result.unsupported == []
     field = result.spec["event_types"][0]["fields"][0]
