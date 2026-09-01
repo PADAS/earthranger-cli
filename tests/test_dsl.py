@@ -834,3 +834,14 @@ def test_default_priority_rejects_non_integer_values():
     data["event_types"][0]["default_priority"] = 100.0
     errors = _errors_for(data)
     assert any("default_priority" in e for e in errors)
+
+
+def test_geometry_type_parses_and_validates():
+    data = _spec_with_field({"key": "n", "label": "N", "type": "string"})
+    data["event_types"][0]["geometry_type"] = "polygon"
+    assert parse_spec(data).event_types[0].geometry_type == "Polygon"
+    data["event_types"][0]["geometry_type"] = "Point"
+    assert parse_spec(data).event_types[0].geometry_type == "Point"
+    data["event_types"][0]["geometry_type"] = "line"
+    errors = _errors_for(data)
+    assert any("geometry_type" in e and "point, polygon" in e for e in errors)

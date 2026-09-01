@@ -176,4 +176,6 @@ def build_event_type_payload(et: EventTypeSpec, category_value: str) -> dict:
         payload["default_state"] = et.default_state
     if et.readonly is not None:
         payload["readonly"] = et.readonly
+    if et.geometry_type is not None:
+        payload["geometry_type"] = et.geometry_type
     return payload

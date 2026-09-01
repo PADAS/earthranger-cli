@@ -310,3 +310,10 @@ def test_defaults_and_readonly_in_payload_only_when_declared():
     assert payload["default_priority"] == 200
     assert payload["default_state"] == "active"
     assert payload["readonly"] is True
+
+
+def test_geometry_type_in_payload_only_when_declared():
+    et = _event_type()
+    assert "geometry_type" not in build_event_type_payload(et, "c")
+    et.geometry_type = "Polygon"
+    assert build_event_type_payload(et, "c")["geometry_type"] == "Polygon"

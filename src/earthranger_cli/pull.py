@@ -353,3 +353,6 @@ def _copy_type_defaults(et: dict, out: dict) -> None:
         out["default_state"] = state
     if et.get("readonly"):
         out["readonly"] = True
+    geometry = et.get("geometry_type")
+    if geometry and geometry != "Point":
+        out["geometry_type"] = geometry.lower()

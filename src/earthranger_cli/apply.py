@@ -201,6 +201,20 @@ def _event_type_differs(payload: dict, existing: dict) -> bool:
     return _canonical_schema(payload["schema"]) != _canonical_schema(existing.get("schema") or {})
 
 
+def _guard_geometry_type(et, payload: dict, existing: dict) -> None:
+    """ER's UI forbids changing geometry_type once set (the API happily accepts
+    the change, which would corrupt a type with existing events) — so a spec
+    that declares a different value than the server's is unrealizable."""
+    declared = payload.get("geometry_type")
+    current = existing.get("geometry_type") or "Point"
+    if declared is not None and declared != current:
+        raise ApplyError(
+            f"event_type {et.value!r}: geometry_type cannot be changed once set "
+            f"(server has {current!r}, spec declares {declared!r}); remove the "
+            "declaration or recreate the event type"
+        )
+
+
 def _apply_event_type(client, et, category_value: str, existing: dict | None, dry_run: bool):
     payload = build_event_type_payload(et, category_value)
     if existing is None:
@@ -212,8 +226,10 @@ def _apply_event_type(client, et, category_value: str, existing: dict | None, dr
                 version="v2.0",
             )
         return ActionRecord("event_type", et.value, "created")
+    _guard_geometry_type(et, payload, existing)
     if _event_type_differs(payload, existing):
-        patch = {**payload, "id": existing.get("id")}
+        patch = {k: v for k, v in payload.items() if k != "geometry_type"}
+        patch["id"] = existing.get("id")
         if not dry_run:
             _write(
                 f"updating event_type {et.value!r}",

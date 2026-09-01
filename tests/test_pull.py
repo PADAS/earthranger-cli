@@ -457,3 +457,14 @@ def test_pull_emits_nondefault_state_priority_readonly():
         assert key not in other
     records = apply_spec(fake, parse_spec(result.spec))
     assert {r.action for r in records} == {"unchanged"}
+
+
+def test_pull_emits_nondefault_geometry_type():
+    fake = _server_from_spec(SPEC_DATA)
+    fake.event_types[0]["geometry_type"] = "Polygon"
+    fake.event_types[1]["geometry_type"] = "Point"
+    result = pull_category(fake, "wm")
+    assert result.spec["event_types"][0]["geometry_type"] == "polygon"
+    assert "geometry_type" not in result.spec["event_types"][1]
+    records = apply_spec(fake, parse_spec(result.spec))
+    assert {r.action for r in records} == {"unchanged"}

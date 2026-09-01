@@ -230,3 +230,34 @@ def test_declared_defaults_trigger_update_undeclared_ignored():
     patched = next(c for c in fake.calls if c[0] == "patch_event_type")
     assert patched[1]["default_priority"] == 200
     assert patched[1]["readonly"] is False
+
+
+def test_geometry_type_immutable():
+    from earthranger_cli.apply import ApplyError
+
+    fake = _existing_state()
+    fake.event_types[0]["geometry_type"] = "Point"
+    spec = _spec()
+    spec.event_types[0].geometry_type = "Polygon"
+    with pytest.raises(ApplyError) as exc:
+        apply_spec(fake, spec)
+    assert "geometry_type" in str(exc.value)
+    assert "'Point'" in str(exc.value) and "'Polygon'" in str(exc.value)
+    assert fake.writes() == []
+
+    # matching declaration is not a diff; undeclared is ignored
+    spec.event_types[0].geometry_type = "Point"
+    records = apply_spec(fake, spec)
+    assert {r.action for r in records} == {"unchanged"}
+    fake.event_types[0]["geometry_type"] = "Polygon"
+    records = apply_spec(fake, _spec())
+    assert {r.action for r in records} == {"unchanged"}
+
+
+def test_geometry_type_sent_on_create():
+    fake = FakeER()
+    spec = _spec()
+    spec.event_types[0].geometry_type = "Polygon"
+    apply_spec(fake, spec)
+    posted = next(c for c in fake.calls if c[0] == "post_event_type")
+    assert posted[1]["geometry_type"] == "Polygon"

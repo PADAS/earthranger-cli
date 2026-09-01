@@ -29,6 +29,8 @@ CHOICE_TYPES = {"select", "multiselect"}
 PRIORITY_BY_NAME = {"gray": 0, "green": 100, "amber": 200, "red": 300}
 PRIORITY_BY_VALUE = {v: k for k, v in PRIORITY_BY_NAME.items()}
 STATE_VALUES = ("new", "active", "resolved")
+# EventType.geometry_type (das GeometryTypesChoices); immutable once set in ER
+GEOMETRY_TYPES = {"point": "Point", "polygon": "Polygon"}
 NUMERIC_TYPES = {"integer", "number"}
 _SLUG_RE = re.compile(r"^[a-z0-9_]+$")
 # ER's own field-name rule (das FORM_ELEMENT_SEGMENT_PATTERN): stock event
@@ -107,6 +109,7 @@ class EventTypeSpec:
     icon_id: str | None = None
     is_collection: bool = False
     default_priority: int | None = None  # wire value; DSL accepts names too
+    geometry_type: str | None = None  # "Point" | "Polygon"; immutable once set in ER
     default_state: str | None = None
     readonly: bool | None = None  # None = never sent; server value preserved
     layout: LayoutSpec = field(default_factory=LayoutSpec)
@@ -328,6 +331,16 @@ def _parse_event_type(raw: object, path: str, errors: list[str]) -> EventTypeSpe
     if readonly is not None and not isinstance(readonly, bool):
         errors.append(f"{path}.readonly: must be true or false")
         readonly = None
+
+    geometry_type = raw.get("geometry_type")
+    if geometry_type is not None:
+        if isinstance(geometry_type, str) and geometry_type.lower() in GEOMETRY_TYPES:
+            geometry_type = GEOMETRY_TYPES[geometry_type.lower()]
+        else:
+            errors.append(
+                f"{path}.geometry_type: must be one of {', '.join(GEOMETRY_TYPES)}"
+            )
+            geometry_type = None
     icon_id = raw.get("icon_id")
     if icon_id is not None and not isinstance(icon_id, str):
         errors.append(f"{path}.icon_id: must be a string")
@@ -348,6 +361,7 @@ def _parse_event_type(raw: object, path: str, errors: list[str]) -> EventTypeSpe
         default_priority=default_priority,
         default_state=default_state,
         readonly=readonly,
+        geometry_type=geometry_type,
         layout=layout,
         sections=sections,
     )
