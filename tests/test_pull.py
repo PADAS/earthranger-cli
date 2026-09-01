@@ -845,3 +845,47 @@ def test_pull_refuses_broken_conditional_dependents_linkage():
     ui["investigator"]["conditionalDependents"] = ["section-3"]  # orphaned extra
     result = pull_category(fake, "wm")
     assert any("conditionalDependents" in w for w in result.unsupported)
+
+
+def test_pull_refuses_required_scope_shifts():
+    # r6 suppressed pull:223/320 — requiredness must keep its scope
+    fake = _server_from_spec(CONDITIONAL_SPEC)
+    j = fake.event_types[0]["schema"]["json"]
+    j["required"] = ["investigator"]  # branch-scoped field required globally
+    result = pull_category(fake, "wm")
+    assert any("required" in w and "investigator" in w for w in result.unsupported)
+
+    fake = _server_from_spec(CONDITIONAL_SPEC)
+    j = fake.event_types[0]["schema"]["json"]
+    j["allOf"][0]["then"]["required"] = ["cause"]  # top-level field required in branch
+    result = pull_category(fake, "wm")
+    assert any("required" in w and "cause" in w for w in result.unsupported)
+
+
+def test_pull_refuses_malformed_ui_conditions():
+    # r6 suppressed pull:284
+    fake = _server_from_spec(CONDITIONAL_SPEC)
+    conds = fake.event_types[0]["schema"]["ui"]["sections"]["section-2"]["conditions"]
+    conds[0]["extra_knob"] = "x"
+    result = pull_category(fake, "wm")
+    assert any("extra_knob" in w for w in result.unsupported)
+
+    fake = _server_from_spec(CONDITIONAL_SPEC)
+    schema = fake.event_types[0]["schema"]
+    conds = schema["ui"]["sections"]["section-2"]["conditions"]
+    conds[0]["value"] = ""
+    # keep the json branch consistent with the empty value
+    from earthranger_cli.schema_gen import _encode_is_exactly
+
+    schema["json"]["allOf"][0]["if"] = _encode_is_exactly("cause", "")
+    result = pull_category(fake, "wm")
+    assert any("condition" in w and "value" in w for w in result.unsupported)
+
+
+def test_pull_refuses_unknown_collection_required():
+    # r6 suppressed pull:482
+    fake = _server_from_spec(COLLECTION_SPEC)
+    items = fake.event_types[0]["schema"]["json"]["properties"]["Demo1"]["items"]
+    items["required"] = ["ghost"]
+    result = pull_category(fake, "wm")
+    assert any("Demo1" in w and "ghost" in w for w in result.unsupported)

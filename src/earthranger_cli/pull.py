@@ -274,6 +274,16 @@ def _read_sections(json_block, ui_block, properties, ui_fields):
             if len(conditions) > 1:
                 return f"layout section {sid!r} has multiple conditions"
             cond = conditions[0]
+            extra_keys = set(cond) - {"field", "id", "operator", "value"}
+            if extra_keys:
+                return (
+                    f"layout section {sid!r} condition carries keys the DSL cannot "
+                    f"express ({', '.join(sorted(extra_keys))})"
+                )
+            if not isinstance(cond.get("field"), str) or not cond.get("field"):
+                return f"layout section {sid!r} condition has no field"
+            if not isinstance(cond.get("value"), str) or not cond.get("value"):
+                return f"layout section {sid!r} condition has an empty value"
             if cond.get("operator") != "IS_EXACTLY":
                 return (
                     f"layout section {sid!r} condition operator "
@@ -320,6 +330,23 @@ def _read_sections(json_block, ui_block, properties, ui_fields):
                 "extra_required": list(branch.get("required") or []),
             }
         )
+    # requiredness must keep its scope: the generator routes required keys to
+    # where their fields live, so cross-scope entries would silently change
+    # from conditional to global (or vice versa) on re-apply
+    for r in json_block.get("required") or []:
+        if r not in properties:
+            return (
+                f"top-level required entry {r!r} is not a top-level property "
+                "(requiredness would change scope)"
+            )
+    for sid, then in branches.items():
+        for r in then.get("required") or []:
+            if not isinstance(r, str) or r not in (then.get("properties") or {}):
+                return (
+                    f"conditional branch for {sid!r} requires {r!r}, which is not "
+                    "one of its own properties (requiredness would change scope)"
+                )
+
     # conditionalDependents must mirror the conditions exactly: the generator
     # rebuilds them from the conditions, so any divergence (missing linkage,
     # orphaned or extra dependents) would be silently rewritten on apply
@@ -478,6 +505,9 @@ def _invert_collection(client, key, json_prop, ui_field, all_ui_fields, out):
         out["max"] = json_prop["maxItems"]
     out["fields"] = sub_fields
     required = list(items.get("required") or [])
+    for r in required:
+        if not isinstance(r, str) or r not in props:
+            return None, (f"collection requires {r!r}, which is not one of its sub-fields")
     if required:
         out["required"] = required
     # collections take description only; hint/default have no DSL form here
