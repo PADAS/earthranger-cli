@@ -337,9 +337,7 @@ def _parse_event_type(raw: object, path: str, errors: list[str]) -> EventTypeSpe
         if isinstance(geometry_type, str) and geometry_type.lower() in GEOMETRY_TYPES:
             geometry_type = GEOMETRY_TYPES[geometry_type.lower()]
         else:
-            errors.append(
-                f"{path}.geometry_type: must be one of {', '.join(GEOMETRY_TYPES)}"
-            )
+            errors.append(f"{path}.geometry_type: must be one of {', '.join(GEOMETRY_TYPES)}")
             geometry_type = None
     icon_id = raw.get("icon_id")
     if icon_id is not None and not isinstance(icon_id, str):
