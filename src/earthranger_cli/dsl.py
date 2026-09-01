@@ -382,7 +382,7 @@ def _parse_event_type(raw: object, path: str, errors: list[str]) -> EventTypeSpe
     if ordernum is not None and (
         isinstance(ordernum, bool)
         or not isinstance(ordernum, (int, float))
-        or not math.isfinite(ordernum)
+        or (isinstance(ordernum, float) and not math.isfinite(ordernum))
     ):
         errors.append(f"{path}.ordernum: must be a finite number")
         ordernum = None

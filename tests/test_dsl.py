@@ -1079,3 +1079,11 @@ def test_required_entries_validated_as_strings():
     et_data["event_types"][0]["required"] = [{"x": 1}]
     errors = _errors_for(et_data)
     assert any("required" in e and "string" in e for e in errors)
+
+
+def test_huge_integer_ordernum_is_specerror_not_crash():
+    # math.isfinite(10**400) raises OverflowError (Copilot r3 suppressed dsl:386)
+    data = _spec_with_field({"key": "n", "label": "N", "type": "string"})
+    data["event_types"][0]["ordernum"] = 10**400
+    parsed = parse_spec(data)  # ints are always finite; must not crash
+    assert parsed.event_types[0].ordernum == 10**400

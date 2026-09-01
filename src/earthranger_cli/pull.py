@@ -250,6 +250,10 @@ def _read_sections(json_block, ui_block, properties, ui_fields):
         then = block.get("then") or {}
         if not isinstance(sid, str) or not isinstance(then.get("properties"), dict):
             return "layout uses a conditional block the DSL cannot express"
+        if sid in branches:
+            return f"layout has duplicate conditional branches for {sid!r}"
+        if sid not in sections:
+            return f"layout has a conditional branch for unknown section {sid!r}"
         branches[sid] = {**then, "_if": block.get("if")}
 
     out: list[dict] = []
@@ -309,8 +313,20 @@ def _read_sections(json_block, ui_block, properties, ui_fields):
             }
         )
     # collection sub-fields appear in ui.fields as dotted keys under their
-    # collection's key; they never appear in section columns
-    top_ui_keys = {k for k in ui_fields if "." not in k}
+    # collection's key; only dotted keys actually referenced by a collection's
+    # columns are exempt from coverage — anything else dotted is orphaned
+    collection_columns: set[str] = set()
+    for f in ui_fields.values():
+        if isinstance(f, dict) and f.get("type") == "COLLECTION":
+            collection_columns.update(f.get("leftColumn") or [])
+            collection_columns.update(f.get("rightColumn") or [])
+    top_ui_keys: set[str] = set()
+    for k in ui_fields:
+        if "." in k:
+            if k not in collection_columns:
+                return f"layout leaves dotted UI field {k!r} outside any collection"
+        else:
+            top_ui_keys.add(k)
     expected = set(properties)
     for then in branches.values():
         expected |= set(then["properties"])
@@ -372,7 +388,10 @@ def _invert_field(client, et_value, key, json_prop, ui_field, all_ui_fields=None
 
 def _invert_collection(client, key, json_prop, ui_field, all_ui_fields, out):
     out["type"] = "collection"
-    out["item_name"] = ui_field.get("itemName")
+    item_name = ui_field.get("itemName")
+    if not isinstance(item_name, str) or not item_name:
+        return None, "collection has no itemName"
+    out["item_name"] = item_name
     if ui_field.get("buttonText"):
         out["button_text"] = ui_field["buttonText"]
     if ui_field.get("itemIdentifier"):

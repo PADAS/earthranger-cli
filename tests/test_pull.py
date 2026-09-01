@@ -580,9 +580,10 @@ def test_pull_tolerates_collection_subfield_ui_keys():
     }
     schema["ui"]["sections"]["section-1"]["leftColumn"].append({"name": "stuff", "type": "field"})
     result = pull_category(fake, "wm")
-    # the malformed (empty) collection is skipped field-level; the type pulls
-    assert any("stuff" in w and "no sub-fields" in w for w in result.unsupported)
-    assert "sighting" in [t["value"] for t in result.spec["event_types"]]
+    # its dotted key is orphaned (the fabricated collection's columns are
+    # empty), so the layout refuses rather than silently dropping the entry
+    assert any("stuff.inner" in w and "outside any collection" in w for w in result.unsupported)
+    assert "sighting" not in [t["value"] for t in result.spec["event_types"]]
 
 
 def test_pull_deprecated_field_round_trips_as_inactive():
@@ -745,3 +746,41 @@ def test_pull_collection_with_unsupported_extras_refused():
     props["Demo1"]["default"] = "weird"
     result = pull_category(fake, "wm")
     assert any("Demo1" in w and "default" in w for w in result.unsupported)
+
+
+def test_pull_refuses_collection_without_item_name():
+    # Copilot r3909282552
+    fake = _server_from_spec(COLLECTION_SPEC)
+    del fake.event_types[0]["schema"]["ui"]["fields"]["Demo1"]["itemName"]
+    result = pull_category(fake, "wm")
+    assert any("Demo1" in w and "itemName" in w for w in result.unsupported)
+
+
+def test_pull_refuses_duplicate_or_unknown_branch_sections():
+    # Copilot r3 suppressed pull:253
+    import copy
+
+    fake = _server_from_spec(CONDITIONAL_SPEC)
+    j = fake.event_types[0]["schema"]["json"]
+    j["allOf"].append(copy.deepcopy(j["allOf"][0]))
+    result = pull_category(fake, "wm")
+    assert any("duplicate conditional branch" in w for w in result.unsupported)
+
+    fake = _server_from_spec(CONDITIONAL_SPEC)
+    j = fake.event_types[0]["schema"]["json"]
+    j["allOf"][0]["x-section"] = "section-99"
+    result = pull_category(fake, "wm")
+    assert any("unknown section" in w for w in result.unsupported)
+
+
+def test_pull_refuses_orphaned_dotted_ui_keys():
+    # Copilot r3 suppressed pull:313: dotted keys not referenced by any
+    # collection's columns must refuse, not silently vanish
+    fake = _server_from_spec(SPEC_DATA)
+    fake.event_types[0]["schema"]["ui"]["fields"]["ghost.sub"] = {
+        "type": "TEXT",
+        "inputType": "SHORT_TEXT",
+        "parent": "ghost",
+    }
+    result = pull_category(fake, "wm")
+    assert any("ghost.sub" in w for w in result.unsupported)
