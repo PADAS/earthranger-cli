@@ -178,16 +178,17 @@ def test_pull_skips_schema_with_auto_generate():
     assert "sighting" not in [t["value"] for t in result.spec["event_types"]]
 
 
-def test_pull_skips_event_type_with_inactive_section():
+def test_pull_inactive_section_round_trips():
+    # inactive sections are now expressible: pulled as active: false
     fake = _server_from_spec(SPEC_DATA)
     et = fake.event_types[0]
     et["schema"]["ui"]["sections"]["section-1"]["isActive"] = False
     result = pull_category(fake, "wm")
-    assert any(
-        "sighting" in w and "layout section 'section-1' is inactive (isActive: false)" in w
-        for w in result.unsupported
-    )
-    assert "sighting" not in [t["value"] for t in result.spec["event_types"]]
+    assert result.unsupported == []
+    pulled = next(t for t in result.spec["event_types"] if t["value"] == "sighting")
+    assert pulled["sections"][0]["active"] is False
+    records = apply_spec(fake, parse_spec(result.spec))
+    assert {r.action for r in records} == {"unchanged"}
 
 
 def test_pull_handles_json_stringified_v2_schema():
@@ -483,5 +484,115 @@ def test_pull_emits_auto_resolve_and_ordernum():
     other = result.spec["event_types"][1]
     for key in ("auto_resolve", "resolve_time", "ordernum"):
         assert key not in other
+    records = apply_spec(fake, parse_spec(result.spec))
+    assert {r.action for r in records} == {"unchanged"}
+
+
+CONDITIONAL_SPEC = {
+    "category": {"value": "wm", "display": "Wildlife Monitoring"},
+    "event_types": [
+        {
+            "value": "fire",
+            "display": "Fire",
+            "sections": [
+                {
+                    "label": "",
+                    "fields": [
+                        {
+                            "key": "cause",
+                            "label": "Cause",
+                            "type": "select",
+                            "options": ["manmade", "natural"],
+                        }
+                    ],
+                },
+                {
+                    "label": "Arson",
+                    "condition": {"field": "cause", "operator": "is_exactly", "value": "manmade"},
+                    "fields": [{"key": "investigator", "label": "Investigator", "type": "string"}],
+                },
+                {
+                    "label": "Notes",
+                    "active": False,
+                    "fields": [{"key": "notes", "label": "Notes", "type": "textarea"}],
+                },
+            ],
+            "required": ["cause", "investigator"],
+        }
+    ],
+}
+
+
+def test_pull_round_trips_conditional_and_inactive_sections():
+    fake = _server_from_spec(CONDITIONAL_SPEC)
+    # the server's condition ids are random; ours are deterministic — the diff
+    # must not care
+    fake.event_types[0]["schema"]["ui"]["sections"]["section-2"]["conditions"][0]["id"] = (
+        "condition-yNlkNW7x_2y5QesCt2J6f"
+    )
+    result = pull_category(fake, "wm")
+    assert result.unsupported == []
+    et = result.spec["event_types"][0]
+    assert et["sections"][1]["condition"] == {
+        "field": "cause",
+        "operator": "is_exactly",
+        "value": "manmade",
+    }
+    assert et["sections"][2]["active"] is False
+    assert sorted(et["required"]) == ["cause", "investigator"]
+    records = apply_spec(fake, parse_spec(result.spec))
+    assert {r.action for r in records} == {"unchanged"}
+    assert fake.writes() == []
+
+
+def test_pull_unsupported_condition_operator_named():
+    fake = _server_from_spec(CONDITIONAL_SPEC)
+    ui = fake.event_types[0]["schema"]["ui"]
+    ui["sections"]["section-2"]["conditions"][0]["operator"] = "CONTAINS"
+    result = pull_category(fake, "wm")
+    assert any("CONTAINS" in w and "not" in w for w in result.unsupported)
+    assert "fire" not in [t["value"] for t in result.spec["event_types"]]
+
+
+def test_pull_tolerates_collection_subfield_ui_keys():
+    fake = _server_from_spec(SPEC_DATA)
+    et = fake.event_types[0]
+    schema = et["schema"]
+    schema["json"]["properties"]["stuff"] = {
+        "type": "array",
+        "title": "Stuff",
+        "deprecated": False,
+        "items": {},
+        "unevaluatedItems": False,
+    }
+    schema["ui"]["fields"]["stuff"] = {
+        "type": "COLLECTION",
+        "parent": "section-1",
+        "columns": 1,
+        "itemName": "Item",
+        "leftColumn": [],
+        "rightColumn": [],
+    }
+    schema["ui"]["fields"]["stuff.inner"] = {
+        "type": "TEXT",
+        "inputType": "SHORT_TEXT",
+        "parent": "stuff",
+    }
+    schema["ui"]["sections"]["section-1"]["leftColumn"].append({"name": "stuff", "type": "field"})
+    result = pull_category(fake, "wm")
+    # the collection field is skipped field-level; the event type still pulls
+    assert any("stuff" in w and "COLLECTION" in w for w in result.unsupported)
+    assert "sighting" in [t["value"] for t in result.spec["event_types"]]
+
+
+def test_pull_deprecated_field_round_trips_as_inactive():
+    fake = _server_from_spec(SPEC_DATA)
+    et = fake.event_types[0]
+    et["schema"]["json"]["properties"]["notes"]["deprecated"] = True
+    result = pull_category(fake, "wm")
+    assert result.unsupported == []
+    pulled = next(t for t in result.spec["event_types"] if t["value"] == "sighting")
+    notes = next(f for f in pulled["fields"] if f["key"] == "notes")
+    assert notes["active"] is False
     records = apply_spec(fake, parse_spec(result.spec))
     assert {r.action for r in records} == {"unchanged"}

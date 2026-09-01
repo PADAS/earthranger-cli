@@ -331,3 +331,80 @@ def test_auto_resolve_and_ordernum_in_payload_only_when_declared():
     assert payload["auto_resolve"] is True
     assert payload["resolve_time"] == 12
     assert payload["ordernum"] == 30
+
+
+def _conditional_event_type():
+    from earthranger_cli.dsl import ConditionSpec, SectionSpec
+
+    return EventTypeSpec(
+        value="fire",
+        display="Fire",
+        fields=[],
+        required=["cause", "investigator"],
+        sections=[
+            SectionSpec(
+                label="",
+                fields=[
+                    FieldSpec(
+                        key="cause",
+                        label="Cause",
+                        type="select",
+                        options=[OptionSpec("manmade", "Manmade")],
+                    )
+                ],
+            ),
+            SectionSpec(
+                label="Arson",
+                condition=ConditionSpec(field="cause", operator="is_exactly", value="manmade"),
+                fields=[FieldSpec(key="investigator", label="Investigator", type="string")],
+            ),
+            SectionSpec(
+                label="Notes",
+                active=False,
+                fields=[FieldSpec(key="notes", label="Notes", type="textarea")],
+            ),
+        ],
+    )
+
+
+def test_conditional_section_envelope():
+    schema = build_schema(_conditional_event_type())
+    j, ui = schema["json"], schema["ui"]
+    # conditional fields live only in allOf.then, not top-level properties
+    assert sorted(j["properties"]) == ["cause", "notes"]
+    assert j["required"] == ["cause"]
+    assert len(j["allOf"]) == 1
+    block = j["allOf"][0]
+    assert block["x-section"] == "section-2"
+    assert sorted(block["then"]["properties"]) == ["investigator"]
+    assert block["then"]["required"] == ["investigator"]
+    iff = block["if"]["allOf"][0]
+    assert iff["required"] == ["cause"]
+    any_of = iff["properties"]["cause"]["anyOf"]
+    assert {"const": "manmade", "type": "string"} in any_of
+    assert {"allOf": [{"contains": {"const": "manmade"}}], "maxItems": 1, "type": "array"} in any_of
+    # ui: condition triple with deterministic id; controller gains the dependent
+    cond = ui["sections"]["section-2"]["conditions"][0]
+    assert cond == {
+        "field": "cause",
+        "id": "condition-section-2-1",
+        "operator": "IS_EXACTLY",
+        "value": "manmade",
+    }
+    assert ui["fields"]["cause"]["conditionalDependents"] == ["section-2"]
+    assert "conditions" not in ui["sections"]["section-1"]
+    # inactive section
+    assert ui["sections"]["section-3"]["isActive"] is False
+    assert ui["sections"]["section-1"]["isActive"] is True
+
+
+def test_non_conditional_schema_has_no_allof():
+    schema = build_schema(_event_type())
+    assert "allOf" not in schema["json"]
+
+
+def test_inactive_field_emits_deprecated_true():
+    json_prop, _ = build_property_pair(
+        FieldSpec(key="old", label="Old", type="string", active=False), "t1"
+    )
+    assert json_prop["deprecated"] is True

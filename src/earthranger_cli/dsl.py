@@ -69,6 +69,7 @@ class FieldSpec:
     format: str | None = None  # string fields only: url | email | uuid
     column: str = "left"  # "right" needs layout columns: 2
     choices_field: str | None = None  # explicit Choice.field name (overrides derivation)
+    active: bool = True  # false -> the field is deprecated/hidden on ER
 
 
 # Types whose ER UI variant has a placeholder slot (boolean/date/datetime don't).
@@ -93,10 +94,22 @@ class LayoutSpec:
 
 
 @dataclass
+class ConditionSpec:
+    """Show a section only when another field has a given value (ER's
+    conditional sections). Only the IS_EXACTLY operator is supported so far."""
+
+    field: str
+    operator: str  # "is_exactly"
+    value: str
+
+
+@dataclass
 class SectionSpec:
     label: str = "Details"
     columns: int = 1
     fields: list[FieldSpec] = field(default_factory=list)
+    active: bool = True
+    condition: ConditionSpec | None = None
 
 
 @dataclass
@@ -112,7 +125,7 @@ class EventTypeSpec:
     geometry_type: str | None = None  # "Point" | "Polygon"; immutable once set in ER
     auto_resolve: bool | None = None
     resolve_time: int | None = None  # hours; pairs with auto_resolve
-    ordernum: int | None = None  # explicit display order (spec order is NOT positional here)
+    ordernum: float | None = None  # explicit display rank; ER uses fractional inserts (0.5)
     default_state: str | None = None
     readonly: bool | None = None  # None = never sent; server value preserved
     layout: LayoutSpec = field(default_factory=LayoutSpec)
@@ -351,8 +364,10 @@ def _parse_event_type(raw: object, path: str, errors: list[str]) -> EventTypeSpe
             "ER stores the flag but never auto-resolves anything"
         )
     ordernum = raw.get("ordernum")
-    if ordernum is not None and (isinstance(ordernum, bool) or not isinstance(ordernum, int)):
-        errors.append(f"{path}.ordernum: must be an integer")
+    if ordernum is not None and (
+        isinstance(ordernum, bool) or not isinstance(ordernum, (int, float))
+    ):
+        errors.append(f"{path}.ordernum: must be a number")
         ordernum = None
 
     geometry_type = raw.get("geometry_type")
@@ -410,6 +425,11 @@ def _parse_sections(raw: object, path: str, errors: list[str]) -> list[SectionSp
         if columns not in (1, 2):
             errors.append(f"{sec_path}.columns: must be 1 or 2")
             columns = 1
+        active = sec_raw.get("active", True)
+        if not isinstance(active, bool):
+            errors.append(f"{sec_path}.active: must be true or false")
+            active = True
+        condition = _parse_condition(sec_raw.get("condition"), f"{sec_path}.condition", errors)
         fields_raw = sec_raw.get("fields")
         sec_fields: list[FieldSpec] = []
         if not isinstance(fields_raw, list) or not fields_raw:
@@ -425,8 +445,54 @@ def _parse_sections(raw: object, path: str, errors: list[str]) -> list[SectionSp
                         f"{sec_path}.fields[{j}].column: 'right' requires section columns: 2"
                     )
                 sec_fields.append(f)
-        sections.append(SectionSpec(label=label, columns=columns, fields=sec_fields))
+        sections.append(
+            SectionSpec(
+                label=label,
+                columns=columns,
+                fields=sec_fields,
+                active=active,
+                condition=condition,
+            )
+        )
+    _check_conditions(sections, path, errors)
     return sections
+
+
+def _parse_condition(raw: object, path: str, errors: list[str]) -> ConditionSpec | None:
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        errors.append(f"{path}: must be a mapping with field, operator, value")
+        return None
+    operator = raw.get("operator")
+    if operator != "is_exactly":
+        errors.append(f"{path}.operator: {operator!r} is not supported (supported: is_exactly)")
+        return None
+    field_key = raw.get("field")
+    value = raw.get("value")
+    if not isinstance(field_key, str) or not field_key:
+        errors.append(f"{path}.field: required string (a field key)")
+        return None
+    if not isinstance(value, str) or not value:
+        errors.append(f"{path}.value: required string")
+        return None
+    return ConditionSpec(field=field_key, operator=operator, value=value)
+
+
+def _check_conditions(sections: list[SectionSpec], path: str, errors: list[str]) -> None:
+    all_keys = {f.key for sec in sections for f in sec.fields}
+    for k, sec in enumerate(sections):
+        cond = sec.condition
+        if cond is None:
+            continue
+        sec_path = f"{path}[{k}].condition"
+        if cond.field not in all_keys:
+            errors.append(f"{sec_path}.field: {cond.field!r} is not a declared field key")
+        elif any(f.key == cond.field for f in sec.fields):
+            errors.append(
+                f"{sec_path}.field: {cond.field!r} lives in the section's own section — "
+                "the controlling field must be outside the conditional section"
+            )
 
 
 def _parse_layout(raw: object, path: str, errors: list[str]) -> LayoutSpec:
@@ -520,6 +586,11 @@ def _parse_field(raw: object, path: str, errors: list[str]) -> FieldSpec:
             )
             choices_field = None
 
+    field_active = raw.get("active", True)
+    if not isinstance(field_active, bool):
+        errors.append(f"{path}.active: must be true or false")
+        field_active = True
+
     column = raw.get("column", "left")
     if column not in ("left", "right"):
         errors.append(f"{path}.column: must be 'left' or 'right'")
@@ -548,6 +619,7 @@ def _parse_field(raw: object, path: str, errors: list[str]) -> FieldSpec:
         format=fmt,
         column=column,
         choices_field=choices_field,
+        active=field_active,
     )
 
 

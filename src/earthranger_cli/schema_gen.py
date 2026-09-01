@@ -66,7 +66,11 @@ _FORMAT_WIRE = {"url": "uri", "email": "email", "uuid": "uuid"}
 def build_property_pair(field: FieldSpec, event_type_value: str) -> tuple[dict, dict]:
     if field.type in _SCALAR_JSON:
         # ER's meta-schema requires "deprecated" on every json property.
-        json_prop = {**_SCALAR_JSON[field.type], "title": field.label, "deprecated": False}
+        json_prop = {
+            **_SCALAR_JSON[field.type],
+            "title": field.label,
+            "deprecated": not field.active,
+        }
         if field.format:
             json_prop["format"] = _FORMAT_WIRE[field.format]
         if field.min is not None:
@@ -96,7 +100,7 @@ def _build_choice_pair(field: FieldSpec, event_type_value: str) -> tuple[dict, d
         json_prop = {
             "type": "array",
             "title": field.label,
-            "deprecated": False,
+            "deprecated": not field.active,
             "uniqueItems": True,
             "items": {"type": "string", "anyOf": [{"$ref": ref}]},
         }
@@ -104,7 +108,7 @@ def _build_choice_pair(field: FieldSpec, event_type_value: str) -> tuple[dict, d
         json_prop = {
             "type": "string",
             "title": field.label,
-            "deprecated": False,
+            "deprecated": not field.active,
             "anyOf": [{"$ref": ref}],
         }
     if field.description is not None:
@@ -117,6 +121,8 @@ def build_schema(et: EventTypeSpec) -> dict:
     ui_fields: dict[str, dict] = {}
     sections: dict[str, dict] = {}
     order: list[str] = []
+    all_of: list[dict] = []
+    required = list(et.required)
     # a field-less event type (e.g. an incident collection) has NO sections at
     # all on ER, so the empty sugar section is skipped rather than emitted
     real_sections = [sec for sec in (et.sections or []) if sec.fields]
@@ -125,33 +131,99 @@ def build_schema(et: EventTypeSpec) -> dict:
         order.append(sid)
         left: list[dict] = []
         right: list[dict] = []
+        sec_props: dict[str, dict] = {}
         for f in sec.fields:
             json_prop, ui_field = build_property_pair(f, et.value)
             ui_field["parent"] = sid
-            properties[f.key] = json_prop
+            sec_props[f.key] = json_prop
             ui_fields[f.key] = ui_field
             (right if f.column == "right" else left).append({"name": f.key, "type": "field"})
-        sections[sid] = {
+        section_ui = {
             "label": sec.label,
             "columns": sec.columns,
-            "isActive": True,
+            "isActive": sec.active,
             "leftColumn": left,
             "rightColumn": right,
         }
+        if sec.condition is None:
+            properties.update(sec_props)
+        else:
+            # a conditional section's fields live only inside the allOf branch
+            sec_required = [k for k in required if k in sec_props]
+            required = [k for k in required if k not in sec_props]
+            all_of.append(
+                {
+                    "if": _encode_is_exactly(sec.condition.field, sec.condition.value),
+                    "then": {"properties": sec_props, "required": sec_required},
+                    "x-section": sid,
+                }
+            )
+            section_ui["conditions"] = [
+                {
+                    "field": sec.condition.field,
+                    # deterministic so re-applies are idempotent; the server's
+                    # own random ids are canonicalized away in the diff
+                    "id": f"condition-{sid}-1",
+                    "operator": "IS_EXACTLY",
+                    "value": sec.condition.value,
+                }
+            ]
+        sections[sid] = section_ui
+    for sec_idx, sec in enumerate(real_sections, start=1):
+        if sec.condition is not None:
+            controller = ui_fields.get(sec.condition.field)
+            if controller is not None:
+                controller.setdefault("conditionalDependents", []).append(f"section-{sec_idx}")
+    json_block = {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "unevaluatedProperties": False,
+        "properties": properties,
+        "required": required,
+    }
+    if all_of:
+        json_block["allOf"] = all_of
     return {
-        "json": {
-            "$schema": "https://json-schema.org/draft/2020-12/schema",
-            "type": "object",
-            "unevaluatedProperties": False,
-            "properties": properties,
-            "required": list(et.required),
-        },
+        "json": json_block,
         "ui": {
             "fields": ui_fields,
             "headers": {},
             "order": order,
             "sections": sections,
         },
+    }
+
+
+def _encode_is_exactly(field_key: str, value: str) -> dict:
+    """ER's builder expands the IS_EXACTLY triple into this anyOf matrix over
+    the value shapes a property can take; replicated verbatim from live data
+    and validated against das's is_exactly_condition_json_schema."""
+    return {
+        "allOf": [
+            {
+                "properties": {
+                    field_key: {
+                        "anyOf": [
+                            {
+                                "allOf": [{"contains": {"const": value}}],
+                                "maxItems": 1,
+                                "type": "array",
+                            },
+                            {"const": None, "type": "boolean"},
+                            {"const": None, "type": "number"},
+                            {
+                                "properties": {value: {}},
+                                "required": [value],
+                                "type": "object",
+                                "unevaluatedProperties": False,
+                            },
+                            {"const": value, "type": "string"},
+                        ]
+                    }
+                },
+                "required": [field_key],
+            }
+        ]
     }
 
 

@@ -146,10 +146,13 @@ def _invert_event_type(client, et: dict, unsupported: list[str]) -> dict | None:
 
     out_sections: list[dict] = []
     kept_keys: set[str] = set()
+    extra_required: list[str] = []
     for section in sections_result:
+        sec_props = section["props"]
+        extra_required.extend(section["extra_required"])
         sec_fields: list[dict] = []
         for key in section["order"]:
-            f, reason = _invert_field(client, value, key, properties[key], ui_fields.get(key) or {})
+            f, reason = _invert_field(client, value, key, sec_props[key], ui_fields.get(key) or {})
             if f is None:
                 unsupported.append(f"event type {value!r}, field {key!r}: {reason}; skipped")
                 continue
@@ -169,6 +172,10 @@ def _invert_event_type(client, et: dict, unsupported: list[str]) -> dict | None:
             sec_out["label"] = section["label"]
         if section["columns"] != 1:
             sec_out["columns"] = section["columns"]
+        if not section["active"]:
+            sec_out["active"] = False
+        if section["condition"] is not None:
+            sec_out["condition"] = section["condition"]
         sec_out["fields"] = sec_fields
         out_sections.append(sec_out)
 
@@ -184,7 +191,11 @@ def _invert_event_type(client, et: dict, unsupported: list[str]) -> dict | None:
     if et.get("is_collection"):
         out["is_collection"] = True
     _copy_type_defaults(et, out)
-    if len(out_sections) == 1:
+    if (
+        len(out_sections) == 1
+        and "condition" not in out_sections[0]
+        and "active" not in out_sections[0]
+    ):
         single = out_sections[0]
         layout = {
             "label": single.get("label", "Details"),
@@ -195,16 +206,18 @@ def _invert_event_type(client, et: dict, unsupported: list[str]) -> dict | None:
         out["fields"] = single["fields"]
     else:
         out["sections"] = out_sections
-    required = [k for k in (json_block.get("required") or []) if k in kept_keys]
+    required = [
+        k for k in list(json_block.get("required") or []) + extra_required if k in kept_keys
+    ]
     if required:
         out["required"] = required
     return out
 
 
 def _read_sections(json_block, ui_block, properties, ui_fields):
-    """Return a list of {label, columns, order, right} for a sectioned schema
-    the DSL can express (positional section-N ids, no headers/conditions), or a
-    reason string when it cannot."""
+    """Return a list of section dicts (label, columns, order, right, active,
+    condition, props, extra_required) for a sectioned schema the DSL can
+    express, or a reason string when it cannot."""
     sections = ui_block.get("sections") or {}
     order_ids = ui_block.get("order") or []
     if not sections:
@@ -216,17 +229,41 @@ def _read_sections(json_block, ui_block, properties, ui_fields):
         return f"layout section ids {order_ids!r} are not positional {expected_ids!r}"
     if ui_block.get("headers"):
         return "layout uses headers"
-    if json_block.get("allOf"):
-        return "layout uses conditional sections"
+
+    # conditional sections: each json.allOf block is tied to a section by
+    # x-section and carries that section's fields in then.properties
+    branches: dict[str, dict] = {}
+    for block in json_block.get("allOf") or []:
+        sid = block.get("x-section")
+        then = block.get("then") or {}
+        if not isinstance(sid, str) or not isinstance(then.get("properties"), dict):
+            return "layout uses a conditional block the DSL cannot express"
+        branches[sid] = then
 
     out: list[dict] = []
     all_keys: list[str] = []
     for sid in order_ids:
         section = sections[sid]
-        if section.get("isActive") is not True:
-            return f"layout section {sid!r} is inactive (isActive: false)"
-        if section.get("conditions"):
-            return "layout uses section conditions"
+        conditions = section.get("conditions") or []
+        condition = None
+        if conditions:
+            if len(conditions) > 1:
+                return f"layout section {sid!r} has multiple conditions"
+            cond = conditions[0]
+            if cond.get("operator") != "IS_EXACTLY":
+                return (
+                    f"layout section {sid!r} condition operator "
+                    f"{cond.get('operator')!r} is not supported yet"
+                )
+            if sid not in branches:
+                return f"layout section {sid!r} has a condition but no allOf branch"
+            condition = {
+                "field": cond.get("field"),
+                "operator": "is_exactly",
+                "value": cond.get("value"),
+            }
+        elif sid in branches:
+            return f"layout has an allOf branch for unconditioned section {sid!r}"
         label = section.get("label")
         columns = section.get("columns")
         if not isinstance(label, str) or columns not in (1, 2):
@@ -238,18 +275,36 @@ def _read_sections(json_block, ui_block, properties, ui_fields):
         if columns == 1 and right:
             return f"layout section {sid!r} puts fields in the right column of a 1-column section"
         all_keys.extend(left + right)
-        out.append({"label": label, "columns": columns, "order": left + right, "right": set(right)})
-    if set(all_keys) != set(properties) or set(all_keys) != set(ui_fields):
+        branch = branches.get(sid) or {}
+        out.append(
+            {
+                "label": label,
+                "columns": columns,
+                "order": left + right,
+                "right": set(right),
+                "active": section.get("isActive") is not False,
+                "condition": condition,
+                "props": branch.get("properties") if condition else properties,
+                "extra_required": list(branch.get("required") or []),
+            }
+        )
+    # collection sub-fields appear in ui.fields as dotted keys under their
+    # collection's key; they never appear in section columns
+    top_ui_keys = {k for k in ui_fields if "." not in k}
+    expected = set(properties)
+    for then in branches.values():
+        expected |= set(then["properties"])
+    if set(all_keys) != expected or set(all_keys) != top_ui_keys:
         return "layout leaves fields outside the sections"
     return out
 
 
 def _invert_field(client, et_value, key, json_prop, ui_field):
     """Return (dsl_field_dict, None) or (None, reason)."""
-    if json_prop.get("deprecated"):
-        return None, "deprecated fields have no DSL equivalent"
     ui_type = ui_field.get("type")
     out: dict = {"key": key, "label": json_prop.get("title")}
+    if json_prop.get("deprecated"):
+        out["active"] = False
 
     if ui_type == "CHOICE_LIST":
         return _invert_choice_field(client, et_value, key, json_prop, ui_field, out)

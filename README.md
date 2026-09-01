@@ -151,8 +151,10 @@ Field types: `string`, `textarea`, `integer` (advisory — ER stores it as
 optional `min`/`max`), `boolean`, `date`, `datetime`, `url`, `select`,
 `multiselect` (both take `options`).
 
-Every field also takes optional `hint` (ER's placeholder, max 32 chars;
-not on `boolean`/`date`/`datetime`), `description`, and `default`
+Every field also takes optional `active: false` (the field is
+deprecated/hidden on ER but its historical data remains), `hint` (ER's
+placeholder, max 32 chars; not on `boolean`/`date`/`datetime`),
+`description`, and `default`
 (`string`/`textarea`/`url`/`integer`/`number`/`boolean` only). `string`
 fields take `format: url | email | uuid` — the builder's "Format
 Validation" (`url` is sent as JSON Schema `uri`).
@@ -199,8 +201,12 @@ Per event type an optional `layout: {label, columns}` (default
 `{label: Details, columns: 1}`) controls the form section; with
 `columns: 2`, per-field `column: right` places a field in the right
 column. Multi-section forms use `sections:` instead of `fields:`/
-`layout:` — a list of `{label?, columns?, fields: [...]}` mappings,
-one per form section, in order:
+`layout:` — a list of `{label?, columns?, active?, condition?, fields: [...]}`
+mappings, one per form section, in order. `active: false` hides a
+section; `condition: {field, operator: is_exactly, value}` shows it only
+when another (outside) field has the given value — the only condition
+operator ER's builder offers that the DSL supports so far; the other
+operators are refused by name on pull:
 
 ```yaml
 - value: entry_alert
@@ -227,7 +233,8 @@ event type read-only in ER — v2 schemas have no per-field read-only),
 point or a drawn polygon), `auto_resolve` + `resolve_time` (auto-resolve
 events after N hours — `auto_resolve: true` requires `resolve_time`,
 since ER silently ignores the flag without it), and `ordernum` (explicit
-display order; deliberately not derived from spec position, because a
+display rank — a number; ER uses fractional ranks like `0.5` for
+insert-between — deliberately not derived from spec position, because a
 spec doesn't own every event type in its category). These are sent only when declared: omitted
 keys leave the server's values untouched. `geometry_type` is immutable
 once an event type exists — apply refuses a spec that declares a

@@ -878,4 +878,92 @@ def test_auto_resolve_validation():
     data = _spec_with_field({"key": "n", "label": "N", "type": "string"})
     data["event_types"][0]["ordernum"] = "first"
     errors = _errors_for(data)
-    assert any("ordernum" in e and "integer" in e for e in errors)
+    assert any("ordernum" in e and "number" in e for e in errors)
+
+
+CONDITIONAL = {
+    "category": {"value": "c1", "display": "C1"},
+    "event_types": [
+        {
+            "value": "fire",
+            "display": "Fire",
+            "sections": [
+                {
+                    "label": "",
+                    "fields": [
+                        {
+                            "key": "cause",
+                            "label": "Cause",
+                            "type": "select",
+                            "options": ["manmade", "natural"],
+                        }
+                    ],
+                },
+                {
+                    "label": "Arson",
+                    "condition": {"field": "cause", "operator": "is_exactly", "value": "manmade"},
+                    "fields": [{"key": "investigator", "label": "Investigator", "type": "string"}],
+                },
+                {
+                    "label": "Notes",
+                    "active": False,
+                    "fields": [{"key": "notes", "label": "Notes", "type": "textarea"}],
+                },
+            ],
+            "required": ["cause", "investigator"],
+        }
+    ],
+}
+
+
+def test_section_condition_and_active_parse():
+    import copy
+
+    spec = parse_spec(copy.deepcopy(CONDITIONAL))
+    sections = spec.event_types[0].sections
+    assert sections[0].condition is None and sections[0].active is True
+    cond = sections[1].condition
+    assert (cond.field, cond.operator, cond.value) == ("cause", "is_exactly", "manmade")
+    assert sections[2].active is False
+
+
+def test_section_condition_validation():
+    import copy
+
+    data = copy.deepcopy(CONDITIONAL)
+    data["event_types"][0]["sections"][1]["condition"]["operator"] = "contains"
+    errors = _errors_for(data)
+    assert any("operator" in e and "is_exactly" in e for e in errors)
+
+    data = copy.deepcopy(CONDITIONAL)
+    data["event_types"][0]["sections"][1]["condition"]["field"] = "nope"
+    errors = _errors_for(data)
+    assert any("condition.field" in e and "nope" in e for e in errors)
+
+    data = copy.deepcopy(CONDITIONAL)
+    data["event_types"][0]["sections"][1]["condition"]["field"] = "investigator"
+    errors = _errors_for(data)
+    assert any("own section" in e for e in errors)
+
+    data = copy.deepcopy(CONDITIONAL)
+    data["event_types"][0]["sections"][2]["active"] = "no"
+    errors = _errors_for(data)
+    assert any("active: must be true or false" in e for e in errors)
+
+
+def test_ordernum_accepts_fractional_ranks():
+    # ER's event-type ranking produces fractional ordernums (e.g. 0.5)
+    data = _spec_with_field({"key": "n", "label": "N", "type": "string"})
+    data["event_types"][0]["ordernum"] = 0.5
+    assert parse_spec(data).event_types[0].ordernum == 0.5
+
+
+def test_field_active_false_parses():
+    spec = parse_spec(
+        _spec_with_field({"key": "old", "label": "Old", "type": "string", "active": False})
+    )
+    assert spec.event_types[0].fields[0].active is False
+    errors = _errors_for(
+        _spec_with_field({"key": "old", "label": "Old", "type": "string", "active": "no"})
+    )
+    assert any("active: must be true or false" in e for e in errors)
