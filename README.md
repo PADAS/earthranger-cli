@@ -123,10 +123,11 @@ auth login'`.
 5. Absorb server-side edits into your file: if someone changed a value
    in ER's UI, `er events pull wildlife_monitoring -o spec.yaml`
    rewrites your spec from the live server; `apply --dry-run` should
-   then report all `unchanged`. Constructs the DSL can't express
-   (headers, conditional sections, non-positional section ids,
-   auto-generate schemas, inactive layout sections, pattern validation,
-   deprecated fields) are reported and refused unless you pass
+   then report all `unchanged`. The few constructs the DSL can't
+   express (location fields, headers, condition operators other than
+   `is_exactly`, non-positional section ids, auto-generate schemas,
+   pattern validation, choice-list or nested sub-fields inside
+   collections) are reported and refused unless you pass
    `--skip-unsupported`, which drops them and lists what was skipped in
    a comment at the top of the file.
 

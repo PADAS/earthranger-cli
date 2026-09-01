@@ -7,6 +7,7 @@ All problems are collected into one SpecError so users fix everything in one pas
 
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass, field
 
@@ -373,9 +374,11 @@ def _parse_event_type(raw: object, path: str, errors: list[str]) -> EventTypeSpe
         )
     ordernum = raw.get("ordernum")
     if ordernum is not None and (
-        isinstance(ordernum, bool) or not isinstance(ordernum, (int, float))
+        isinstance(ordernum, bool)
+        or not isinstance(ordernum, (int, float))
+        or not math.isfinite(ordernum)
     ):
-        errors.append(f"{path}.ordernum: must be a number")
+        errors.append(f"{path}.ordernum: must be a finite number")
         ordernum = None
 
     geometry_type = raw.get("geometry_type")
@@ -494,8 +497,18 @@ def _check_conditions(sections: list[SectionSpec], path: str, errors: list[str])
         if cond is None:
             continue
         sec_path = f"{path}[{k}].condition"
+        controller = next(
+            (f for sec2 in sections for f in sec2.fields if f.key == cond.field), None
+        )
+        string_valued = ("string", "textarea", "url", "select", "multiselect")
         if cond.field not in all_keys:
             errors.append(f"{sec_path}.field: {cond.field!r} is not a declared field key")
+        elif controller is not None and controller.type not in string_valued:
+            errors.append(
+                f"{sec_path}.field: {cond.field!r} is a {controller.type} field — "
+                "ER's IS_EXACTLY condition encoding can only match string-valued "
+                f"controllers ({', '.join(string_valued)})"
+            )
         elif any(f.key == cond.field for f in sec.fields):
             errors.append(
                 f"{sec_path}.field: {cond.field!r} lives in the section's own section — "

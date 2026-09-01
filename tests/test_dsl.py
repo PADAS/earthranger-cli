@@ -1036,3 +1036,26 @@ def test_collection_only_keys_rejected_on_scalar_fields():
         _spec_with_field({"key": "n", "label": "N", "type": "string", "columns": 2})
     )
     assert any("columns: only allowed on collection fields" in e for e in errors)
+
+
+def test_ordernum_must_be_finite():
+    # NaN/inf are not valid JSON numbers (Copilot r3908976431)
+    for bad in (float("nan"), float("inf")):
+        data = _spec_with_field({"key": "n", "label": "N", "type": "string"})
+        data["event_types"][0]["ordernum"] = bad
+        errors = _errors_for(data)
+        assert any("ordernum" in e and "finite" in e for e in errors)
+
+
+def test_condition_controller_must_be_string_valued():
+    # the IS_EXACTLY encoding can never match boolean/number controllers
+    # (Copilot r3908976459)
+    import copy
+
+    data = copy.deepcopy(CONDITIONAL)
+    data["event_types"][0]["sections"][0]["fields"].append(
+        {"key": "flag", "label": "Flag", "type": "boolean"}
+    )
+    data["event_types"][0]["sections"][1]["condition"]["field"] = "flag"
+    errors = _errors_for(data)
+    assert any("condition.field" in e and "'flag'" in e and "boolean" in e for e in errors)
