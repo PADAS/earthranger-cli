@@ -1,9 +1,9 @@
 import pytest
 from click.testing import CliRunner
 
-import er_events_cli.cli as cli_mod
+import earthranger_cli.cli as cli_mod
 from conftest import FakeER
-from er_events_cli.cli import main
+from earthranger_cli.cli import main
 
 SPEC_YAML = """
 category: {value: wm, display: Wildlife Monitoring}
@@ -249,7 +249,7 @@ def test_show_event_type_missing_exits_1(fake):
 
 from datetime import UTC, datetime, timedelta
 
-from er_events_cli import token_store
+from earthranger_cli import token_store
 
 FUTURE = datetime.now(UTC) + timedelta(days=30)
 PAST = datetime.now(UTC) - timedelta(days=1)
@@ -407,8 +407,8 @@ def test_rotated_token_is_persisted_after_command(monkeypatch):
 
 
 def _seed_pull_server(fake):
-    from er_events_cli.dsl import parse_spec as _ps
-    from er_events_cli.schema_gen import build_event_type_payload as _bp
+    from earthranger_cli.dsl import parse_spec as _ps
+    from earthranger_cli.schema_gen import build_event_type_payload as _bp
 
     spec = _ps(
         {
@@ -483,7 +483,7 @@ def test_pull_missing_category_exits_1(fake):
 
 # --- profiles ---
 
-from er_events_cli import config_store
+from earthranger_cli import config_store
 
 
 def test_profile_add_use_list_remove():

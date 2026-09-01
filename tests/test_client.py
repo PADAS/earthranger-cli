@@ -3,7 +3,7 @@ from unittest.mock import Mock
 import pytest
 from erclient.er_errors import ERClientException
 
-from er_events_cli.client import (
+from earthranger_cli.client import (
     get_choices,
     make_client,
     normalize_server,

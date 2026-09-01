@@ -1,7 +1,7 @@
 import pytest
 
 from conftest import FakeER
-from er_events_cli.events import (
+from earthranger_cli.events import (
     FieldArgError,
     build_event,
     load_events_file,

@@ -352,7 +352,7 @@ should report all `unchanged`.
 ## Module layout
 
 ```
-src/er_events_cli/
+src/earthranger_cli/
     __init__.py
     cli.py          # Click group + subcommands; thin — parsing flags,
                     # wiring, output formatting

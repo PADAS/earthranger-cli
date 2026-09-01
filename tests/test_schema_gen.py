@@ -1,5 +1,5 @@
-from er_events_cli.dsl import EventTypeSpec, FieldSpec, OptionSpec
-from er_events_cli.schema_gen import (
+from earthranger_cli.dsl import EventTypeSpec, FieldSpec, OptionSpec
+from earthranger_cli.schema_gen import (
     build_event_type_payload,
     build_property_pair,
     build_schema,
@@ -222,7 +222,7 @@ def test_select_hint_and_description():
 
 
 def test_two_column_layout_section():
-    from er_events_cli.dsl import LayoutSpec
+    from earthranger_cli.dsl import LayoutSpec
 
     et = EventTypeSpec(
         value="t1",
@@ -254,7 +254,7 @@ def test_explicit_choices_field_used_in_ref():
 
 
 def test_multi_section_envelope():
-    from er_events_cli.dsl import SectionSpec
+    from earthranger_cli.dsl import SectionSpec
 
     et = EventTypeSpec(
         value="entry_alert",

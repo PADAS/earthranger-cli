@@ -5,7 +5,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from er_events_cli import token_store
+from earthranger_cli import token_store
 
 EXPIRES = datetime(2026, 9, 30, 12, 0, 0, tzinfo=UTC)
 AUTH = {

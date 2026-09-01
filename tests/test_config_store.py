@@ -1,6 +1,6 @@
 import pytest
 
-from er_events_cli import config_store
+from earthranger_cli import config_store
 
 
 def test_add_get_list_round_trip():
