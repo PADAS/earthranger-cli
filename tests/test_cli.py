@@ -588,3 +588,34 @@ def test_profile_use_unknown_errors():
     result = _run(["profile", "use", "zzz"])
     assert result.exit_code == 1
     assert "error: no profile named 'zzz'" in result.output
+
+
+def test_profile_show_by_name():
+    config_store.add_profile("prod", server="myreserve", username="chris")
+    token_store.save_token("myreserve.pamdas.org", AUTH, FUTURE, "chris")
+    result = _run(["profile", "show", "prod"])
+    assert result.exit_code == 0
+    assert "name:      prod" in result.output
+    assert "server:    myreserve" in result.output
+    assert "host:      myreserve.pamdas.org" in result.output
+    assert "username:  chris" in result.output
+    assert "auth:      valid" in result.output
+
+
+def test_profile_show_defaults_to_selection(monkeypatch):
+    config_store.add_profile("sandbox", server="sandbox")
+    monkeypatch.setenv("ER_PROFILE", "sandbox")
+    result = _run(["profile", "show"])
+    assert result.exit_code == 0
+    assert "name:      sandbox" in result.output
+    assert "username:  -" in result.output
+    assert "auth:      not authenticated" in result.output
+
+
+def test_profile_show_errors():
+    result = _run(["profile", "show", "zzz"])
+    assert result.exit_code == 1
+    assert "error: no profile named 'zzz'" in result.output
+    result = _run(["profile", "show"])
+    assert result.exit_code != 0
+    assert "no profile selected" in result.output

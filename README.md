@@ -142,7 +142,7 @@ auth login'`.
 | `events show event-type V` | Full v2 event-type JSON + its Choice records |
 | `events pull CATEGORY [-o FILE] [--skip-unsupported]` | Reconstruct a DSL spec from the server (reverse of apply) |
 | `auth login/status/logout` | Cache/inspect/clear the token for the current `--server` |
-| `profile add/use/list/remove/current` | Named site profiles; `use` selects per shell (via the wrapper), `--profile NAME` per command |
+| `profile add/use/show/list/remove/current` | Named site profiles; `use` selects per shell (via the wrapper), `--profile NAME` per command |
 
 ## Spec reference
 

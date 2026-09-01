@@ -412,3 +412,34 @@ def profile_use(name):
     if config_store.get_profile(name) is None:
         raise config_store.ConfigError(f"no profile named {name!r}")
     click.echo(f"export ER_PROFILE={name}")
+
+
+@profile_group.command("show")
+@click.argument("name", required=False)
+@click.pass_context
+@_api_errors
+def profile_show(ctx, name):
+    """Show one profile in full (defaults to this shell's selection)."""
+    if name is None:
+        name = ctx.obj.get("profile")
+        if not name:
+            raise click.UsageError(
+                "no profile selected — pass a NAME or select one with 'er profile use'."
+            )
+    profile = config_store.get_profile(name)
+    if profile is None:
+        raise config_store.ConfigError(f"no profile named {name!r}")
+    server = profile["server"]
+    host = token_store.server_host(server)
+    data = token_store.load_token(host)
+    if not data:
+        auth = "not authenticated"
+    else:
+        state = "expired" if token_store.is_expired(data) else "valid"
+        as_user = f" as {data['username']}" if data.get("username") else ""
+        auth = f"{state}{as_user} (access token expires {data['expires_at']})"
+    click.echo(f"name:      {name}")
+    click.echo(f"server:    {server}")
+    click.echo(f"host:      {host}")
+    click.echo(f"username:  {profile.get('username') or '-'}")
+    click.echo(f"auth:      {auth}")
