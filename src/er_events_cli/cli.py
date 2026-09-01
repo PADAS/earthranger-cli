@@ -40,6 +40,33 @@ def _api_errors(f):
     return wrapper
 
 
+def connection_options(f):
+    """Accept the connection flags on a leaf command too (people naturally type
+    them after the subcommand); provided values override the root group's."""
+
+    def wrapper(*args, server_=None, username_=None, password_=None, profile_=None, **kwargs):
+        ctx = click.get_current_context()
+        for key, val in (
+            ("server", server_),
+            ("username", username_),
+            ("password", password_),
+            ("profile", profile_),
+        ):
+            if val:
+                ctx.obj[key] = val
+        return f(*args, **kwargs)
+
+    wrapper = functools.update_wrapper(wrapper, f)
+    for opt in (
+        click.option("--profile", "profile_", help="Named profile to use."),
+        click.option("--password", "password_", help="EarthRanger password."),
+        click.option("--username", "username_", help="EarthRanger username."),
+        click.option("--server", "server_", help="ER site name or full https:// URL."),
+    ):
+        wrapper = opt(wrapper)
+    return wrapper
+
+
 def _resolve_connection(ctx) -> tuple[str, str | None]:
     """Resolve (server, username) from flags/env or a selected profile.
     Explicit --server/--username always win; a profile named with --profile
@@ -127,6 +154,7 @@ def events_group():
 
 
 @events_group.command("apply")
+@connection_options
 @click.argument("spec_file", type=click.Path(exists=True, dir_okay=False))
 @click.option("--dry-run", is_flag=True, help="Show planned changes without writing.")
 @click.pass_context
@@ -151,6 +179,7 @@ def apply_cmd(ctx, spec_file, dry_run):
 
 
 @events_group.command("post")
+@connection_options
 @click.option("--event-type", "event_type", help="Event type value (required unless --file).")
 @click.option(
     "--field", "fields", multiple=True, help="key=value; value parsed as a YAML scalar. Repeatable."
@@ -204,6 +233,7 @@ def list_group():
 
 
 @list_group.command("categories")
+@connection_options
 @click.pass_context
 @_api_errors
 def list_categories(ctx):
@@ -220,6 +250,7 @@ def _category_value_of(event_type: dict):
 
 
 @list_group.command("event-types")
+@connection_options
 @click.option("--category", help="Filter by category value.")
 @click.pass_context
 @_api_errors
@@ -240,6 +271,7 @@ def show_group():
 
 
 @show_group.command("event-type")
+@connection_options
 @click.argument("value")
 @click.pass_context
 @_api_errors
@@ -262,6 +294,7 @@ def auth_group():
 
 
 @auth_group.command("login")
+@connection_options
 @click.pass_context
 @_api_errors
 def auth_login(ctx):
@@ -282,6 +315,7 @@ def auth_login(ctx):
 
 
 @auth_group.command("logout")
+@connection_options
 @click.pass_context
 def auth_logout(ctx):
     """Delete the cached token for this server."""
@@ -291,6 +325,7 @@ def auth_logout(ctx):
 
 
 @auth_group.command("status")
+@connection_options
 @click.pass_context
 def auth_status(ctx):
     """Report whether a cached token exists for this server, and its expiry."""
@@ -306,6 +341,7 @@ def auth_status(ctx):
 
 
 @events_group.command("pull")
+@connection_options
 @click.argument("category_value")
 @click.option("-o", "--output", type=click.Path(dir_okay=False), help="Write the spec to a file.")
 @click.option(
@@ -360,6 +396,7 @@ def profile_add(name, p_server, p_username):
 
 
 @profile_group.command("list")
+@connection_options
 @click.pass_context
 def profile_list(ctx):
     """List profiles: selection marker (--profile/ER_PROFILE), server, username, auth state."""
@@ -387,6 +424,7 @@ def profile_remove(name):
 
 
 @profile_group.command("current")
+@connection_options
 @click.pass_context
 def profile_current(ctx):
     """Print this invocation's selected profile (--profile/ER_PROFILE); exit 1 if none."""
@@ -415,6 +453,7 @@ def profile_use(name):
 
 
 @profile_group.command("show")
+@connection_options
 @click.argument("name", required=False)
 @click.pass_context
 @_api_errors

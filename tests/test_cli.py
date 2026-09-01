@@ -619,3 +619,35 @@ def test_profile_show_errors():
     result = _run(["profile", "show"])
     assert result.exit_code != 0
     assert "no profile selected" in result.output
+
+
+def test_connection_flags_accepted_after_subcommand(monkeypatch):
+    captured = {}
+
+    def fake_make_client(*, server, username, password):
+        captured.update(server=server, username=username, password=password)
+        return FakeLoginClient()
+
+    monkeypatch.setattr(cli_mod, "make_client", fake_make_client)
+    result = _run(
+        ["auth", "login", "--server", "sandbox", "--username", "chrisd", "--password", "pw"]
+    )
+    assert result.exit_code == 0
+    assert captured == {"server": "sandbox", "username": "chrisd", "password": "pw"}
+
+
+def test_trailing_flags_override_globals(monkeypatch):
+    config_store.add_profile("sandbox", server="sandbox")
+    config_store.add_profile("prod", server="myreserve")
+    token_store.save_token("myreserve.pamdas.org", AUTH, FUTURE, "ops")
+    fake = FakeER()
+    seen = {}
+
+    def fake_token_client(*, server):
+        seen["server"] = server
+        return fake
+
+    monkeypatch.setattr(cli_mod, "make_token_client", fake_token_client)
+    result = _run(["--profile", "sandbox", "events", "list", "categories", "--profile", "prod"])
+    assert result.exit_code == 0
+    assert seen["server"] == "myreserve"
