@@ -40,11 +40,38 @@ def _api_errors(f):
     return wrapper
 
 
+def connection_options(f):
+    """Accept the connection flags on a leaf command too (people naturally type
+    them after the subcommand); provided values override the root group's."""
+
+    def wrapper(*args, server_=None, username_=None, password_=None, profile_=None, **kwargs):
+        ctx = click.get_current_context()
+        for key, val in (
+            ("server", server_),
+            ("username", username_),
+            ("password", password_),
+            ("profile", profile_),
+        ):
+            if val:
+                ctx.obj[key] = val
+        return f(*args, **kwargs)
+
+    wrapper = functools.update_wrapper(wrapper, f)
+    for opt in (
+        click.option("--profile", "profile_", help="Named profile to use."),
+        click.option("--password", "password_", help="EarthRanger password."),
+        click.option("--username", "username_", help="EarthRanger username."),
+        click.option("--server", "server_", help="ER site name or full https:// URL."),
+    ):
+        wrapper = opt(wrapper)
+    return wrapper
+
+
 def _resolve_connection(ctx) -> tuple[str, str | None]:
-    """Resolve (server, username) from flags/env, a --profile, or the active
-    profile. Explicit --server/--username always win; a profile named with
-    --profile is consulted next; the active profile only when no server was
-    given at all."""
+    """Resolve (server, username) from flags/env or a selected profile.
+    Explicit --server/--username always win; a profile named with --profile
+    (or ER_PROFILE, e.g. via the er-use shell helper) supplies the defaults.
+    Profile selection is per invocation — there is no global active profile."""
     server = ctx.obj["server"]
     username = ctx.obj["username"]
     profile = None
@@ -52,17 +79,14 @@ def _resolve_connection(ctx) -> tuple[str, str | None]:
     if name:
         profile = config_store.get_profile(name)
         if profile is None:
-            raise click.UsageError(f"Unknown profile {name!r}. See 'er-events profile list'.")
-    elif not server:
-        active = config_store.active_profile()
-        if active:
-            profile = active[1]
+            raise click.UsageError(f"Unknown profile {name!r}. See 'er profile list'.")
     if profile:
         server = server or profile.get("server")
         username = username or profile.get("username")
     if not server:
         raise click.UsageError(
-            "Missing server: pass --server, set ER_SERVER, or 'er-events profile use NAME'."
+            "Missing server: pass --server, set ER_SERVER, or select a profile "
+            "(--profile NAME / ER_PROFILE)."
         )
     return server, username
 
@@ -71,7 +95,7 @@ def _connect(ctx):
     """Build an authenticated client.
 
     Precedence: an explicit password (flag or ER_PASSWORD) wins; else a token
-    cached by `er-events auth login`; else an interactive password prompt.
+    cached by `er auth login`; else an interactive password prompt.
     """
     server, username = _resolve_connection(ctx)
     password = ctx.obj["password"]
@@ -99,7 +123,7 @@ def _connect_with_cached_token(ctx, server: str, cached: dict):
         client.auth_headers()
     except ERClientException as e:
         raise ERClientException(
-            f"cached session for {host} expired or invalid — run 'er-events auth login'"
+            f"cached session for {host} expired or invalid — run 'er auth login'"
         ) from e
 
     def _persist_rotation():
@@ -117,16 +141,20 @@ def _connect_with_cached_token(ctx, server: str, cached: dict):
 @click.option(
     "--password", envvar="ER_PASSWORD", help="EarthRanger password (prompted if omitted)."
 )
-@click.option(
-    "--profile", envvar="ER_PROFILE", help="Named profile to use (see 'er-events profile')."
-)
+@click.option("--profile", envvar="ER_PROFILE", help="Named profile to use (see 'er profile').")
 @click.pass_context
 def main(ctx, server, username, password, profile):
-    """Create and edit EarthRanger event categories, choices, and v2 event types."""
+    """EarthRanger site management CLI."""
     ctx.obj = {"server": server, "username": username, "password": password, "profile": profile}
 
 
-@main.command("apply")
+@main.group("events")
+def events_group():
+    """Create and edit event categories, choices, and v2 event types; post events."""
+
+
+@events_group.command("apply")
+@connection_options
 @click.argument("spec_file", type=click.Path(exists=True, dir_okay=False))
 @click.option("--dry-run", is_flag=True, help="Show planned changes without writing.")
 @click.pass_context
@@ -150,7 +178,8 @@ def apply_cmd(ctx, spec_file, dry_run):
         click.echo(line)
 
 
-@main.command("post-event")
+@events_group.command("post")
+@connection_options
 @click.option("--event-type", "event_type", help="Event type value (required unless --file).")
 @click.option(
     "--field", "fields", multiple=True, help="key=value; value parsed as a YAML scalar. Repeatable."
@@ -198,12 +227,13 @@ def post_event_cmd(ctx, event_type, fields, location, time_, title, file_):
         sys.exit(1)
 
 
-@main.group("list")
+@events_group.group("list")
 def list_group():
     """List objects on the server."""
 
 
 @list_group.command("categories")
+@connection_options
 @click.pass_context
 @_api_errors
 def list_categories(ctx):
@@ -220,6 +250,7 @@ def _category_value_of(event_type: dict):
 
 
 @list_group.command("event-types")
+@connection_options
 @click.option("--category", help="Filter by category value.")
 @click.pass_context
 @_api_errors
@@ -234,12 +265,13 @@ def list_event_types(ctx, category):
         click.echo(f"{t.get('value'):<40} {t.get('display'):<40} {cat_value}{active}")
 
 
-@main.group("show")
+@events_group.group("show")
 def show_group():
     """Show one object in full."""
 
 
 @show_group.command("event-type")
+@connection_options
 @click.argument("value")
 @click.pass_context
 @_api_errors
@@ -262,6 +294,7 @@ def auth_group():
 
 
 @auth_group.command("login")
+@connection_options
 @click.pass_context
 @_api_errors
 def auth_login(ctx):
@@ -282,6 +315,7 @@ def auth_login(ctx):
 
 
 @auth_group.command("logout")
+@connection_options
 @click.pass_context
 def auth_logout(ctx):
     """Delete the cached token for this server."""
@@ -291,6 +325,7 @@ def auth_logout(ctx):
 
 
 @auth_group.command("status")
+@connection_options
 @click.pass_context
 def auth_status(ctx):
     """Report whether a cached token exists for this server, and its expiry."""
@@ -305,7 +340,8 @@ def auth_status(ctx):
     click.echo(f"{host}: {state}{as_user} (access token expires {data['expires_at']})")
 
 
-@main.command("pull")
+@events_group.command("pull")
+@connection_options
 @click.argument("category_value")
 @click.option("-o", "--output", type=click.Path(dir_okay=False), help="Write the spec to a file.")
 @click.option(
@@ -355,30 +391,20 @@ def profile_group():
 @_api_errors
 def profile_add(name, p_server, p_username):
     """Add (or overwrite) a profile."""
-    had_active = config_store.active_profile() is not None
     config_store.add_profile(name, server=p_server, username=p_username)
-    suffix = "." if had_active else "; now active."
-    click.echo(f"Added profile {name!r} ({token_store.server_host(p_server)}){suffix}")
-
-
-@profile_group.command("use")
-@click.argument("name")
-@_api_errors
-def profile_use(name):
-    """Make NAME the active profile for future commands."""
-    config_store.set_active(name)
-    click.echo(f"Active profile: {name}")
+    click.echo(f"Added profile {name!r} ({token_store.server_host(p_server)}).")
 
 
 @profile_group.command("list")
-def profile_list():
-    """List profiles: active marker, server, username, auth state."""
+@connection_options
+@click.pass_context
+def profile_list(ctx):
+    """List profiles: selection marker (--profile/ER_PROFILE), server, username, auth state."""
     profiles = config_store.list_profiles()
     if not profiles:
-        click.echo("No profiles. Add one with 'er-events profile add NAME --server ...'.")
+        click.echo("No profiles. Add one with 'er profile add NAME --server ...'.")
         return
-    active = config_store.active_profile()
-    active_name = active[0] if active else None
+    active_name = ctx.obj.get("profile")
     for name in sorted(profiles):
         p = profiles[name]
         marker = "*" if name == active_name else " "
@@ -392,7 +418,67 @@ def profile_list():
 @_api_errors
 def profile_remove(name):
     """Delete a profile (its cached token, keyed by host, is left alone)."""
-    was_active = (config_store.active_profile() or (None,))[0] == name
     if not config_store.remove_profile(name):
         raise config_store.ConfigError(f"no profile named {name!r}")
-    click.echo(f"Removed profile {name!r}{' (was active)' if was_active else ''}.")
+    click.echo(f"Removed profile {name!r}.")
+
+
+@profile_group.command("current")
+@connection_options
+@click.pass_context
+def profile_current(ctx):
+    """Print this invocation's selected profile (--profile/ER_PROFILE); exit 1 if none."""
+    name = ctx.obj.get("profile")
+    if not name:
+        sys.exit(1)
+    click.echo(name)
+
+
+@profile_group.command("use")
+@click.argument("name", required=False)
+@_api_errors
+def profile_use(name):
+    """Select a profile for the current shell.
+
+    A subprocess cannot modify its parent shell's environment, so this prints
+    the `export ER_PROFILE=...` line (or `unset` with no NAME) for the shell
+    to eval — the `er` wrapper function from the README does that for you.
+    """
+    if name is None:
+        click.echo("unset ER_PROFILE")
+        return
+    if config_store.get_profile(name) is None:
+        raise config_store.ConfigError(f"no profile named {name!r}")
+    click.echo(f"export ER_PROFILE={name}")
+
+
+@profile_group.command("show")
+@connection_options
+@click.argument("name", required=False)
+@click.pass_context
+@_api_errors
+def profile_show(ctx, name):
+    """Show one profile in full (defaults to this shell's selection)."""
+    if name is None:
+        name = ctx.obj.get("profile")
+        if not name:
+            raise click.UsageError(
+                "no profile selected — pass a NAME or select one with 'er profile use'."
+            )
+    profile = config_store.get_profile(name)
+    if profile is None:
+        raise config_store.ConfigError(f"no profile named {name!r}")
+    server = profile["server"]
+    host = token_store.server_host(server)
+    data = token_store.load_token(host)
+    if not data:
+        auth = "not authenticated"
+    else:
+        state = "expired" if token_store.is_expired(data) else "valid"
+        as_user = f" as {data['username']}" if data.get("username") else ""
+        auth = f"{state}{as_user} (access token expires {data['expires_at']})"
+    click.echo(f"name:      {name}")
+    click.echo(f"server:    {server}")
+    click.echo(f"host:      {host}")
+    click.echo(f"username:  {profile.get('username') or '-'}")
+    click.echo(f"auth:      {auth}")

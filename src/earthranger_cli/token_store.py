@@ -1,6 +1,6 @@
 """Per-server OAuth token cache.
 
-Persists the tokens from `er-events auth login` so later invocations reuse
+Persists the tokens from `er auth login` so later invocations reuse
 them instead of asking for a password. One file per server host under
 ``<config>/tokens/<host>.json`` (0600, directory 0700); the config directory
 defaults to ``~/.config/er-events`` and can be overridden with

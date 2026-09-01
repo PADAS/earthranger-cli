@@ -1,5 +1,5 @@
-from er_events_cli.choices import ChoiceOp, desired_choice_records, plan_field_choices
-from er_events_cli.dsl import EventTypeSpec, FieldSpec, OptionSpec
+from earthranger_cli.choices import ChoiceOp, desired_choice_records, plan_field_choices
+from earthranger_cli.dsl import EventTypeSpec, FieldSpec, OptionSpec
 
 
 def _et():

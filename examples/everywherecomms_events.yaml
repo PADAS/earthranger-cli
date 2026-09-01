@@ -1,0 +1,334 @@
+category:
+  value: everywherecomms_events
+  display: Everywhere Communications Events
+event_types:
+- value: ew_self_check_in_stopped
+  display: Self Check-in Stopped
+  layout:
+    label: ''
+    columns: 1
+  fields:
+  - key: conversation_id
+    label: Conversation Id
+    type: number
+  - key: course_degrees
+    label: Course Degrees
+    type: number
+  - key: device_alias
+    label: Device Alias
+    type: string
+  - key: device_name
+    label: Device Name
+    type: string
+  - key: fence_id
+    label: Fence Id
+    type: number
+  - key: gps_time_ms
+    label: Gps Time Ms
+    type: string
+  - key: processed_message_id
+    label: Processed Message Id
+    type: number
+  - key: speed_mph
+    label: Speed Mph
+    type: number
+- value: ew_self_check_in_started
+  display: Self Check-in Started
+  layout:
+    label: ''
+    columns: 1
+  fields:
+  - key: conversation_id
+    label: Conversation Id
+    type: number
+  - key: course_degrees
+    label: Course Degrees
+    type: number
+  - key: device_alias
+    label: Device Alias
+    type: string
+  - key: device_name
+    label: Device Name
+    type: string
+  - key: fence_id
+    label: Fence Id
+    type: number
+  - key: gps_time_ms
+    label: Gps Time Ms
+    type: string
+  - key: processed_message_id
+    label: Processed Message Id
+    type: number
+  - key: speed_mph
+    label: Speed Mph
+    type: number
+- value: ew_missed_check_in_escalation
+  display: Missed Check-in Escalation
+  layout:
+    label: ''
+    columns: 1
+  fields:
+  - key: conversation_id
+    label: Conversation Id
+    type: number
+  - key: course_degrees
+    label: Course Degrees
+    type: number
+  - key: device_alias
+    label: Device Alias
+    type: string
+  - key: device_name
+    label: Device Name
+    type: string
+  - key: fence_id
+    label: Fence Id
+    type: number
+  - key: gps_time_ms
+    label: Gps Time Ms
+    type: string
+  - key: processed_message_id
+    label: Processed Message Id
+    type: number
+  - key: speed_mph
+    label: Speed Mph
+    type: number
+- value: ew_missed_check_in
+  display: Missed Check-in
+  layout:
+    label: ''
+    columns: 1
+  fields:
+  - key: conversation_id
+    label: Conversation Id
+    type: number
+  - key: course_degrees
+    label: Course Degrees
+    type: number
+  - key: device_alias
+    label: Device Alias
+    type: string
+  - key: device_name
+    label: Device Name
+    type: string
+  - key: fence_id
+    label: Fence Id
+    type: number
+  - key: gps_time_ms
+    label: Gps Time Ms
+    type: string
+  - key: processed_message_id
+    label: Processed Message Id
+    type: number
+  - key: speed_mph
+    label: Speed Mph
+    type: number
+- value: ew_geofence_exited
+  display: Geofence Exited
+  layout:
+    label: ''
+    columns: 1
+  fields:
+  - key: conversation_id
+    label: Conversation Id
+    type: number
+  - key: course_degrees
+    label: Course Degrees
+    type: number
+  - key: device_alias
+    label: Device Alias
+    type: string
+  - key: device_name
+    label: Device Name
+    type: string
+  - key: fence_id
+    label: Fence Id
+    type: number
+  - key: gps_time_ms
+    label: Gps Time Ms
+    type: string
+  - key: processed_message_id
+    label: Processed Message Id
+    type: number
+  - key: speed_mph
+    label: Speed Mph
+    type: number
+- value: ew_factal_news_alert
+  display: News Alert (FACTAL)
+  layout:
+    label: ''
+    columns: 1
+  fields:
+  - key: conversation_id
+    label: Conversation Id
+    type: number
+  - key: course_degrees
+    label: Course Degrees
+    type: number
+  - key: device_alias
+    label: Device Alias
+    type: string
+  - key: device_name
+    label: Device Name
+    type: string
+  - key: fence_id
+    label: Fence Id
+    type: number
+  - key: gps_time_ms
+    label: Gps Time Ms
+    type: string
+  - key: processed_message_id
+    label: Processed Message Id
+    type: number
+  - key: speed_mph
+    label: Speed Mph
+    type: number
+- value: ew_geofence_entered
+  display: Geofence Entered
+  layout:
+    label: ''
+    columns: 1
+  fields:
+  - key: conversation_id
+    label: Conversation Id
+    type: number
+  - key: course_degrees
+    label: Course Degrees
+    type: number
+  - key: device_alias
+    label: Device Alias
+    type: string
+  - key: device_name
+    label: Device Name
+    type: string
+  - key: fence_id
+    label: Fence Id
+    type: number
+  - key: gps_time_ms
+    label: Gps Time Ms
+    type: string
+  - key: processed_message_id
+    label: Processed Message Id
+    type: number
+  - key: speed_mph
+    label: Speed Mph
+    type: number
+- value: ew_emergency_exited
+  display: Emergency Exited
+  layout:
+    label: ''
+    columns: 1
+  fields:
+  - key: conversation_id
+    label: Conversation Id
+    type: number
+  - key: course_degrees
+    label: Course Degrees
+    type: number
+  - key: device_alias
+    label: Device Alias
+    type: string
+  - key: device_name
+    label: Device Name
+    type: string
+  - key: fence_id
+    label: Fence Id
+    type: number
+  - key: gps_time_ms
+    label: Gps Time Ms
+    type: string
+  - key: processed_message_id
+    label: Processed Message Id
+    type: number
+  - key: speed_mph
+    label: Speed Mph
+    type: number
+- value: ew_emergency_entered
+  display: Emergency Entered
+  layout:
+    label: ''
+    columns: 1
+  fields:
+  - key: conversation_id
+    label: Conversation Id
+    type: number
+  - key: course_degrees
+    label: Course Degrees
+    type: number
+  - key: device_alias
+    label: Device Alias
+    type: string
+  - key: device_name
+    label: Device Name
+    type: string
+  - key: fence_id
+    label: Fence Id
+    type: number
+  - key: gps_time_ms
+    label: Gps Time Ms
+    type: string
+  - key: processed_message_id
+    label: Processed Message Id
+    type: number
+  - key: speed_mph
+    label: Speed Mph
+    type: number
+- value: ew_check_in_not_ok
+  display: Check-in not OK
+  layout:
+    label: ''
+    columns: 1
+  fields:
+  - key: conversation_id
+    label: Conversation Id
+    type: number
+  - key: course_degrees
+    label: Course Degrees
+    type: number
+  - key: device_alias
+    label: Device Alias
+    type: string
+  - key: device_name
+    label: Device Name
+    type: string
+  - key: fence_id
+    label: Fence Id
+    type: number
+  - key: gps_time_ms
+    label: Gps Time Ms
+    type: string
+  - key: processed_message_id
+    label: Processed Message Id
+    type: number
+  - key: speed_mph
+    label: Speed Mph
+    type: number
+- value: ew_check_in_im_ok
+  display: Check in I'm OK
+  layout:
+    label: ''
+    columns: 1
+  fields:
+  - key: conversation_id
+    label: Conversation Id
+    type: number
+  - key: course_degrees
+    label: Course Degrees
+    type: number
+  - key: device_alias
+    label: Device Alias
+    type: string
+  - key: device_name
+    label: Device Name
+    type: string
+  - key: fence_id
+    label: Fence Id
+    type: number
+  - key: gps_time_ms
+    label: Gps Time Ms
+    type: string
+  - key: processed_message_id
+    label: Processed Message Id
+    type: number
+  - key: speed_mph
+    label: Speed Mph
+    type: number

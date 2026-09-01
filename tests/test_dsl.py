@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from er_events_cli.dsl import OptionSpec, SpecError, load_spec, parse_spec
+from earthranger_cli.dsl import OptionSpec, SpecError, load_spec, parse_spec
 
 VALID = {
     "category": {"value": "wildlife_monitoring", "display": "Wildlife Monitoring"},

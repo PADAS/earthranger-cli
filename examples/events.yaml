@@ -1,4 +1,4 @@
-# Example batch file for `er-events post-event --file events.yaml`.
+# Example batch file for `er events post --file events.yaml`.
 # Each entry: event_type (required), event_details, optional
 # location / time / title. time defaults to now (UTC).
 

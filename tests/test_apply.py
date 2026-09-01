@@ -3,9 +3,9 @@ import copy
 import pytest
 
 from conftest import FakeER
-from er_events_cli.apply import apply_spec, extract_choice_fields, normalize_v2_schema
-from er_events_cli.dsl import parse_spec
-from er_events_cli.schema_gen import build_event_type_payload
+from earthranger_cli.apply import apply_spec, extract_choice_fields, normalize_v2_schema
+from earthranger_cli.dsl import parse_spec
+from earthranger_cli.schema_gen import build_event_type_payload
 
 SPEC_DATA = {
     "category": {"value": "wm", "display": "Wildlife Monitoring"},
@@ -154,7 +154,7 @@ def test_dry_run_performs_no_writes():
 def test_api_write_failure_names_the_failing_object():
     from erclient.er_errors import ERClientException
 
-    from er_events_cli.apply import ApplyError
+    from earthranger_cli.apply import ApplyError
 
     fake = FakeER()
 

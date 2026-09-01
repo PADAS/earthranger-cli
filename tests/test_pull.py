@@ -4,10 +4,10 @@ import pytest
 import yaml
 
 from conftest import FakeER
-from er_events_cli.apply import apply_spec
-from er_events_cli.dsl import parse_spec
-from er_events_cli.pull import PullError, pull_category, render_spec_yaml
-from er_events_cli.schema_gen import build_event_type_payload
+from earthranger_cli.apply import apply_spec
+from earthranger_cli.dsl import parse_spec
+from earthranger_cli.pull import PullError, pull_category, render_spec_yaml
+from earthranger_cli.schema_gen import build_event_type_payload
 
 SPEC_DATA = {
     "category": {"value": "wm", "display": "Wildlife Monitoring"},
