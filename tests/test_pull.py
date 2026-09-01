@@ -725,3 +725,23 @@ def test_pull_drops_conditional_section_when_controller_skipped():
     pulled = next(t for t in result.spec["event_types"] if t["value"] == "fire")
     parse_spec(result.spec)  # the pulled spec must still parse
     assert all("condition" not in s for s in pulled.get("sections", []))
+
+
+def test_pull_refuses_crossed_branch_section_association():
+    # Copilot r3909107709: crossed x-section/properties must refuse, not KeyError
+    fake = _server_from_spec(CONDITIONAL_SPEC)
+    j = fake.event_types[0]["schema"]["json"]
+    j["allOf"][0]["then"]["properties"] = {
+        "someone_elses_key": {"type": "string", "title": "X", "deprecated": False}
+    }
+    j["properties"]["investigator"] = {"type": "string", "title": "I", "deprecated": False}
+    result = pull_category(fake, "wm")
+    assert any("fire" in w and "match its section" in w for w in result.unsupported)
+
+
+def test_pull_collection_with_unsupported_extras_refused():
+    fake = _server_from_spec(COLLECTION_SPEC)
+    props = fake.event_types[0]["schema"]["json"]["properties"]
+    props["Demo1"]["default"] = "weird"
+    result = pull_category(fake, "wm")
+    assert any("Demo1" in w and "default" in w for w in result.unsupported)

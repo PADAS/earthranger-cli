@@ -1059,3 +1059,23 @@ def test_condition_controller_must_be_string_valued():
     data["event_types"][0]["sections"][1]["condition"]["field"] = "flag"
     errors = _errors_for(data)
     assert any("condition.field" in e and "'flag'" in e and "boolean" in e for e in errors)
+
+
+def test_required_entries_validated_as_strings():
+    # unhashable/falsy shapes must produce SpecError, not TypeError
+    import copy
+
+    data = copy.deepcopy(COLLECTION_FIELD)
+    data["required"] = [[]]
+    errors = _errors_for(_spec_with_field(data))
+    assert any("required" in e and "string" in e for e in errors)
+
+    data = copy.deepcopy(COLLECTION_FIELD)
+    data["required"] = False
+    errors = _errors_for(_spec_with_field(data))
+    assert any("required: must be a list" in e for e in errors)
+
+    et_data = _spec_with_field({"key": "n", "label": "N", "type": "string"})
+    et_data["event_types"][0]["required"] = [{"x": 1}]
+    errors = _errors_for(et_data)
+    assert any("required" in e and "string" in e for e in errors)

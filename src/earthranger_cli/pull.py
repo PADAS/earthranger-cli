@@ -291,6 +291,11 @@ def _read_sections(json_block, ui_block, properties, ui_fields):
             return f"layout section {sid!r} puts fields in the right column of a 1-column section"
         all_keys.extend(left + right)
         branch = branches.get(sid) or {}
+        if condition is not None and set(left + right) != set(branch.get("properties") or {}):
+            return (
+                f"layout section {sid!r} conditional branch properties do not "
+                "match its section columns"
+            )
         out.append(
             {
                 "label": label,
@@ -411,7 +416,13 @@ def _invert_collection(client, key, json_prop, ui_field, all_ui_fields, out):
     required = list(items.get("required") or [])
     if required:
         out["required"] = required
-    _copy_extras(json_prop, ui_field, out)
+    # collections take description only; hint/default have no DSL form here
+    if ui_field.get("placeholder"):
+        return None, "collection has an unsupported placeholder"
+    if json_prop.get("default") not in (None, ""):
+        return None, "collection has an unsupported default"
+    if json_prop.get("description"):
+        out["description"] = json_prop["description"]
     return out, None
 
 

@@ -314,15 +314,21 @@ def _parse_event_type(raw: object, path: str, errors: list[str]) -> EventTypeSpe
                 seen_keys.add(f.key)
                 fields.append(f)
 
-    required_raw = raw.get("required") or []
-    if not isinstance(required_raw, list):
+    required_raw = raw.get("required")
+    if required_raw is None:
+        required_raw = []
+    elif not isinstance(required_raw, list):
         errors.append(f"{path}.required: must be a list of field keys")
         required_raw = []
     keys = {f.key for f in fields}
+    required: list[str] = []
     for r in required_raw:
-        if r not in keys:
+        if not isinstance(r, str):
+            errors.append(f"{path}.required: entries must be strings (field keys)")
+        elif r not in keys:
             errors.append(f"{path}.required: {r!r} is not a declared field key")
-    required = [r for r in required_raw if r in keys]
+        else:
+            required.append(r)
 
     is_active = raw.get("is_active", True)
     if not isinstance(is_active, bool):
@@ -653,15 +659,20 @@ def _parse_field(raw: object, path: str, errors: list[str]) -> FieldSpec:
                         f"{path}.fields[{j}].column: 'right' requires collection columns: 2"
                     )
                 sub_fields.append(sub)
-        sub_required_raw = raw.get("required") or []
-        if not isinstance(sub_required_raw, list):
+        sub_required_raw = raw.get("required")
+        if sub_required_raw is None:
+            sub_required_raw = []
+        elif not isinstance(sub_required_raw, list):
             errors.append(f"{path}.required: must be a list of sub-field keys")
             sub_required_raw = []
         sub_keys = {f.key for f in sub_fields}
         for r in sub_required_raw:
-            if r not in sub_keys:
+            if not isinstance(r, str):
+                errors.append(f"{path}.required: entries must be strings (sub-field keys)")
+            elif r not in sub_keys:
                 errors.append(f"{path}.required: {r!r} is not a declared sub-field key")
-        sub_required = [r for r in sub_required_raw if r in sub_keys]
+            elif r not in sub_required:
+                sub_required.append(r)
     else:
         for name in ("item_name", "button_text", "item_identifier", "columns", "required"):
             if raw.get(name) is not None:

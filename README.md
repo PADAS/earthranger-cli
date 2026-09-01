@@ -75,8 +75,8 @@ export ER_PASSWORD=...              # or --password; omit both to be prompted
 ```
 
 If the cached session's refresh token has expired, commands fail with
-`error: cached session for <host> expired or invalid — run 'er-events
-auth login'`.
+`error: cached session for <host> expired or invalid — run 'er auth
+login'`.
 
 ## Walkthrough
 
@@ -171,10 +171,11 @@ sub-fields (`item_name` labels one entry; optional `button_text`,
 Choice-list or nested-collection sub-fields aren't supported yet and
 are refused by name.
 
-Every field also takes optional `active: false` (the field is
-deprecated/hidden on ER but its historical data remains), `hint` (ER's
-placeholder, max 32 chars; not on `boolean`/`date`/`datetime`),
-`description`, and `default`
+Every field takes optional `active: false` (the field is
+deprecated/hidden on ER but its historical data remains) and
+`description`. Scalar and choice fields additionally take `hint` (ER's
+placeholder, max 32 chars; not on `boolean`/`date`/`datetime` or
+collections), and scalar fields take `default`
 (`string`/`textarea`/`url`/`integer`/`number`/`boolean` only). `string`
 fields take `format: url | email | uuid` — the builder's "Format
 Validation" (`url` is sent as JSON Schema `uri`).
