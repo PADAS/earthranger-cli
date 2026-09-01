@@ -320,6 +320,22 @@ def _read_sections(json_block, ui_block, properties, ui_fields):
                 "extra_required": list(branch.get("required") or []),
             }
         )
+    # conditionalDependents must mirror the conditions exactly: the generator
+    # rebuilds them from the conditions, so any divergence (missing linkage,
+    # orphaned or extra dependents) would be silently rewritten on apply
+    expected_dependents: dict[str, list[str]] = {}
+    for sid, sec in zip(order_ids, out):
+        cond = sec["condition"]
+        if cond is not None:
+            expected_dependents.setdefault(cond["field"], []).append(sid)
+    for fkey, f in ui_fields.items():
+        actual = f.get("conditionalDependents") or []
+        if list(actual) != expected_dependents.get(fkey, []):
+            return (
+                f"ui field {fkey!r} has conditionalDependents {list(actual)!r} that "
+                "do not match its conditions"
+            )
+
     # collection sub-fields appear in ui.fields as dotted keys under their
     # collection's key; only dotted keys actually referenced by a collection's
     # columns are exempt from coverage — anything else dotted is orphaned
@@ -406,7 +422,21 @@ def _invert_collection(client, key, json_prop, ui_field, all_ui_fields, out):
         out["item_identifier"] = ui_field["itemIdentifier"]
     if ui_field.get("columns") == 2:
         out["columns"] = 2
+    extra_outer = set(json_prop) - {
+        "type",
+        "title",
+        "deprecated",
+        "description",
+        "items",
+        "minItems",
+        "maxItems",
+        "unevaluatedItems",
+    }
     items = json_prop.get("items") or {}
+    extra_items = set(items) - {"type", "properties", "required", "unevaluatedProperties"}
+    if extra_outer or extra_items:
+        keywords = ", ".join(sorted(extra_outer | extra_items))
+        return None, f"collection carries keywords the DSL cannot express ({keywords})"
     props = items.get("properties") or {}
     if not props:
         return None, "collection has no sub-fields"
@@ -415,8 +445,15 @@ def _invert_collection(client, key, json_prop, ui_field, all_ui_fields, out):
     right_set = set(right)
     sub_fields: list[dict] = []
     seen: set[str] = set()
+    prefix = f"{key}."
     for dotted in left + right:
-        sub_key = dotted.split(".", 1)[1] if "." in dotted else dotted
+        if not isinstance(dotted, str) or not dotted.startswith(prefix):
+            return None, f"collection column {dotted!r} does not belong to this collection"
+        sub_key = dotted[len(prefix) :]
+        if "." in sub_key:
+            return None, f"collection column {dotted!r} is nested more than one level"
+        if sub_key in seen:
+            return None, f"collection has a duplicate column entry for {sub_key!r}"
         seen.add(sub_key)
         sub_json = props.get(sub_key)
         if sub_json is None:

@@ -798,3 +798,50 @@ def test_pull_refuses_extra_conditional_keywords():
     fake.event_types[0]["schema"]["json"]["allOf"][0]["then"]["minProperties"] = 1
     result = pull_category(fake, "wm")
     assert any("minProperties" in w for w in result.unsupported)
+
+
+def test_pull_refuses_unsupported_collection_keywords():
+    # Copilot r3909448464
+    fake = _server_from_spec(COLLECTION_SPEC)
+    props = fake.event_types[0]["schema"]["json"]["properties"]
+    props["Demo1"]["uniqueItems"] = True
+    result = pull_category(fake, "wm")
+    assert any("Demo1" in w and "uniqueItems" in w for w in result.unsupported)
+
+    fake = _server_from_spec(COLLECTION_SPEC)
+    props = fake.event_types[0]["schema"]["json"]["properties"]
+    props["Demo1"]["items"]["minProperties"] = 1
+    result = pull_category(fake, "wm")
+    assert any("Demo1" in w and "minProperties" in w for w in result.unsupported)
+
+
+def test_pull_refuses_foreign_or_duplicate_collection_columns():
+    # Copilot r3909448540
+    fake = _server_from_spec(COLLECTION_SPEC)
+    ui = fake.event_types[0]["schema"]["ui"]["fields"]["Demo1"]
+    ui["leftColumn"][0] = "Other.Text_1"
+    result = pull_category(fake, "wm")
+    # refused either as a foreign column or as the orphaned real sub-field
+    assert any("Other.Text_1" in w or "Demo1.Text_1" in w for w in result.unsupported)
+
+    fake = _server_from_spec(COLLECTION_SPEC)
+    ui = fake.event_types[0]["schema"]["ui"]["fields"]["Demo1"]
+    ui["leftColumn"].append(ui["leftColumn"][0])
+    result = pull_category(fake, "wm")
+    assert any("duplicate" in w and "Demo1" in w for w in result.unsupported)
+
+
+def test_pull_refuses_broken_conditional_dependents_linkage():
+    # Copilot r5 suppressed pull:290
+    fake = _server_from_spec(CONDITIONAL_SPEC)
+    ui = fake.event_types[0]["schema"]["ui"]["fields"]
+    ui["cause"]["conditionalDependents"] = []  # missing linkage
+    result = pull_category(fake, "wm")
+    assert any("conditionalDependents" in w for w in result.unsupported)
+
+    fake = _server_from_spec(CONDITIONAL_SPEC)
+    ui = fake.event_types[0]["schema"]["ui"]["fields"]
+    ui["notes"] = ui.get("notes") or {}
+    ui["investigator"]["conditionalDependents"] = ["section-3"]  # orphaned extra
+    result = pull_category(fake, "wm")
+    assert any("conditionalDependents" in w for w in result.unsupported)
