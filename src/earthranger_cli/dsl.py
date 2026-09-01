@@ -110,6 +110,9 @@ class EventTypeSpec:
     is_collection: bool = False
     default_priority: int | None = None  # wire value; DSL accepts names too
     geometry_type: str | None = None  # "Point" | "Polygon"; immutable once set in ER
+    auto_resolve: bool | None = None
+    resolve_time: int | None = None  # hours; pairs with auto_resolve
+    ordernum: int | None = None  # explicit display order (spec order is NOT positional here)
     default_state: str | None = None
     readonly: bool | None = None  # None = never sent; server value preserved
     layout: LayoutSpec = field(default_factory=LayoutSpec)
@@ -332,6 +335,26 @@ def _parse_event_type(raw: object, path: str, errors: list[str]) -> EventTypeSpe
         errors.append(f"{path}.readonly: must be true or false")
         readonly = None
 
+    auto_resolve = raw.get("auto_resolve")
+    if auto_resolve is not None and not isinstance(auto_resolve, bool):
+        errors.append(f"{path}.auto_resolve: must be true or false")
+        auto_resolve = None
+    resolve_time = raw.get("resolve_time")
+    if resolve_time is not None and (
+        isinstance(resolve_time, bool) or not isinstance(resolve_time, int) or resolve_time <= 0
+    ):
+        errors.append(f"{path}.resolve_time: must be a positive integer (hours)")
+        resolve_time = None
+    if auto_resolve is True and resolve_time is None:
+        errors.append(
+            f"{path}.auto_resolve: true requires resolve_time (hours) — without it "
+            "ER stores the flag but never auto-resolves anything"
+        )
+    ordernum = raw.get("ordernum")
+    if ordernum is not None and (isinstance(ordernum, bool) or not isinstance(ordernum, int)):
+        errors.append(f"{path}.ordernum: must be an integer")
+        ordernum = None
+
     geometry_type = raw.get("geometry_type")
     if geometry_type is not None:
         if isinstance(geometry_type, str) and geometry_type.lower() in GEOMETRY_TYPES:
@@ -360,6 +383,9 @@ def _parse_event_type(raw: object, path: str, errors: list[str]) -> EventTypeSpe
         default_state=default_state,
         readonly=readonly,
         geometry_type=geometry_type,
+        auto_resolve=auto_resolve,
+        resolve_time=resolve_time,
+        ordernum=ordernum,
         layout=layout,
         sections=sections,
     )

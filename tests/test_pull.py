@@ -468,3 +468,20 @@ def test_pull_emits_nondefault_geometry_type():
     assert "geometry_type" not in result.spec["event_types"][1]
     records = apply_spec(fake, parse_spec(result.spec))
     assert {r.action for r in records} == {"unchanged"}
+
+
+def test_pull_emits_auto_resolve_and_ordernum():
+    fake = _server_from_spec(SPEC_DATA)
+    fake.event_types[0]["auto_resolve"] = True
+    fake.event_types[0]["resolve_time"] = 12.0
+    fake.event_types[0]["ordernum"] = 30.0
+    result = pull_category(fake, "wm")
+    pulled = result.spec["event_types"][0]
+    assert pulled["auto_resolve"] is True
+    assert pulled["resolve_time"] == 12
+    assert pulled["ordernum"] == 30
+    other = result.spec["event_types"][1]
+    for key in ("auto_resolve", "resolve_time", "ordernum"):
+        assert key not in other
+    records = apply_spec(fake, parse_spec(result.spec))
+    assert {r.action for r in records} == {"unchanged"}

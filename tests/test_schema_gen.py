@@ -317,3 +317,17 @@ def test_geometry_type_in_payload_only_when_declared():
     assert "geometry_type" not in build_event_type_payload(et, "c")
     et.geometry_type = "Polygon"
     assert build_event_type_payload(et, "c")["geometry_type"] == "Polygon"
+
+
+def test_auto_resolve_and_ordernum_in_payload_only_when_declared():
+    et = _event_type()
+    payload = build_event_type_payload(et, "c")
+    for key in ("auto_resolve", "resolve_time", "ordernum"):
+        assert key not in payload
+    et.auto_resolve = True
+    et.resolve_time = 12
+    et.ordernum = 30
+    payload = build_event_type_payload(et, "c")
+    assert payload["auto_resolve"] is True
+    assert payload["resolve_time"] == 12
+    assert payload["ordernum"] == 30

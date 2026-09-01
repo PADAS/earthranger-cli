@@ -261,3 +261,24 @@ def test_geometry_type_sent_on_create():
     apply_spec(fake, spec)
     posted = next(c for c in fake.calls if c[0] == "post_event_type")
     assert posted[1]["geometry_type"] == "Polygon"
+
+
+def test_auto_resolve_and_ordernum_diffed_only_when_declared():
+    fake = _existing_state()
+    fake.event_types[0]["auto_resolve"] = True
+    fake.event_types[0]["resolve_time"] = 24.0  # serializer returns floats
+    fake.event_types[0]["ordernum"] = 30.0
+    records = apply_spec(fake, _spec())  # spec silent -> untouched
+    assert {r.action for r in records} == {"unchanged"}
+
+    spec = _spec()
+    spec.event_types[0].auto_resolve = True
+    spec.event_types[0].resolve_time = 24
+    spec.event_types[0].ordernum = 30
+    records = apply_spec(fake, spec)  # float/int equality -> still unchanged
+    assert {r.action for r in records} == {"unchanged"}
+
+    spec.event_types[0].resolve_time = 12
+    apply_spec(fake, spec)
+    patched = next(c for c in fake.calls if c[0] == "patch_event_type")
+    assert patched[1]["resolve_time"] == 12

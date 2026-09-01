@@ -223,8 +223,12 @@ field — the API's own `icon_id` is a derived, read-only property),
 `default_priority` (`gray|green|amber|red` or `0|100|200|300`),
 `default_state` (`new|active|resolved`), `readonly` (makes the whole
 event type read-only in ER — v2 schemas have no per-field read-only),
-and `geometry_type` (`point|polygon`; whether events record a location
-point or a drawn polygon). These are sent only when declared: omitted
+`geometry_type` (`point|polygon`; whether events record a location
+point or a drawn polygon), `auto_resolve` + `resolve_time` (auto-resolve
+events after N hours — `auto_resolve: true` requires `resolve_time`,
+since ER silently ignores the flag without it), and `ordernum` (explicit
+display order; deliberately not derived from spec position, because a
+spec doesn't own every event type in its category). These are sent only when declared: omitted
 keys leave the server's values untouched. `geometry_type` is immutable
 once an event type exists — apply refuses a spec that declares a
 different value than the server's, since ER's API would accept the

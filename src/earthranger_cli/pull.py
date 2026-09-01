@@ -342,6 +342,13 @@ def _copy_extras(json_prop: dict, ui_field: dict, out: dict) -> None:
         out["default"] = json_prop["default"]
 
 
+def _as_int(value):
+    """ER's serializer returns these small integers as floats (30.0)."""
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    return value
+
+
 def _copy_type_defaults(et: dict, out: dict) -> None:
     """Emit default_priority/default_state/readonly only when non-default, so
     minimal specs stay minimal and omitted keys keep preserving server values."""
@@ -356,3 +363,9 @@ def _copy_type_defaults(et: dict, out: dict) -> None:
     geometry = et.get("geometry_type")
     if geometry and geometry != "Point":
         out["geometry_type"] = geometry.lower()
+    if et.get("auto_resolve"):
+        out["auto_resolve"] = True
+    if et.get("resolve_time") is not None:
+        out["resolve_time"] = _as_int(et["resolve_time"])
+    if et.get("ordernum") is not None:
+        out["ordernum"] = _as_int(et["ordernum"])

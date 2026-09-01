@@ -178,4 +178,10 @@ def build_event_type_payload(et: EventTypeSpec, category_value: str) -> dict:
         payload["readonly"] = et.readonly
     if et.geometry_type is not None:
         payload["geometry_type"] = et.geometry_type
+    if et.auto_resolve is not None:
+        payload["auto_resolve"] = et.auto_resolve
+    if et.resolve_time is not None:
+        payload["resolve_time"] = et.resolve_time
+    if et.ordernum is not None:
+        payload["ordernum"] = et.ordernum
     return payload

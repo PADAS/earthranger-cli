@@ -845,3 +845,37 @@ def test_geometry_type_parses_and_validates():
     data["event_types"][0]["geometry_type"] = "line"
     errors = _errors_for(data)
     assert any("geometry_type" in e and "point, polygon" in e for e in errors)
+
+
+def test_auto_resolve_resolve_time_and_ordernum_parse():
+    data = _spec_with_field({"key": "n", "label": "N", "type": "string"})
+    et = data["event_types"][0]
+    et["auto_resolve"] = True
+    et["resolve_time"] = 12
+    et["ordernum"] = 30
+    parsed = parse_spec(data).event_types[0]
+    assert parsed.auto_resolve is True
+    assert parsed.resolve_time == 12
+    assert parsed.ordernum == 30
+
+
+def test_auto_resolve_validation():
+    data = _spec_with_field({"key": "n", "label": "N", "type": "string"})
+    data["event_types"][0]["auto_resolve"] = True  # inert without resolve_time
+    errors = _errors_for(data)
+    assert any("auto_resolve" in e and "resolve_time" in e for e in errors)
+
+    data = _spec_with_field({"key": "n", "label": "N", "type": "string"})
+    data["event_types"][0]["resolve_time"] = -1
+    errors = _errors_for(data)
+    assert any("resolve_time" in e and "positive" in e for e in errors)
+
+    data = _spec_with_field({"key": "n", "label": "N", "type": "string"})
+    data["event_types"][0]["resolve_time"] = True
+    errors = _errors_for(data)
+    assert any("resolve_time" in e for e in errors)
+
+    data = _spec_with_field({"key": "n", "label": "N", "type": "string"})
+    data["event_types"][0]["ordernum"] = "first"
+    errors = _errors_for(data)
+    assert any("ordernum" in e and "integer" in e for e in errors)
