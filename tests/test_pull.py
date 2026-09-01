@@ -690,9 +690,7 @@ def test_pull_preserves_collection_right_column_order():
     fake = _server_from_spec(spec_data)
     result = pull_category(fake, "wm")
     assert result.unsupported == []
-    pulled_coll = next(
-        f for f in result.spec["event_types"][0]["fields"] if f["key"] == "Demo1"
-    )
+    pulled_coll = next(f for f in result.spec["event_types"][0]["fields"] if f["key"] == "Demo1")
     assert [s["key"] for s in pulled_coll["fields"]] == ["left_1", "z_right", "a_right"]
     records = apply_spec(fake, parse_spec(result.spec))
     assert {r.action for r in records} == {"unchanged"}
@@ -704,9 +702,7 @@ def test_pull_refuses_mismatched_conditional_predicate():
     block = fake.event_types[0]["schema"]["json"]["allOf"][0]
     block["if"]["allOf"][0]["properties"]["cause"]["anyOf"][-1]["const"] = "natural"
     result = pull_category(fake, "wm")
-    assert any(
-        "fire" in w and "does not match its UI condition" in w for w in result.unsupported
-    )
+    assert any("fire" in w and "does not match its UI condition" in w for w in result.unsupported)
     assert "fire" not in [t["value"] for t in result.spec["event_types"]]
 
 
@@ -719,7 +715,9 @@ def test_pull_drops_conditional_section_when_controller_skipped():
     schema["json"]["properties"]["cause"]["pattern"] = "^[a-zA-Z0-9]+$"
     del schema["json"]["properties"]["cause"]["anyOf"]
     schema["ui"]["fields"]["cause"] = {
-        "type": "TEXT", "inputType": "SHORT_TEXT", "parent": "section-1",
+        "type": "TEXT",
+        "inputType": "SHORT_TEXT",
+        "parent": "section-1",
         "conditionalDependents": ["section-2"],
     }
     result = pull_category(fake, "wm")

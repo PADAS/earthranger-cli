@@ -271,10 +271,7 @@ def _read_sections(json_block, ui_block, properties, ui_fields):
                 return f"layout section {sid!r} has a condition but no allOf branch"
             expected_if = _encode_is_exactly(cond.get("field"), cond.get("value"))
             if branches[sid].get("_if") != expected_if:
-                return (
-                    f"layout section {sid!r} conditional branch does not match its "
-                    "UI condition"
-                )
+                return f"layout section {sid!r} conditional branch does not match its UI condition"
             condition = {
                 "field": cond.get("field"),
                 "operator": "is_exactly",
