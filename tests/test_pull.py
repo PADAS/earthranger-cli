@@ -784,3 +784,17 @@ def test_pull_refuses_orphaned_dotted_ui_keys():
     }
     result = pull_category(fake, "wm")
     assert any("ghost.sub" in w for w in result.unsupported)
+
+
+def test_pull_refuses_extra_conditional_keywords():
+    # Copilot r3909364234: else / then.minProperties would be silently deleted
+
+    fake = _server_from_spec(CONDITIONAL_SPEC)
+    fake.event_types[0]["schema"]["json"]["allOf"][0]["else"] = {"properties": {}}
+    result = pull_category(fake, "wm")
+    assert any("else" in w for w in result.unsupported)
+
+    fake = _server_from_spec(CONDITIONAL_SPEC)
+    fake.event_types[0]["schema"]["json"]["allOf"][0]["then"]["minProperties"] = 1
+    result = pull_category(fake, "wm")
+    assert any("minProperties" in w for w in result.unsupported)

@@ -250,6 +250,14 @@ def _read_sections(json_block, ui_block, properties, ui_fields):
         then = block.get("then") or {}
         if not isinstance(sid, str) or not isinstance(then.get("properties"), dict):
             return "layout uses a conditional block the DSL cannot express"
+        extra_block = set(block) - {"if", "then", "x-section"}
+        extra_then = set(then) - {"properties", "required"}
+        if extra_block or extra_then:
+            keywords = ", ".join(sorted(extra_block | extra_then))
+            return (
+                f"layout conditional block for {sid!r} carries keywords the DSL "
+                f"cannot express ({keywords})"
+            )
         if sid in branches:
             return f"layout has duplicate conditional branches for {sid!r}"
         if sid not in sections:

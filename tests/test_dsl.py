@@ -1087,3 +1087,40 @@ def test_huge_integer_ordernum_is_specerror_not_crash():
     data["event_types"][0]["ordernum"] = 10**400
     parsed = parse_spec(data)  # ints are always finite; must not crash
     assert parsed.event_types[0].ordernum == 10**400
+
+
+def test_condition_dependency_cycles_rejected():
+    # Copilot r3909364204: A depends on B's field, B on A's -> both start hidden
+    import copy
+
+    data = copy.deepcopy(CONDITIONAL)
+    sections = data["event_types"][0]["sections"]
+    # section-1 (holds 'cause') becomes conditional on 'investigator' (section-2),
+    # while section-2 is already conditional on 'cause' (section-1)
+    sections[0]["condition"] = {
+        "field": "investigator",
+        "operator": "is_exactly",
+        "value": "someone",
+    }
+    errors = _errors_for(data)
+    assert any("cycle" in e for e in errors)
+
+
+def test_columns_true_rejected_everywhere():
+    # Copilot r4 suppressed dsl:639: True == 1 sneaks past `in (1, 2)`
+    import copy
+
+    data = _spec_with_field({"key": "n", "label": "N", "type": "string"})
+    data["event_types"][0]["layout"] = {"columns": True}
+    errors = _errors_for(data)
+    assert any("layout.columns" in e for e in errors)
+
+    data = copy.deepcopy(SECTIONED)
+    data["event_types"][0]["sections"][1]["columns"] = True
+    errors = _errors_for(data)
+    assert any("columns: must be 1 or 2" in e for e in errors)
+
+    data = copy.deepcopy(COLLECTION_FIELD)
+    data["columns"] = True
+    errors = _errors_for(_spec_with_field(data))
+    assert any("columns: must be 1 or 2" in e for e in errors)

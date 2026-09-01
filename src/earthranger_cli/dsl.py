@@ -439,7 +439,7 @@ def _parse_sections(raw: object, path: str, errors: list[str]) -> list[SectionSp
             errors.append(f"{sec_path}.label: must be a string")
             label = "Details"
         columns = sec_raw.get("columns", 1)
-        if columns not in (1, 2):
+        if isinstance(columns, bool) or columns not in (1, 2):
             errors.append(f"{sec_path}.columns: must be 1 or 2")
             columns = 1
         active = sec_raw.get("active", True)
@@ -498,6 +498,27 @@ def _parse_condition(raw: object, path: str, errors: list[str]) -> ConditionSpec
 
 def _check_conditions(sections: list[SectionSpec], path: str, errors: list[str]) -> None:
     all_keys = {f.key for sec in sections for f in sec.fields}
+    owner = {f.key: i for i, sec in enumerate(sections) for f in sec.fields}
+    # conditional sections must not form dependency cycles: if A's controller
+    # lives in B and B's in A, both start hidden and neither can be filled in
+    for start, sec in enumerate(sections):
+        if sec.condition is None:
+            continue
+        seen = {start}
+        current = sec
+        while current.condition is not None:
+            nxt = owner.get(current.condition.field)
+            if nxt is None:
+                break
+            if nxt in seen:
+                errors.append(
+                    f"{path}[{start}].condition: conditional sections form a "
+                    "dependency cycle (each controller lives in a section that is "
+                    "itself hidden until the other is filled)"
+                )
+                break
+            seen.add(nxt)
+            current = sections[nxt]
     for k, sec in enumerate(sections):
         cond = sec.condition
         if cond is None:
@@ -533,7 +554,7 @@ def _parse_layout(raw: object, path: str, errors: list[str]) -> LayoutSpec:
         errors.append(f"{path}.label: must be a string")
         label = "Details"
     columns = raw.get("columns", 1)
-    if columns not in (1, 2):
+    if isinstance(columns, bool) or columns not in (1, 2):
         errors.append(f"{path}.columns: must be 1 or 2")
         columns = 1
     return LayoutSpec(label=label, columns=columns)
@@ -634,7 +655,7 @@ def _parse_field(raw: object, path: str, errors: list[str]) -> FieldSpec:
             if val is not None and not isinstance(val, str):
                 errors.append(f"{path}.{name}: must be a string")
         coll_columns = raw.get("columns", 1)
-        if coll_columns not in (1, 2):
+        if isinstance(coll_columns, bool) or coll_columns not in (1, 2):
             errors.append(f"{path}.columns: must be 1 or 2")
             coll_columns = 1
         sub_raw = raw.get("fields")
