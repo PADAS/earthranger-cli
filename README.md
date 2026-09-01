@@ -168,8 +168,32 @@ exactly this). Category and event-type values must match
 Select/multiselect fields take an optional `choices_field` naming the
 exact ER Choice set to use, overriding the derived
 `<event_type>_<field_key>` name — needed for stock event types whose
-choice sets predate this tool, and for deliberately sharing one choice
-set between fields (allowed only when both declare identical options).
+choice sets predate this tool. To share one set across fields, declare
+it once at the top level and reference it — the fields then omit
+`options` entirely (inline-declared sharing also works when every
+sharing field carries identical options):
+
+```yaml
+choices:
+  shared_actions:
+    - {value: stopped, display: Halted}
+    - {value: warned, display: Warned, icon: warn_icon}
+
+event_types:
+  - value: t1
+    fields:
+      - {key: action, label: Action, type: select, choices_field: shared_actions}
+  - value: t2
+    fields:
+      - {key: response, label: Response, type: multiselect, choices_field: shared_actions}
+```
+
+Options may carry an `icon`, and their spec order is the dropdown
+order: apply writes `ordernum` from spec position **only when the
+visible order actually differs** (a set whose active options already
+appear in spec order keeps its existing numbering — stock 10/20/30
+gaps and holes left by deactivated records are left alone). A set with
+missing ordernums gets numbered on first apply.
 
 Per event type an optional `layout: {label, columns}` (default
 `{label: Details, columns: 1}`) controls the form section; with
@@ -193,9 +217,23 @@ A form-less event type (e.g. an incident collection container) is
 declared with an explicit `fields: []` and, for collections,
 `is_collection: true`.
 
-Per event type: `value`, `display`, `fields` (required);
-`required`, `is_active`, `icon_id` (optional; sent to ER as its writable
-`icon` field — the API's own `icon_id` is a derived, read-only property).
+Per event type: `value`, `display`, `fields` (required); optional:
+`required`, `is_active`, `icon_id` (sent to ER as its writable `icon`
+field — the API's own `icon_id` is a derived, read-only property),
+`default_priority` (`gray|green|amber|red` or `0|100|200|300`),
+`default_state` (`new|active|resolved`), `readonly` (makes the whole
+event type read-only in ER — v2 schemas have no per-field read-only),
+`geometry_type` (`point|polygon`; whether events record a location
+point or a drawn polygon), `auto_resolve` + `resolve_time` (auto-resolve
+events after N hours — `auto_resolve: true` requires `resolve_time`,
+since ER silently ignores the flag without it), and `ordernum` (explicit
+display order; deliberately not derived from spec position, because a
+spec doesn't own every event type in its category). These are sent only when declared: omitted
+keys leave the server's values untouched. `geometry_type` is immutable
+once an event type exists — apply refuses a spec that declares a
+different value than the server's, since ER's API would accept the
+change but events already recorded under the old geometry would be
+corrupted.
 
 ### What apply owns
 

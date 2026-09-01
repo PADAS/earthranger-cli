@@ -704,3 +704,178 @@ def test_explicit_empty_fields_and_is_collection():
         }
     )
     assert "event_types[0].fields: at least one field is required" in errors
+
+
+TOPLEVEL_CHOICES = {
+    "category": {"value": "c1", "display": "C1"},
+    "choices": {
+        "shared_actions": [
+            {"value": "stopped", "display": "Stopped", "icon": "stop_icon"},
+            "warned",
+        ]
+    },
+    "event_types": [
+        {
+            "value": "t1",
+            "display": "T1",
+            "fields": [
+                {
+                    "key": "action",
+                    "label": "Action",
+                    "type": "select",
+                    "choices_field": "shared_actions",
+                },
+            ],
+        },
+        {
+            "value": "t2",
+            "display": "T2",
+            "fields": [
+                {
+                    "key": "response",
+                    "label": "Response",
+                    "type": "multiselect",
+                    "choices_field": "shared_actions",
+                },
+            ],
+        },
+    ],
+}
+
+
+def test_toplevel_choices_parse():
+    import copy
+
+    spec = parse_spec(copy.deepcopy(TOPLEVEL_CHOICES))
+    opts = spec.choices["shared_actions"]
+    assert [(o.value, o.display, o.icon) for o in opts] == [
+        ("stopped", "Stopped", "stop_icon"),
+        ("warned", "Warned", None),
+    ]
+    # both fields reference the set; no inline options
+    assert spec.event_types[0].fields[0].options is None
+    assert spec.event_types[1].fields[0].options is None
+
+
+def test_choices_field_reference_validation():
+    import copy
+
+    data = copy.deepcopy(TOPLEVEL_CHOICES)
+    data["event_types"][0]["fields"][0]["choices_field"] = "nope"
+    errors = _errors_for(data)
+    assert any("references an undeclared top-level choice set" in e for e in errors)
+
+    data = copy.deepcopy(TOPLEVEL_CHOICES)
+    data["event_types"][0]["fields"][0]["options"] = ["stopped"]
+    errors = _errors_for(data)
+    assert any("declared top-level" in e and "inline" in e for e in errors)
+
+    data = copy.deepcopy(TOPLEVEL_CHOICES)
+    data["choices"] = {"Bad Name!": ["a"]}
+    errors = _errors_for(data)
+    assert any("choices" in e and "must match" in e for e in errors)
+
+
+def test_option_icon_validation():
+    errors = _errors_for(
+        _spec_with_field(
+            {
+                "key": "s",
+                "label": "S",
+                "type": "select",
+                "options": [{"value": "a", "display": "A", "icon": 3}],
+            }
+        )
+    )
+    assert any("icon: must be a string" in e for e in errors)
+
+
+def test_event_type_defaults_and_readonly_parse():
+    data = _spec_with_field({"key": "n", "label": "N", "type": "string"})
+    et = data["event_types"][0]
+    et["default_priority"] = "amber"
+    et["default_state"] = "active"
+    et["readonly"] = True
+    spec = parse_spec(data)
+    parsed = spec.event_types[0]
+    assert parsed.default_priority == 200
+    assert parsed.default_state == "active"
+    assert parsed.readonly is True
+
+    data["event_types"][0]["default_priority"] = 300
+    assert parse_spec(data).event_types[0].default_priority == 300
+
+
+def test_event_type_defaults_validation():
+    data = _spec_with_field({"key": "n", "label": "N", "type": "string"})
+    data["event_types"][0]["default_priority"] = "purple"
+    errors = _errors_for(data)
+    assert any("default_priority" in e and "gray, green, amber, red" in e for e in errors)
+    data = _spec_with_field({"key": "n", "label": "N", "type": "string"})
+    data["event_types"][0]["default_priority"] = 150
+    errors = _errors_for(data)
+    assert any("default_priority" in e for e in errors)
+    data = _spec_with_field({"key": "n", "label": "N", "type": "string"})
+    data["event_types"][0]["default_state"] = "closed"
+    errors = _errors_for(data)
+    assert any("default_state" in e and "new, active, resolved" in e for e in errors)
+    data = _spec_with_field({"key": "n", "label": "N", "type": "string"})
+    data["event_types"][0]["readonly"] = "yes"
+    errors = _errors_for(data)
+    assert any("readonly: must be true or false" in e for e in errors)
+
+
+def test_default_priority_rejects_non_integer_values():
+    # unhashable values must produce SpecError, not TypeError (Copilot r3908440534)
+    data = _spec_with_field({"key": "n", "label": "N", "type": "string"})
+    data["event_types"][0]["default_priority"] = []
+    errors = _errors_for(data)
+    assert any("default_priority" in e for e in errors)
+    data["event_types"][0]["default_priority"] = 100.0
+    errors = _errors_for(data)
+    assert any("default_priority" in e for e in errors)
+
+
+def test_geometry_type_parses_and_validates():
+    data = _spec_with_field({"key": "n", "label": "N", "type": "string"})
+    data["event_types"][0]["geometry_type"] = "polygon"
+    assert parse_spec(data).event_types[0].geometry_type == "Polygon"
+    data["event_types"][0]["geometry_type"] = "Point"
+    assert parse_spec(data).event_types[0].geometry_type == "Point"
+    data["event_types"][0]["geometry_type"] = "line"
+    errors = _errors_for(data)
+    assert any("geometry_type" in e and "point, polygon" in e for e in errors)
+
+
+def test_auto_resolve_resolve_time_and_ordernum_parse():
+    data = _spec_with_field({"key": "n", "label": "N", "type": "string"})
+    et = data["event_types"][0]
+    et["auto_resolve"] = True
+    et["resolve_time"] = 12
+    et["ordernum"] = 30
+    parsed = parse_spec(data).event_types[0]
+    assert parsed.auto_resolve is True
+    assert parsed.resolve_time == 12
+    assert parsed.ordernum == 30
+
+
+def test_auto_resolve_validation():
+    data = _spec_with_field({"key": "n", "label": "N", "type": "string"})
+    data["event_types"][0]["auto_resolve"] = True  # inert without resolve_time
+    errors = _errors_for(data)
+    assert any("auto_resolve" in e and "resolve_time" in e for e in errors)
+
+    data = _spec_with_field({"key": "n", "label": "N", "type": "string"})
+    data["event_types"][0]["resolve_time"] = -1
+    errors = _errors_for(data)
+    assert any("resolve_time" in e and "positive" in e for e in errors)
+
+    data = _spec_with_field({"key": "n", "label": "N", "type": "string"})
+    data["event_types"][0]["resolve_time"] = True
+    errors = _errors_for(data)
+    assert any("resolve_time" in e for e in errors)
+
+    data = _spec_with_field({"key": "n", "label": "N", "type": "string"})
+    data["event_types"][0]["ordernum"] = "first"
+    errors = _errors_for(data)
+    assert any("ordernum" in e and "integer" in e for e in errors)

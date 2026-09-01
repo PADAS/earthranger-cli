@@ -16,7 +16,8 @@ from dataclasses import dataclass, field
 import yaml
 
 from . import client as er
-from .dsl import CHOICES_FIELD_RE
+from .choices import choice_sort_key
+from .dsl import CHOICES_FIELD_RE, PRIORITY_BY_VALUE
 from .schema_gen import choice_field_name
 
 _REF_FIELD_RE = re.compile(r"choices\.json\?field=([^&\"']+)$")
@@ -50,11 +51,37 @@ def pull_category(client, category_value: str) -> PullResult:
         if inverted is not None:
             event_types.append(inverted)
 
-    spec = {
-        "category": {"value": category_value, "display": cat.get("display")},
-        "event_types": event_types,
-    }
+    shared_sets = _hoist_shared_sets(event_types)
+    spec = {"category": {"value": category_value, "display": cat.get("display")}}
+    if shared_sets:
+        spec["choices"] = shared_sets
+    spec["event_types"] = event_types
     return PullResult(spec=spec, unsupported=unsupported)
+
+
+def _hoist_shared_sets(event_types: list[dict]) -> dict:
+    """A choices_field referenced by more than one field becomes a top-level
+    choices: set (options identical by construction — one server set)."""
+    counts: dict[str, int] = {}
+    for et in event_types:
+        for f in _choice_fields_of(et):
+            name = f.get("choices_field")
+            if name:
+                counts[name] = counts.get(name, 0) + 1
+    shared: dict = {}
+    for et in event_types:
+        for f in _choice_fields_of(et):
+            name = f.get("choices_field")
+            if name and counts[name] > 1:
+                shared.setdefault(name, f.get("options", []))
+                f.pop("options", None)
+    return shared
+
+
+def _choice_fields_of(et: dict):
+    for section in et.get("sections") or []:
+        yield from (f for f in section.get("fields", []) if "choices_field" in f)
+    yield from (f for f in et.get("fields") or [] if "choices_field" in f)
 
 
 def render_spec_yaml(result: PullResult) -> str:
@@ -108,6 +135,7 @@ def _invert_event_type(client, et: dict, unsupported: list[str]) -> dict | None:
             out["icon_id"] = et["icon"]
         if et.get("is_collection"):
             out["is_collection"] = True
+        _copy_type_defaults(et, out)
         out["fields"] = []
         return out
 
@@ -155,6 +183,7 @@ def _invert_event_type(client, et: dict, unsupported: list[str]) -> dict | None:
         out["icon_id"] = et["icon"]
     if et.get("is_collection"):
         out["is_collection"] = True
+    _copy_type_defaults(et, out)
     if len(out_sections) == 1:
         single = out_sections[0]
         layout = {
@@ -287,14 +316,18 @@ def _invert_choice_field(client, et_value, key, json_prop, ui_field, out):
             )
         out["choices_field"] = name
     options = []
-    for record in er.get_choices(client, name):
+    for record in sorted(er.get_choices(client, name), key=choice_sort_key):
         if not record.get("is_active", True):
             continue
         value, display = record.get("value"), record.get("display")
-        if display == value.replace("_", " ").title():
+        icon = record.get("icon") or None
+        if icon is None and display == value.replace("_", " ").title():
             options.append(value)  # shorthand round-trips to the same display
         else:
-            options.append({"value": value, "display": display})
+            opt = {"value": value, "display": display}
+            if icon:
+                opt["icon"] = icon
+            options.append(opt)
     out["options"] = options
     _copy_extras(json_prop, ui_field, out)
     return out, None
@@ -307,3 +340,32 @@ def _copy_extras(json_prop: dict, ui_field: dict, out: dict) -> None:
         out["description"] = json_prop["description"]
     if "default" in json_prop:
         out["default"] = json_prop["default"]
+
+
+def _as_int(value):
+    """ER's serializer returns these small integers as floats (30.0)."""
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    return value
+
+
+def _copy_type_defaults(et: dict, out: dict) -> None:
+    """Emit default_priority/default_state/readonly only when non-default, so
+    minimal specs stay minimal and omitted keys keep preserving server values."""
+    pri = et.get("default_priority")
+    if pri:
+        out["default_priority"] = PRIORITY_BY_VALUE.get(pri, pri)
+    state = et.get("default_state")
+    if state and state != "new":
+        out["default_state"] = state
+    if et.get("readonly"):
+        out["readonly"] = True
+    geometry = et.get("geometry_type")
+    if geometry and geometry != "Point":
+        out["geometry_type"] = geometry.lower()
+    if et.get("auto_resolve"):
+        out["auto_resolve"] = True
+    if et.get("resolve_time") is not None:
+        out["resolve_time"] = _as_int(et["resolve_time"])
+    if et.get("ordernum") is not None:
+        out["ordernum"] = _as_int(et["ordernum"])

@@ -69,3 +69,21 @@ def test_post_and_patch_choice_paths():
     client._post.assert_called_once_with("choices", payload={"value": "a"})
     patch_choice(client, "abc123", {"is_active": False})
     client._patch.assert_called_once_with("choices/abc123", payload={"is_active": False})
+
+
+def test_get_all_choices_pages_without_field_filter():
+    client = Mock()
+    client._get.side_effect = [
+        {"results": [{"value": "a", "field": "f1"}], "next": "https://x/choices?page=2"},
+        {"results": [{"value": "b", "field": "f2"}], "next": None},
+    ]
+    from earthranger_cli.client import get_all_choices
+
+    result = get_all_choices(client)
+    assert [c["value"] for c in result] == ["a", "b"]
+    first = client._get.call_args_list[0]
+    assert first.kwargs["params"] == {
+        "model": "activity.event",
+        "include_inactive": True,
+        "page_size": 200,
+    }

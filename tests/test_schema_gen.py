@@ -296,3 +296,38 @@ def test_fieldless_collection_payload():
 def test_non_collection_payload_omits_is_collection():
     payload = build_event_type_payload(_event_type(), "c")
     assert "is_collection" not in payload
+
+
+def test_defaults_and_readonly_in_payload_only_when_declared():
+    et = _event_type()
+    payload = build_event_type_payload(et, "c")
+    for key in ("default_priority", "default_state", "readonly"):
+        assert key not in payload
+    et.default_priority = 200
+    et.default_state = "active"
+    et.readonly = True
+    payload = build_event_type_payload(et, "c")
+    assert payload["default_priority"] == 200
+    assert payload["default_state"] == "active"
+    assert payload["readonly"] is True
+
+
+def test_geometry_type_in_payload_only_when_declared():
+    et = _event_type()
+    assert "geometry_type" not in build_event_type_payload(et, "c")
+    et.geometry_type = "Polygon"
+    assert build_event_type_payload(et, "c")["geometry_type"] == "Polygon"
+
+
+def test_auto_resolve_and_ordernum_in_payload_only_when_declared():
+    et = _event_type()
+    payload = build_event_type_payload(et, "c")
+    for key in ("auto_resolve", "resolve_time", "ordernum"):
+        assert key not in payload
+    et.auto_resolve = True
+    et.resolve_time = 12
+    et.ordernum = 30
+    payload = build_event_type_payload(et, "c")
+    assert payload["auto_resolve"] is True
+    assert payload["resolve_time"] == 12
+    assert payload["ordernum"] == 30

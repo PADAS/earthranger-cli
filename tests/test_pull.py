@@ -51,9 +51,10 @@ SPEC_DATA = {
 
 def _server_from_spec(spec_data):
     """Build FakeER state as ER's GET would return it for an applied spec."""
+    from earthranger_cli.choices import desired_choice_sets
+
     spec = parse_spec(copy.deepcopy(spec_data))
     event_types = []
-    choices = {}
     for et in spec.event_types:
         payload = build_event_type_payload(et, spec.category.value)
         record = copy.deepcopy(payload)
@@ -61,20 +62,10 @@ def _server_from_spec(spec_data):
         record["category"] = {"value": spec.category.value}
         record["icon"] = record.pop("icon", None)
         event_types.append(record)
-        for f in et.fields:
-            if f.options is None:
-                continue
-            name = f"{et.value}_{f.key}"
-            choices[name] = [
-                {
-                    "id": f"ch-{name}-{o.value}",
-                    "field": name,
-                    "value": o.value,
-                    "display": o.display,
-                    "is_active": True,
-                }
-                for o in f.options
-            ]
+    choices = {
+        name: [{**rec, "id": f"ch-{name}-{rec['value']}"} for rec in recs]
+        for name, recs in desired_choice_sets(spec).items()
+    }
     return FakeER(
         categories=[
             {"id": "cat-1", "value": spec.category.value, "display": spec.category.display}
@@ -135,7 +126,9 @@ def test_pull_foreign_choice_field_name_becomes_choices_field():
     et = fake.event_types[0]
     prop = et["schema"]["json"]["properties"]["species"]
     prop["anyOf"] = [{"$ref": "/api/v2.0/schemas/choices.json?field=handmade_name"}]
-    fake.choices["handmade_name"] = [{"id": "h1", "value": "x", "display": "X", "is_active": True}]
+    fake.choices["handmade_name"] = [
+        {"id": "h1", "value": "x", "display": "X", "is_active": True, "ordernum": 0}
+    ]
     result = pull_category(fake, "wm")
     assert result.unsupported == []
     field = result.spec["event_types"][0]["fields"][0]
@@ -374,5 +367,121 @@ def test_pull_fieldless_collection_round_trips():
     pulled_et = next(t for t in result.spec["event_types"] if t["value"] == "incident_collection")
     assert pulled_et["is_collection"] is True
     assert pulled_et["fields"] == []
+    records = apply_spec(fake, parse_spec(result.spec))
+    assert {r.action for r in records} == {"unchanged"}
+
+
+SHARED_SET_SPEC = {
+    "category": {"value": "wm", "display": "Wildlife Monitoring"},
+    "choices": {
+        "shared_actions": [
+            {"value": "stopped", "display": "Halted"},
+            {"value": "warned", "display": "Warned", "icon": "warn_icon"},
+        ]
+    },
+    "event_types": [
+        {
+            "value": "t1",
+            "display": "T1",
+            "fields": [
+                {
+                    "key": "action",
+                    "label": "Action",
+                    "type": "select",
+                    "choices_field": "shared_actions",
+                }
+            ],
+        },
+        {
+            "value": "t2",
+            "display": "T2",
+            "fields": [
+                {
+                    "key": "response",
+                    "label": "Response",
+                    "type": "multiselect",
+                    "choices_field": "shared_actions",
+                }
+            ],
+        },
+    ],
+}
+
+
+def test_pull_hoists_shared_sets_and_round_trips():
+    fake = _server_from_spec(SHARED_SET_SPEC)
+    result = pull_category(fake, "wm")
+    assert result.unsupported == []
+    spec = result.spec
+    assert list(spec["choices"]) == ["shared_actions"]
+    assert spec["choices"]["shared_actions"] == [
+        {"value": "stopped", "display": "Halted"},
+        {"value": "warned", "display": "Warned", "icon": "warn_icon"},
+    ]
+    for et in spec["event_types"]:
+        f = et["fields"][0]
+        assert f["choices_field"] == "shared_actions"
+        assert "options" not in f
+    records = apply_spec(fake, parse_spec(spec))
+    assert {r.action for r in records} == {"unchanged"}
+    assert fake.writes() == []
+
+
+def test_pull_orders_options_by_ordernum():
+    fake = _server_from_spec(SPEC_DATA)
+    recs = fake.choices["sighting_species"]
+    for r, num in zip(recs, [1, 0]):
+        r["ordernum"] = num
+    result = pull_category(fake, "wm")
+    field = result.spec["event_types"][0]["fields"][0]
+    values = [o["value"] if isinstance(o, dict) else o for o in field["options"]]
+    assert values == ["lion_cub", "elephant"]
+    records = apply_spec(fake, parse_spec(result.spec))
+    assert {r.action for r in records} == {"unchanged"}
+
+
+def test_pull_emits_nondefault_state_priority_readonly():
+    fake = _server_from_spec(SPEC_DATA)
+    et = fake.event_types[0]
+    et["default_priority"] = 200
+    et["default_state"] = "active"
+    et["readonly"] = True
+    fake.event_types[1]["default_priority"] = 0  # defaults stay omitted
+    result = pull_category(fake, "wm")
+    pulled = result.spec["event_types"][0]
+    assert pulled["default_priority"] == "amber"
+    assert pulled["default_state"] == "active"
+    assert pulled["readonly"] is True
+    other = result.spec["event_types"][1]
+    for key in ("default_priority", "default_state", "readonly"):
+        assert key not in other
+    records = apply_spec(fake, parse_spec(result.spec))
+    assert {r.action for r in records} == {"unchanged"}
+
+
+def test_pull_emits_nondefault_geometry_type():
+    fake = _server_from_spec(SPEC_DATA)
+    fake.event_types[0]["geometry_type"] = "Polygon"
+    fake.event_types[1]["geometry_type"] = "Point"
+    result = pull_category(fake, "wm")
+    assert result.spec["event_types"][0]["geometry_type"] == "polygon"
+    assert "geometry_type" not in result.spec["event_types"][1]
+    records = apply_spec(fake, parse_spec(result.spec))
+    assert {r.action for r in records} == {"unchanged"}
+
+
+def test_pull_emits_auto_resolve_and_ordernum():
+    fake = _server_from_spec(SPEC_DATA)
+    fake.event_types[0]["auto_resolve"] = True
+    fake.event_types[0]["resolve_time"] = 12.0
+    fake.event_types[0]["ordernum"] = 30.0
+    result = pull_category(fake, "wm")
+    pulled = result.spec["event_types"][0]
+    assert pulled["auto_resolve"] is True
+    assert pulled["resolve_time"] == 12
+    assert pulled["ordernum"] == 30
+    other = result.spec["event_types"][1]
+    for key in ("auto_resolve", "resolve_time", "ordernum"):
+        assert key not in other
     records = apply_spec(fake, parse_spec(result.spec))
     assert {r.action for r in records} == {"unchanged"}

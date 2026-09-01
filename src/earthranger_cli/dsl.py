@@ -25,6 +25,12 @@ SUPPORTED_TYPES = {
     "multiselect",
 }
 CHOICE_TYPES = {"select", "multiselect"}
+# EventType.default_priority vocabulary (das activity/constants.py)
+PRIORITY_BY_NAME = {"gray": 0, "green": 100, "amber": 200, "red": 300}
+PRIORITY_BY_VALUE = {v: k for k, v in PRIORITY_BY_NAME.items()}
+STATE_VALUES = ("new", "active", "resolved")
+# EventType.geometry_type (das GeometryTypesChoices); immutable once set in ER
+GEOMETRY_TYPES = {"point": "Point", "polygon": "Polygon"}
 NUMERIC_TYPES = {"integer", "number"}
 _SLUG_RE = re.compile(r"^[a-z0-9_]+$")
 # ER's own field-name rule (das FORM_ELEMENT_SEGMENT_PATTERN): stock event
@@ -46,6 +52,7 @@ class SpecError(Exception):
 class OptionSpec:
     value: str
     display: str
+    icon: str | None = None
 
 
 @dataclass
@@ -101,6 +108,13 @@ class EventTypeSpec:
     is_active: bool = True
     icon_id: str | None = None
     is_collection: bool = False
+    default_priority: int | None = None  # wire value; DSL accepts names too
+    geometry_type: str | None = None  # "Point" | "Polygon"; immutable once set in ER
+    auto_resolve: bool | None = None
+    resolve_time: int | None = None  # hours; pairs with auto_resolve
+    ordernum: int | None = None  # explicit display order (spec order is NOT positional here)
+    default_state: str | None = None
+    readonly: bool | None = None  # None = never sent; server value preserved
     layout: LayoutSpec = field(default_factory=LayoutSpec)
     sections: list[SectionSpec] | None = None
 
@@ -126,6 +140,8 @@ class CategorySpec:
 class Spec:
     category: CategorySpec
     event_types: list[EventTypeSpec]
+    # top-level shared choice sets: Choice.field name -> options
+    choices: dict[str, list[OptionSpec]] = field(default_factory=dict)
 
 
 def load_spec(path: str) -> Spec:
@@ -142,58 +158,83 @@ def parse_spec(data: object) -> Spec:
     if not isinstance(data, dict):
         raise SpecError(["spec must be a mapping with 'category' and 'event_types' keys"])
     category = _parse_category(data.get("category"), errors)
+    choice_sets = _parse_choice_sets(data.get("choices"), errors)
     event_types = _parse_event_types(data.get("event_types"), errors)
-    _check_choice_field_name_collisions(event_types, errors)
+    _check_choice_sets(choice_sets, event_types, errors)
     if errors:
         raise SpecError(errors)
-    return Spec(category=category, event_types=event_types)
+    return Spec(category=category, event_types=event_types, choices=choice_sets)
 
 
-def _check_choice_field_name_collisions(
-    event_types: list[EventTypeSpec], errors: list[str]
+def _parse_choice_sets(raw: object, errors: list[str]) -> dict[str, list[OptionSpec]]:
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        errors.append("choices: must be a mapping of choice-set name -> options list")
+        return {}
+    out: dict[str, list[OptionSpec]] = {}
+    for name, opts_raw in raw.items():
+        if not isinstance(name, str) or not CHOICES_FIELD_RE.match(name):
+            errors.append(
+                f"choices: set name {name!r} must match [A-Za-z0-9_-] and be at most 40 characters"
+            )
+            continue
+        out[name] = _parse_options(opts_raw, f"choices.{name}", errors)
+    return out
+
+
+def _check_choice_sets(
+    choice_sets: dict[str, list[OptionSpec]],
+    event_types: list[EventTypeSpec],
+    errors: list[str],
 ) -> None:
-    """Choice-list field names are derived from '<event_type>_<field_key>' (see
-    schema_gen.choice_field_name; ER's Choice.field column is varchar(40), so long
-    names are hash-compressed). Two distinct fields anywhere in the spec can still
-    produce the same name; that silently corrupts the server's choice set on apply,
-    so it's rejected here rather than at apply time — UNLESS the two fields
-    declare identical options, in which case sharing is presumably intentional
-    (an explicit choices_field naming another field's derived name, or two
-    explicit choices_field values naming the same set) and is allowed. Two
-    *implicit* (derived) names colliding is always rejected regardless of
-    options: that shape only arises by accident, never on purpose.
-    """
-    from .schema_gen import effective_choice_field  # local: schema_gen imports from dsl
+    """Choice-set coherence across the whole spec.
 
-    # name -> (path, explicit?, options) of the first field that produced it
-    seen: dict[str, tuple[str, bool, list]] = {}
+    Effective names (see schema_gen.effective_choice_field) must be unique
+    unless deliberately shared: referencing a top-level set, or explicit
+    choices_field declarations with identical inline options. Accidental
+    derived-name collisions still error — apply would corrupt the server's
+    choice set otherwise.
+    """
+    from .schema_gen import effective_choice_field  # local import: schema_gen imports from dsl
+
+    # name -> (path, kind: toplevel|explicit|derived, options)
+    seen: dict[str, tuple[str, str, list]] = {
+        name: (f"choices.{name}", "toplevel", opts) for name, opts in choice_sets.items()
+    }
     for i, et in enumerate(event_types):
         for j, f in enumerate(et.fields):
             if f.type not in CHOICE_TYPES or not f.key:
                 continue
             name = effective_choice_field(et.value, f)
-            path = f"event_types[{i}].fields[{j}].key"
-            explicit = f.choices_field is not None
+            path = f"event_types[{i}].fields[{j}]"
+            if f.options is None:
+                if name not in choice_sets:
+                    errors.append(
+                        f"{path}.choices_field: {name!r} references an undeclared "
+                        "top-level choice set"
+                    )
+                continue
             first = seen.get(name)
             if first is None:
-                seen[name] = (path, explicit, f.options or [])
+                kind = "explicit" if f.choices_field else "derived"
+                seen[name] = (f"{path}.key", kind, f.options)
                 continue
-            first_path, first_explicit, first_options = first
-            if not explicit and not first_explicit:
-                # Both names were derived, not chosen — an accidental
-                # derivation collision, not intentional sharing.
+            first_path, kind, first_options = first
+            if kind == "toplevel":
                 errors.append(
-                    f"{path}: choice field name {name!r} collides with {first_path} "
+                    f"{path}.options: choice set {name!r} is declared top-level; drop "
+                    "the inline options and reference it with choices_field"
+                )
+            elif kind == "derived" and f.choices_field is None:
+                errors.append(
+                    f"{path}.key: choice field name {name!r} collides with {first_path} "
                     "(choice-list field names are derived from '<event_type>_<field_key>' "
                     "and must be unique across the spec)"
                 )
-                continue
-            # At least one side is explicit: sharing is fine only when both
-            # sides carry the same options; otherwise apply would see-saw the
-            # shared set (each apply deactivating the other's options).
-            if (f.options or []) != first_options:
+            elif f.options != first_options:
                 errors.append(
-                    f"{path}: choice field name {name!r} is shared with {first_path} "
+                    f"{path}.key: choices_field {name!r} is shared with {first_path} "
                     "but the two fields declare different options; shared choice "
                     "sets must declare identical options"
                 )
@@ -269,6 +310,58 @@ def _parse_event_type(raw: object, path: str, errors: list[str]) -> EventTypeSpe
     if not isinstance(is_collection, bool):
         errors.append(f"{path}.is_collection: must be true or false")
         is_collection = False
+
+    default_priority = raw.get("default_priority")
+    if default_priority is not None:
+        if isinstance(default_priority, str) and default_priority in PRIORITY_BY_NAME:
+            default_priority = PRIORITY_BY_NAME[default_priority]
+        elif (
+            isinstance(default_priority, bool)
+            or not isinstance(default_priority, int)
+            or default_priority not in PRIORITY_BY_VALUE
+        ):
+            names = ", ".join(PRIORITY_BY_NAME)
+            values = ", ".join(str(v) for v in sorted(PRIORITY_BY_VALUE))
+            errors.append(f"{path}.default_priority: must be one of {names} (or {values})")
+            default_priority = None
+
+    default_state = raw.get("default_state")
+    if default_state is not None and default_state not in STATE_VALUES:
+        errors.append(f"{path}.default_state: must be one of {', '.join(STATE_VALUES)}")
+        default_state = None
+
+    readonly = raw.get("readonly")
+    if readonly is not None and not isinstance(readonly, bool):
+        errors.append(f"{path}.readonly: must be true or false")
+        readonly = None
+
+    auto_resolve = raw.get("auto_resolve")
+    if auto_resolve is not None and not isinstance(auto_resolve, bool):
+        errors.append(f"{path}.auto_resolve: must be true or false")
+        auto_resolve = None
+    resolve_time = raw.get("resolve_time")
+    if resolve_time is not None and (
+        isinstance(resolve_time, bool) or not isinstance(resolve_time, int) or resolve_time <= 0
+    ):
+        errors.append(f"{path}.resolve_time: must be a positive integer (hours)")
+        resolve_time = None
+    if auto_resolve is True and resolve_time is None:
+        errors.append(
+            f"{path}.auto_resolve: true requires resolve_time (hours) — without it "
+            "ER stores the flag but never auto-resolves anything"
+        )
+    ordernum = raw.get("ordernum")
+    if ordernum is not None and (isinstance(ordernum, bool) or not isinstance(ordernum, int)):
+        errors.append(f"{path}.ordernum: must be an integer")
+        ordernum = None
+
+    geometry_type = raw.get("geometry_type")
+    if geometry_type is not None:
+        if isinstance(geometry_type, str) and geometry_type.lower() in GEOMETRY_TYPES:
+            geometry_type = GEOMETRY_TYPES[geometry_type.lower()]
+        else:
+            errors.append(f"{path}.geometry_type: must be one of {', '.join(GEOMETRY_TYPES)}")
+            geometry_type = None
     icon_id = raw.get("icon_id")
     if icon_id is not None and not isinstance(icon_id, str):
         errors.append(f"{path}.icon_id: must be a string")
@@ -286,6 +379,13 @@ def _parse_event_type(raw: object, path: str, errors: list[str]) -> EventTypeSpe
         is_active=is_active,
         icon_id=icon_id,
         is_collection=is_collection,
+        default_priority=default_priority,
+        default_state=default_state,
+        readonly=readonly,
+        geometry_type=geometry_type,
+        auto_resolve=auto_resolve,
+        resolve_time=resolve_time,
+        ordernum=ordernum,
         layout=layout,
         sections=sections,
     )
@@ -362,7 +462,10 @@ def _parse_field(raw: object, path: str, errors: list[str]) -> FieldSpec:
 
     options: list[OptionSpec] | None = None
     if ftype in CHOICE_TYPES:
-        options = _parse_options(raw.get("options"), f"{path}.options", errors)
+        if raw.get("options") is None and raw.get("choices_field") is not None:
+            options = None  # references a top-level choice set (validated spec-wide)
+        else:
+            options = _parse_options(raw.get("options"), f"{path}.options", errors)
     elif raw.get("options") is not None:
         errors.append(f"{path}.options: not allowed for type {ftype!r}")
 
@@ -466,6 +569,7 @@ def _parse_options(raw: object, path: str, errors: list[str]) -> list[OptionSpec
 
 
 def _parse_option(item: object, path: str, errors: list[str]) -> OptionSpec | None:
+    icon = None
     if isinstance(item, str):
         value, display = item, item.replace("_", " ").title()
     elif isinstance(item, dict):
@@ -474,12 +578,16 @@ def _parse_option(item: object, path: str, errors: list[str]) -> OptionSpec | No
         if not isinstance(value, str) or not value or not isinstance(display, str) or not display:
             errors.append(f"{path}: option mapping needs 'value' and 'display' strings")
             return None
+        icon = item.get("icon")
+        if icon is not None and not isinstance(icon, str):
+            errors.append(f"{path}.icon: must be a string")
+            icon = None
     else:
         errors.append(f"{path}: option must be a string or a value/display mapping")
         return None
     # Option values are free text on ER (Choice.value is an unconstrained
     # varchar(100), truncated at generation time); no slug rule here.
-    return OptionSpec(value=value, display=display)
+    return OptionSpec(value=value, display=display, icon=icon)
 
 
 def _required_str(val: object, path: str, errors: list[str]) -> str:

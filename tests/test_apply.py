@@ -54,6 +54,7 @@ def _existing_state():
                     "value": "elephant",
                     "display": "Elephant",
                     "is_active": True,
+                    "ordernum": 0,
                 },
             ]
         },
@@ -212,3 +213,72 @@ def test_is_collection_change_triggers_update():
     apply_spec(fake, spec)
     patched = next(c for c in fake.calls if c[0] == "patch_event_type")
     assert patched[1]["is_collection"] is True
+
+
+def test_declared_defaults_trigger_update_undeclared_ignored():
+    fake = _existing_state()
+    fake.event_types[0]["default_priority"] = 300  # server nondefault, spec silent
+    fake.event_types[0]["default_state"] = "active"
+    fake.event_types[0]["readonly"] = True
+    records = apply_spec(fake, _spec())
+    assert {r.action for r in records} == {"unchanged"}
+
+    spec = _spec()
+    spec.event_types[0].default_priority = 200
+    spec.event_types[0].readonly = False
+    apply_spec(fake, spec)
+    patched = next(c for c in fake.calls if c[0] == "patch_event_type")
+    assert patched[1]["default_priority"] == 200
+    assert patched[1]["readonly"] is False
+
+
+def test_geometry_type_immutable():
+    from earthranger_cli.apply import ApplyError
+
+    fake = _existing_state()
+    fake.event_types[0]["geometry_type"] = "Point"
+    spec = _spec()
+    spec.event_types[0].geometry_type = "Polygon"
+    with pytest.raises(ApplyError) as exc:
+        apply_spec(fake, spec)
+    assert "geometry_type" in str(exc.value)
+    assert "'Point'" in str(exc.value) and "'Polygon'" in str(exc.value)
+    assert fake.writes() == []
+
+    # matching declaration is not a diff; undeclared is ignored
+    spec.event_types[0].geometry_type = "Point"
+    records = apply_spec(fake, spec)
+    assert {r.action for r in records} == {"unchanged"}
+    fake.event_types[0]["geometry_type"] = "Polygon"
+    records = apply_spec(fake, _spec())
+    assert {r.action for r in records} == {"unchanged"}
+
+
+def test_geometry_type_sent_on_create():
+    fake = FakeER()
+    spec = _spec()
+    spec.event_types[0].geometry_type = "Polygon"
+    apply_spec(fake, spec)
+    posted = next(c for c in fake.calls if c[0] == "post_event_type")
+    assert posted[1]["geometry_type"] == "Polygon"
+
+
+def test_auto_resolve_and_ordernum_diffed_only_when_declared():
+    fake = _existing_state()
+    fake.event_types[0]["auto_resolve"] = True
+    fake.event_types[0]["resolve_time"] = 24.0  # serializer returns floats
+    fake.event_types[0]["ordernum"] = 30.0
+    records = apply_spec(fake, _spec())  # spec silent -> untouched
+    assert {r.action for r in records} == {"unchanged"}
+
+    spec = _spec()
+    spec.event_types[0].auto_resolve = True
+    spec.event_types[0].resolve_time = 24
+    spec.event_types[0].ordernum = 30
+    records = apply_spec(fake, spec)  # float/int equality -> still unchanged
+    assert {r.action for r in records} == {"unchanged"}
+
+    spec.event_types[0].resolve_time = 12
+    apply_spec(fake, spec)
+    patched = next(c for c in fake.calls if c[0] == "patch_event_type")
+    assert patched[1]["resolve_time"] == 12

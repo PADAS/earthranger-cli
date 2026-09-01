@@ -169,4 +169,19 @@ def build_event_type_payload(et: EventTypeSpec, category_value: str) -> dict:
         payload["icon"] = et.icon_id
     if et.is_collection:
         payload["is_collection"] = True
+    # sent only when declared: creates get server defaults, patches preserve
+    if et.default_priority is not None:
+        payload["default_priority"] = et.default_priority
+    if et.default_state is not None:
+        payload["default_state"] = et.default_state
+    if et.readonly is not None:
+        payload["readonly"] = et.readonly
+    if et.geometry_type is not None:
+        payload["geometry_type"] = et.geometry_type
+    if et.auto_resolve is not None:
+        payload["auto_resolve"] = et.auto_resolve
+    if et.resolve_time is not None:
+        payload["resolve_time"] = et.resolve_time
+    if et.ordernum is not None:
+        payload["ordernum"] = et.ordernum
     return payload
