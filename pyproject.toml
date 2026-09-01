@@ -1,5 +1,5 @@
 [project]
-name = "er-events-cli"
+name = "earthranger-cli"
 version = "0.1.0"
 description = "CLI for creating and editing EarthRanger event categories, choices, and v2 event types, and posting events."
 requires-python = ">=3.11"

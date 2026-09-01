@@ -1,4 +1,4 @@
-# er-events-cli
+# earthranger-cli
 
 A command-line utility for creating and **editing** EarthRanger event
 categories, choices, and v2 event types — and posting events — directly

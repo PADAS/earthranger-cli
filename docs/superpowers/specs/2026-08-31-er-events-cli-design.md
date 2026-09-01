@@ -1,11 +1,11 @@
-# er-events-cli — Design
+# earthranger-cli (né er-events-cli) — Design
 
 Date: 2026-08-31
 Status: Approved design, pre-implementation
 
 ## Overview
 
-`er-events-cli` is a standalone command-line utility for creating and
+`earthranger-cli` (console script `er`) is a standalone command-line utility for creating and
 editing EarthRanger event categories, choices, event types (v2 schemas),
 and for posting events — operating directly against the EarthRanger API,
 authenticated with a username and password.
