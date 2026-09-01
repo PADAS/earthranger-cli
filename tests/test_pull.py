@@ -672,3 +672,58 @@ def test_pull_nested_collection_refused_by_name():
     ui["Demo1"]["leftColumn"].append("Demo1.inner")
     result = pull_category(fake, "wm")
     assert any("Demo1" in w and "inner" in w for w in result.unsupported)
+
+
+def test_pull_preserves_collection_right_column_order():
+    # Copilot r3909054870: sorted(right) reordered intentionally ordered columns
+    import copy
+
+    spec_data = copy.deepcopy(COLLECTION_SPEC)
+    coll = spec_data["event_types"][0]["fields"][1]
+    coll["columns"] = 2
+    coll["fields"] = [
+        {"key": "left_1", "label": "L1", "type": "string"},
+        {"key": "z_right", "label": "Z", "type": "string", "column": "right"},
+        {"key": "a_right", "label": "A", "type": "string", "column": "right"},
+    ]
+    coll["required"] = []
+    fake = _server_from_spec(spec_data)
+    result = pull_category(fake, "wm")
+    assert result.unsupported == []
+    pulled_coll = next(
+        f for f in result.spec["event_types"][0]["fields"] if f["key"] == "Demo1"
+    )
+    assert [s["key"] for s in pulled_coll["fields"]] == ["left_1", "z_right", "a_right"]
+    records = apply_spec(fake, parse_spec(result.spec))
+    assert {r.action for r in records} == {"unchanged"}
+
+
+def test_pull_refuses_mismatched_conditional_predicate():
+    # Copilot suppressed pull.py:243: json if-branch must match the UI condition
+    fake = _server_from_spec(CONDITIONAL_SPEC)
+    block = fake.event_types[0]["schema"]["json"]["allOf"][0]
+    block["if"]["allOf"][0]["properties"]["cause"]["anyOf"][-1]["const"] = "natural"
+    result = pull_category(fake, "wm")
+    assert any(
+        "fire" in w and "does not match its UI condition" in w for w in result.unsupported
+    )
+    assert "fire" not in [t["value"] for t in result.spec["event_types"]]
+
+
+def test_pull_drops_conditional_section_when_controller_skipped():
+    # Copilot suppressed pull.py:180: a condition referencing a skipped field
+    # must not produce an unparseable spec
+    fake = _server_from_spec(CONDITIONAL_SPEC)
+    schema = fake.event_types[0]["schema"]
+    # make the controlling field unsupported (pattern validation)
+    schema["json"]["properties"]["cause"]["pattern"] = "^[a-zA-Z0-9]+$"
+    del schema["json"]["properties"]["cause"]["anyOf"]
+    schema["ui"]["fields"]["cause"] = {
+        "type": "TEXT", "inputType": "SHORT_TEXT", "parent": "section-1",
+        "conditionalDependents": ["section-2"],
+    }
+    result = pull_category(fake, "wm")
+    assert any("controlling field" in w and "cause" in w for w in result.unsupported)
+    pulled = next(t for t in result.spec["event_types"] if t["value"] == "fire")
+    parse_spec(result.spec)  # the pulled spec must still parse
+    assert all("condition" not in s for s in pulled.get("sections", []))

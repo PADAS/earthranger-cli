@@ -650,7 +650,7 @@ def _parse_field(raw: object, path: str, errors: list[str]) -> FieldSpec:
                 errors.append(f"{path}.required: {r!r} is not a declared sub-field key")
         sub_required = [r for r in sub_required_raw if r in sub_keys]
     else:
-        for name in ("item_name", "button_text", "item_identifier"):
+        for name in ("item_name", "button_text", "item_identifier", "columns", "required"):
             if raw.get(name) is not None:
                 errors.append(f"{path}.{name}: only allowed on collection fields")
         if raw.get("fields") is not None:

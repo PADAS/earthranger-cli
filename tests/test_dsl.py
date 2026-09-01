@@ -1024,3 +1024,15 @@ def test_collection_validation():
     data["fields"][1]["key"] = "text_1"
     errors = _errors_for(_spec_with_field(data))
     assert any("duplicate key 'text_1'" in e for e in errors)
+
+
+def test_collection_only_keys_rejected_on_scalar_fields():
+    # Copilot r3909054834: columns/required were silently ignored on scalars
+    errors = _errors_for(
+        _spec_with_field({"key": "n", "label": "N", "type": "string", "required": ["x"]})
+    )
+    assert any("required: only allowed on collection fields" in e for e in errors)
+    errors = _errors_for(
+        _spec_with_field({"key": "n", "label": "N", "type": "string", "columns": 2})
+    )
+    assert any("columns: only allowed on collection fields" in e for e in errors)

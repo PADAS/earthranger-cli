@@ -18,7 +18,7 @@ import yaml
 from . import client as er
 from .choices import choice_sort_key
 from .dsl import CHOICES_FIELD_RE, PRIORITY_BY_VALUE
-from .schema_gen import choice_field_name
+from .schema_gen import _encode_is_exactly, choice_field_name
 
 _REF_FIELD_RE = re.compile(r"choices\.json\?field=([^&\"']+)$")
 # JSON Schema format -> DSL: uri gets its own field type, the rest are formats.
@@ -181,6 +181,16 @@ def _invert_event_type(client, et: dict, unsupported: list[str]) -> dict | None:
         sec_out["fields"] = sec_fields
         out_sections.append(sec_out)
 
+    for sec_out in out_sections:
+        cond = sec_out.get("condition")
+        if cond and cond.get("field") not in kept_keys:
+            unsupported.append(
+                f"event type {value!r}: conditional section {sec_out.get('label')!r} "
+                f"references controlling field {cond.get('field')!r}, which was "
+                "skipped; condition dropped"
+            )
+            del sec_out["condition"]
+
     if not out_sections:
         unsupported.append(f"event type {value!r}: no fields could be expressed; skipped entirely")
         return None
@@ -240,7 +250,7 @@ def _read_sections(json_block, ui_block, properties, ui_fields):
         then = block.get("then") or {}
         if not isinstance(sid, str) or not isinstance(then.get("properties"), dict):
             return "layout uses a conditional block the DSL cannot express"
-        branches[sid] = then
+        branches[sid] = {**then, "_if": block.get("if")}
 
     out: list[dict] = []
     all_keys: list[str] = []
@@ -259,6 +269,12 @@ def _read_sections(json_block, ui_block, properties, ui_fields):
                 )
             if sid not in branches:
                 return f"layout section {sid!r} has a condition but no allOf branch"
+            expected_if = _encode_is_exactly(cond.get("field"), cond.get("value"))
+            if branches[sid].get("_if") != expected_if:
+                return (
+                    f"layout section {sid!r} conditional branch does not match its "
+                    "UI condition"
+                )
             condition = {
                 "field": cond.get("field"),
                 "operator": "is_exactly",
@@ -366,10 +382,11 @@ def _invert_collection(client, key, json_prop, ui_field, all_ui_fields, out):
     if not props:
         return None, "collection has no sub-fields"
     left = list(ui_field.get("leftColumn") or [])
-    right = set(ui_field.get("rightColumn") or [])
+    right = list(ui_field.get("rightColumn") or [])
+    right_set = set(right)
     sub_fields: list[dict] = []
     seen: set[str] = set()
-    for dotted in left + sorted(right):
+    for dotted in left + right:
         sub_key = dotted.split(".", 1)[1] if "." in dotted else dotted
         seen.add(sub_key)
         sub_json = props.get(sub_key)
@@ -384,7 +401,7 @@ def _invert_collection(client, key, json_prop, ui_field, all_ui_fields, out):
         sub, reason = _invert_field(client, "", sub_key, sub_json, sub_ui, all_ui_fields)
         if sub is None:
             return None, f"collection sub-field {sub_key!r}: {reason}"
-        if dotted in right:
+        if dotted in right_set:
             sub["column"] = "right"
         sub_fields.append(sub)
     if seen != set(props):
