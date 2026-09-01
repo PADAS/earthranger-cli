@@ -54,13 +54,21 @@ def plan_field_choices(existing: list[dict], desired: list[dict]) -> list[Choice
     ops: list[ChoiceOp] = []
     existing_by_value = {c["value"]: c for c in existing}
     desired_values = {d["value"] for d in desired}
+    # When the visible (active, display-ordered) sequence already matches the
+    # spec and every active record has an ordernum, leave the server's
+    # numbering alone: renumbering would be a write with no visible effect
+    # (e.g. stock 10/20/30 gaps, or gaps left by deactivated records).
+    active = [c for c in existing if c.get("is_active", True)]
+    order_settled = [c["value"] for c in sorted(active, key=choice_sort_key)] == [
+        d["value"] for d in desired
+    ] and all(c.get("ordernum") is not None for c in active)
     for want in desired:
         have = existing_by_value.get(want["value"])
         if have is None:
             ops.append(ChoiceOp(action="create", value=want["value"], payload=want))
-        elif _differs(have, want):
+        elif _differs(have, want, order_settled):
             payload = {"display": want["display"], "is_active": True}
-            if have.get("ordernum") != want.get("ordernum"):
+            if not order_settled and have.get("ordernum") != want.get("ordernum"):
                 payload["ordernum"] = want.get("ordernum")
             if (have.get("icon") or None) != (want.get("icon") or None):
                 payload["icon"] = want.get("icon")
@@ -93,10 +101,10 @@ def choice_sort_key(record: dict):
     return (num is None, num if num is not None else 0, record.get("value") or "")
 
 
-def _differs(have: dict, want: dict) -> bool:
+def _differs(have: dict, want: dict, order_settled: bool) -> bool:
     return (
         have.get("display") != want["display"]
         or not have.get("is_active", True)
-        or have.get("ordernum") != want.get("ordernum")
+        or (not order_settled and have.get("ordernum") != want.get("ordernum"))
         or (have.get("icon") or None) != (want.get("icon") or None)
     )

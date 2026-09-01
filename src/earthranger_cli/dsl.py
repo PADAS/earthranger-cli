@@ -309,7 +309,11 @@ def _parse_event_type(raw: object, path: str, errors: list[str]) -> EventTypeSpe
     if default_priority is not None:
         if isinstance(default_priority, str) and default_priority in PRIORITY_BY_NAME:
             default_priority = PRIORITY_BY_NAME[default_priority]
-        elif isinstance(default_priority, bool) or default_priority not in PRIORITY_BY_VALUE:
+        elif (
+            isinstance(default_priority, bool)
+            or not isinstance(default_priority, int)
+            or default_priority not in PRIORITY_BY_VALUE
+        ):
             names = ", ".join(PRIORITY_BY_NAME)
             values = ", ".join(str(v) for v in sorted(PRIORITY_BY_VALUE))
             errors.append(f"{path}.default_priority: must be one of {names} (or {values})")

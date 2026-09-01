@@ -168,8 +168,32 @@ exactly this). Category and event-type values must match
 Select/multiselect fields take an optional `choices_field` naming the
 exact ER Choice set to use, overriding the derived
 `<event_type>_<field_key>` name — needed for stock event types whose
-choice sets predate this tool, and for deliberately sharing one choice
-set between fields (allowed only when both declare identical options).
+choice sets predate this tool. To share one set across fields, declare
+it once at the top level and reference it — the fields then omit
+`options` entirely (inline-declared sharing also works when every
+sharing field carries identical options):
+
+```yaml
+choices:
+  shared_actions:
+    - {value: stopped, display: Halted}
+    - {value: warned, display: Warned, icon: warn_icon}
+
+event_types:
+  - value: t1
+    fields:
+      - {key: action, label: Action, type: select, choices_field: shared_actions}
+  - value: t2
+    fields:
+      - {key: response, label: Response, type: multiselect, choices_field: shared_actions}
+```
+
+Options may carry an `icon`, and their spec order is the dropdown
+order: apply writes `ordernum` from spec position **only when the
+visible order actually differs** (a set whose active options already
+appear in spec order keeps its existing numbering — stock 10/20/30
+gaps and holes left by deactivated records are left alone). A set with
+missing ordernums gets numbered on first apply.
 
 Per event type an optional `layout: {label, columns}` (default
 `{label: Details, columns: 1}`) controls the form section; with

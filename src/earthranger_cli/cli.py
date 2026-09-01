@@ -495,7 +495,7 @@ def choices_group():
 @click.pass_context
 @_api_errors
 def choices_list(ctx):
-    """List choice fields with option counts; flags sets no v2 schema references."""
+    """List choice fields with option counts; flags sets with no v2 schema references."""
     client = _connect(ctx)
     by_field: dict = {}
     for r in er.get_all_choices(client):

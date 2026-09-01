@@ -823,3 +823,14 @@ def test_event_type_defaults_validation():
     data["event_types"][0]["readonly"] = "yes"
     errors = _errors_for(data)
     assert any("readonly: must be true or false" in e for e in errors)
+
+
+def test_default_priority_rejects_non_integer_values():
+    # unhashable values must produce SpecError, not TypeError (Copilot r3908440534)
+    data = _spec_with_field({"key": "n", "label": "N", "type": "string"})
+    data["event_types"][0]["default_priority"] = []
+    errors = _errors_for(data)
+    assert any("default_priority" in e for e in errors)
+    data["event_types"][0]["default_priority"] = 100.0
+    errors = _errors_for(data)
+    assert any("default_priority" in e for e in errors)

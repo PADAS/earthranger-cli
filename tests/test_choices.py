@@ -213,3 +213,91 @@ def test_plan_null_ordernum_converges():
     ops = plan_field_choices(existing, desired)
     assert ops[0].action == "update"
     assert ops[0].payload["ordernum"] == 0
+
+
+def test_settled_order_with_inactive_gaps_is_unchanged():
+    # active A@0, B@2 around inactive X@1: visible order already matches the
+    # spec, so no ordernum churn (Copilot r3908440597)
+    desired = [
+        {
+            "model": "activity.event",
+            "field": "f",
+            "value": "a",
+            "display": "A",
+            "is_active": True,
+            "ordernum": 0,
+        },
+        {
+            "model": "activity.event",
+            "field": "f",
+            "value": "b",
+            "display": "B",
+            "is_active": True,
+            "ordernum": 1,
+        },
+    ]
+    existing = [
+        {"id": "1", "value": "a", "display": "A", "is_active": True, "ordernum": 0},
+        {"id": "x", "value": "x", "display": "X", "is_active": False, "ordernum": 1},
+        {"id": "2", "value": "b", "display": "B", "is_active": True, "ordernum": 2},
+    ]
+    ops = plan_field_choices(existing, desired)
+    assert [op.action for op in ops] == ["unchanged", "unchanged"]
+
+
+def test_reorder_still_renumbers():
+    desired = [
+        {
+            "model": "activity.event",
+            "field": "f",
+            "value": "b",
+            "display": "B",
+            "is_active": True,
+            "ordernum": 0,
+        },
+        {
+            "model": "activity.event",
+            "field": "f",
+            "value": "a",
+            "display": "A",
+            "is_active": True,
+            "ordernum": 1,
+        },
+    ]
+    existing = [
+        {"id": "1", "value": "a", "display": "A", "is_active": True, "ordernum": 0},
+        {"id": "2", "value": "b", "display": "B", "is_active": True, "ordernum": 1},
+    ]
+    ops = plan_field_choices(existing, desired)
+    assert {(op.value, op.action) for op in ops} == {("a", "update"), ("b", "update")}
+    by_value = {op.value: op for op in ops if op.payload}
+    assert by_value["b"].payload["ordernum"] == 0
+    assert by_value["a"].payload["ordernum"] == 1
+
+
+def test_gapped_but_matching_order_is_unchanged():
+    # stock sets use 10/20/30; matching visible order must not renumber
+    desired = [
+        {
+            "model": "activity.event",
+            "field": "f",
+            "value": "a",
+            "display": "A",
+            "is_active": True,
+            "ordernum": 0,
+        },
+        {
+            "model": "activity.event",
+            "field": "f",
+            "value": "b",
+            "display": "B",
+            "is_active": True,
+            "ordernum": 1,
+        },
+    ]
+    existing = [
+        {"id": "1", "value": "a", "display": "A", "is_active": True, "ordernum": 10},
+        {"id": "2", "value": "b", "display": "B", "is_active": True, "ordernum": 20},
+    ]
+    ops = plan_field_choices(existing, desired)
+    assert [op.action for op in ops] == ["unchanged", "unchanged"]
