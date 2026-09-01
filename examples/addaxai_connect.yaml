@@ -8,11 +8,7 @@ event_types:
   fields:
   - key: addaxai_connect_species
     label: Species
-    type: select
-    options:
-    - elephant
-    - giraffe
-    - lion
+    type: string
   - key: addaxai_connect_scientific_name
     label: Scientific Name
     type: string
@@ -40,3 +36,25 @@ event_types:
     type: url
   required:
   - addaxai_connect_species
+- value: addaxai_connect_camera_alert
+  display: AddaxAI Connect Camera Alert
+  icon_id: cameratrap_rep
+  fields:
+  - key: addaxai_connect_alert
+    label: Alert
+    type: string
+  - key: addaxai_connect_summary
+    label: Summary
+    type: textarea
+  - key: addaxai_connect_camera_id
+    label: AddaxAI Connect Camera ID
+    type: string
+  - key: addaxai_connect_site_name
+    label: AddaxAI Connect Site Name
+    type: string
+  - key: addaxai_connect_link
+    label: AddaxAI Connect Link
+    type: url
+  required:
+  - addaxai_connect_alert
+  - addaxai_connect_camera_id

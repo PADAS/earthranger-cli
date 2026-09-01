@@ -213,3 +213,20 @@ def test_is_collection_change_triggers_update():
     apply_spec(fake, spec)
     patched = next(c for c in fake.calls if c[0] == "patch_event_type")
     assert patched[1]["is_collection"] is True
+
+
+def test_declared_defaults_trigger_update_undeclared_ignored():
+    fake = _existing_state()
+    fake.event_types[0]["default_priority"] = 300  # server nondefault, spec silent
+    fake.event_types[0]["default_state"] = "active"
+    fake.event_types[0]["readonly"] = True
+    records = apply_spec(fake, _spec())
+    assert {r.action for r in records} == {"unchanged"}
+
+    spec = _spec()
+    spec.event_types[0].default_priority = 200
+    spec.event_types[0].readonly = False
+    apply_spec(fake, spec)
+    patched = next(c for c in fake.calls if c[0] == "patch_event_type")
+    assert patched[1]["default_priority"] == 200
+    assert patched[1]["readonly"] is False

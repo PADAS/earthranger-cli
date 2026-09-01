@@ -25,6 +25,10 @@ SUPPORTED_TYPES = {
     "multiselect",
 }
 CHOICE_TYPES = {"select", "multiselect"}
+# EventType.default_priority vocabulary (das activity/constants.py)
+PRIORITY_BY_NAME = {"gray": 0, "green": 100, "amber": 200, "red": 300}
+PRIORITY_BY_VALUE = {v: k for k, v in PRIORITY_BY_NAME.items()}
+STATE_VALUES = ("new", "active", "resolved")
 NUMERIC_TYPES = {"integer", "number"}
 _SLUG_RE = re.compile(r"^[a-z0-9_]+$")
 # ER's own field-name rule (das FORM_ELEMENT_SEGMENT_PATTERN): stock event
@@ -102,6 +106,9 @@ class EventTypeSpec:
     is_active: bool = True
     icon_id: str | None = None
     is_collection: bool = False
+    default_priority: int | None = None  # wire value; DSL accepts names too
+    default_state: str | None = None
+    readonly: bool | None = None  # None = never sent; server value preserved
     layout: LayoutSpec = field(default_factory=LayoutSpec)
     sections: list[SectionSpec] | None = None
 
@@ -297,6 +304,26 @@ def _parse_event_type(raw: object, path: str, errors: list[str]) -> EventTypeSpe
     if not isinstance(is_collection, bool):
         errors.append(f"{path}.is_collection: must be true or false")
         is_collection = False
+
+    default_priority = raw.get("default_priority")
+    if default_priority is not None:
+        if isinstance(default_priority, str) and default_priority in PRIORITY_BY_NAME:
+            default_priority = PRIORITY_BY_NAME[default_priority]
+        elif isinstance(default_priority, bool) or default_priority not in PRIORITY_BY_VALUE:
+            names = ", ".join(PRIORITY_BY_NAME)
+            values = ", ".join(str(v) for v in sorted(PRIORITY_BY_VALUE))
+            errors.append(f"{path}.default_priority: must be one of {names} (or {values})")
+            default_priority = None
+
+    default_state = raw.get("default_state")
+    if default_state is not None and default_state not in STATE_VALUES:
+        errors.append(f"{path}.default_state: must be one of {', '.join(STATE_VALUES)}")
+        default_state = None
+
+    readonly = raw.get("readonly")
+    if readonly is not None and not isinstance(readonly, bool):
+        errors.append(f"{path}.readonly: must be true or false")
+        readonly = None
     icon_id = raw.get("icon_id")
     if icon_id is not None and not isinstance(icon_id, str):
         errors.append(f"{path}.icon_id: must be a string")
@@ -314,6 +341,9 @@ def _parse_event_type(raw: object, path: str, errors: list[str]) -> EventTypeSpe
         is_active=is_active,
         icon_id=icon_id,
         is_collection=is_collection,
+        default_priority=default_priority,
+        default_state=default_state,
+        readonly=readonly,
         layout=layout,
         sections=sections,
     )

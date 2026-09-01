@@ -438,3 +438,22 @@ def test_pull_orders_options_by_ordernum():
     assert values == ["lion_cub", "elephant"]
     records = apply_spec(fake, parse_spec(result.spec))
     assert {r.action for r in records} == {"unchanged"}
+
+
+def test_pull_emits_nondefault_state_priority_readonly():
+    fake = _server_from_spec(SPEC_DATA)
+    et = fake.event_types[0]
+    et["default_priority"] = 200
+    et["default_state"] = "active"
+    et["readonly"] = True
+    fake.event_types[1]["default_priority"] = 0  # defaults stay omitted
+    result = pull_category(fake, "wm")
+    pulled = result.spec["event_types"][0]
+    assert pulled["default_priority"] == "amber"
+    assert pulled["default_state"] == "active"
+    assert pulled["readonly"] is True
+    other = result.spec["event_types"][1]
+    for key in ("default_priority", "default_state", "readonly"):
+        assert key not in other
+    records = apply_spec(fake, parse_spec(result.spec))
+    assert {r.action for r in records} == {"unchanged"}

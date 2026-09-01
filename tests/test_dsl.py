@@ -788,3 +788,38 @@ def test_option_icon_validation():
         )
     )
     assert any("icon: must be a string" in e for e in errors)
+
+
+def test_event_type_defaults_and_readonly_parse():
+    data = _spec_with_field({"key": "n", "label": "N", "type": "string"})
+    et = data["event_types"][0]
+    et["default_priority"] = "amber"
+    et["default_state"] = "active"
+    et["readonly"] = True
+    spec = parse_spec(data)
+    parsed = spec.event_types[0]
+    assert parsed.default_priority == 200
+    assert parsed.default_state == "active"
+    assert parsed.readonly is True
+
+    data["event_types"][0]["default_priority"] = 300
+    assert parse_spec(data).event_types[0].default_priority == 300
+
+
+def test_event_type_defaults_validation():
+    data = _spec_with_field({"key": "n", "label": "N", "type": "string"})
+    data["event_types"][0]["default_priority"] = "purple"
+    errors = _errors_for(data)
+    assert any("default_priority" in e and "gray, green, amber, red" in e for e in errors)
+    data = _spec_with_field({"key": "n", "label": "N", "type": "string"})
+    data["event_types"][0]["default_priority"] = 150
+    errors = _errors_for(data)
+    assert any("default_priority" in e for e in errors)
+    data = _spec_with_field({"key": "n", "label": "N", "type": "string"})
+    data["event_types"][0]["default_state"] = "closed"
+    errors = _errors_for(data)
+    assert any("default_state" in e and "new, active, resolved" in e for e in errors)
+    data = _spec_with_field({"key": "n", "label": "N", "type": "string"})
+    data["event_types"][0]["readonly"] = "yes"
+    errors = _errors_for(data)
+    assert any("readonly: must be true or false" in e for e in errors)

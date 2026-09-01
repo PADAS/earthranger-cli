@@ -193,9 +193,14 @@ A form-less event type (e.g. an incident collection container) is
 declared with an explicit `fields: []` and, for collections,
 `is_collection: true`.
 
-Per event type: `value`, `display`, `fields` (required);
-`required`, `is_active`, `icon_id` (optional; sent to ER as its writable
-`icon` field — the API's own `icon_id` is a derived, read-only property).
+Per event type: `value`, `display`, `fields` (required); optional:
+`required`, `is_active`, `icon_id` (sent to ER as its writable `icon`
+field — the API's own `icon_id` is a derived, read-only property),
+`default_priority` (`gray|green|amber|red` or `0|100|200|300`),
+`default_state` (`new|active|resolved`), and `readonly` (makes the whole
+event type read-only in ER — v2 schemas have no per-field read-only).
+The last three are sent only when declared: omitted keys leave the
+server's values untouched.
 
 ### What apply owns
 

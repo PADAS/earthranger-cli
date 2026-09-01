@@ -17,7 +17,7 @@ import yaml
 
 from . import client as er
 from .choices import choice_sort_key
-from .dsl import CHOICES_FIELD_RE
+from .dsl import CHOICES_FIELD_RE, PRIORITY_BY_VALUE
 from .schema_gen import choice_field_name
 
 _REF_FIELD_RE = re.compile(r"choices\.json\?field=([^&\"']+)$")
@@ -135,6 +135,7 @@ def _invert_event_type(client, et: dict, unsupported: list[str]) -> dict | None:
             out["icon_id"] = et["icon"]
         if et.get("is_collection"):
             out["is_collection"] = True
+        _copy_type_defaults(et, out)
         out["fields"] = []
         return out
 
@@ -182,6 +183,7 @@ def _invert_event_type(client, et: dict, unsupported: list[str]) -> dict | None:
         out["icon_id"] = et["icon"]
     if et.get("is_collection"):
         out["is_collection"] = True
+    _copy_type_defaults(et, out)
     if len(out_sections) == 1:
         single = out_sections[0]
         layout = {
@@ -338,3 +340,16 @@ def _copy_extras(json_prop: dict, ui_field: dict, out: dict) -> None:
         out["description"] = json_prop["description"]
     if "default" in json_prop:
         out["default"] = json_prop["default"]
+
+
+def _copy_type_defaults(et: dict, out: dict) -> None:
+    """Emit default_priority/default_state/readonly only when non-default, so
+    minimal specs stay minimal and omitted keys keep preserving server values."""
+    pri = et.get("default_priority")
+    if pri:
+        out["default_priority"] = PRIORITY_BY_VALUE.get(pri, pri)
+    state = et.get("default_state")
+    if state and state != "new":
+        out["default_state"] = state
+    if et.get("readonly"):
+        out["readonly"] = True
