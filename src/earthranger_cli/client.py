@@ -60,7 +60,20 @@ def get_choices(client, field_name: str) -> list[dict]:
         if "is not one of the available choices" in str(e):
             return []
         raise
+    return _collect_pages(client, page)
 
+
+def get_all_choices(client) -> list[dict]:
+    """All Choice records on model=activity.event, every field, inactive included."""
+    page = client._get(
+        CHOICES_PATH,
+        params={"model": CHOICE_MODEL, "include_inactive": True, "page_size": 200},
+        max_retries=0,
+    )
+    return _collect_pages(client, page)
+
+
+def _collect_pages(client, page) -> list[dict]:
     results: list[dict] = []
     while True:
         if isinstance(page, dict) and "results" in page:

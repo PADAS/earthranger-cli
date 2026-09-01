@@ -651,3 +651,73 @@ def test_trailing_flags_override_globals(monkeypatch):
     result = _run(["--profile", "sandbox", "events", "list", "categories", "--profile", "prod"])
     assert result.exit_code == 0
     assert seen["server"] == "myreserve"
+
+
+def _seed_choice_sets(fake):
+    schema = {
+        "json": {
+            "properties": {
+                "species": {"anyOf": [{"$ref": "/api/v2.0/schemas/choices.json?field=s_species"}]}
+            }
+        }
+    }
+    fake.event_types = [{"value": "s", "display": "S", "category": "wm", "schema": schema}]
+    fake.choices = {
+        "s_species": [
+            {
+                "id": "1",
+                "field": "s_species",
+                "value": "b_lion",
+                "display": "Lion",
+                "is_active": True,
+                "ordernum": 1,
+            },
+            {
+                "id": "2",
+                "field": "s_species",
+                "value": "a_ele",
+                "display": "Elephant",
+                "is_active": True,
+                "ordernum": 0,
+                "icon": "ele_icon",
+            },
+            {
+                "id": "3",
+                "field": "s_species",
+                "value": "old",
+                "display": "Old",
+                "is_active": False,
+                "ordernum": 2,
+            },
+        ],
+        "orphan_set": [
+            {"id": "4", "field": "orphan_set", "value": "x", "display": "X", "is_active": True},
+        ],
+    }
+
+
+def test_choices_list(fake):
+    _seed_choice_sets(fake)
+    result = _run(["choices", "list"])
+    assert result.exit_code == 0
+    lines = result.output.splitlines()
+    assert any("s_species" in ln and "2 active" in ln and "1 inactive" in ln for ln in lines)
+    assert any("orphan_set" in ln and "(unreferenced)" in ln for ln in lines)
+    assert not any("s_species" in ln and "(unreferenced)" in ln for ln in lines)
+
+
+def test_choices_show(fake):
+    _seed_choice_sets(fake)
+    result = _run(["choices", "show", "s_species"])
+    assert result.exit_code == 0
+    lines = [ln for ln in result.output.splitlines() if ln.strip()]
+    assert lines[0].startswith("a_ele")
+    assert "icon=ele_icon" in lines[0]
+    assert lines[1].startswith("b_lion")
+    assert "(inactive)" in lines[2]
+
+
+def test_choices_show_missing_exits_1(fake):
+    result = _run(["choices", "show", "nope"])
+    assert result.exit_code == 1
+    assert "no choices found for field 'nope'" in result.output

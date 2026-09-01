@@ -53,7 +53,11 @@ class FakeER:
     def _get(self, path, params=None, max_retries=5, **kwargs):
         self.calls.append(("_get", path, params))
         field = (params or {}).get("field")
-        return {"results": list(self.choices.get(field, [])), "next": None}
+        if field is None:
+            results = [r for recs in self.choices.values() for r in recs]
+        else:
+            results = list(self.choices.get(field, []))
+        return {"results": results, "next": None}
 
     def _post(self, path, payload, **kwargs):
         self.calls.append(("_post", path, payload))

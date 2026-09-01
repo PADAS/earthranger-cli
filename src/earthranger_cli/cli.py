@@ -14,6 +14,7 @@ from erclient.er_errors import ERClientException
 from . import client as er
 from . import config_store, token_store
 from .apply import ApplyError, apply_spec, extract_choice_fields, normalize_v2_schema
+from .choices import choice_sort_key
 from .client import make_client, make_token_client
 from .dsl import SpecError, load_spec
 from .events import FieldArgError, build_event, load_events_file, parse_field_args, post_events
@@ -482,3 +483,49 @@ def profile_show(ctx, name):
     click.echo(f"host:      {host}")
     click.echo(f"username:  {profile.get('username') or '-'}")
     click.echo(f"auth:      {auth}")
+
+
+@main.group("choices")
+def choices_group():
+    """Inspect Choice sets (writes are spec-driven via 'er events apply')."""
+
+
+@choices_group.command("list")
+@connection_options
+@click.pass_context
+@_api_errors
+def choices_list(ctx):
+    """List choice fields with option counts; flags sets no v2 schema references."""
+    client = _connect(ctx)
+    by_field: dict = {}
+    for r in er.get_all_choices(client):
+        by_field.setdefault(r.get("field") or "", []).append(r)
+    referenced: set = set()
+    for t in client.get_event_types(include_inactive=True, include_schema=True, version="v2.0"):
+        schema = normalize_v2_schema(t.get("schema") or {})
+        if isinstance(schema, dict):
+            referenced.update(extract_choice_fields(schema))
+    for name in sorted(by_field):
+        recs = by_field[name]
+        active = sum(1 for r in recs if r.get("is_active", True))
+        inactive = len(recs) - active
+        orphan = "" if name in referenced else "  (unreferenced)"
+        click.echo(f"{name:<42} {active:>3} active {inactive:>3} inactive{orphan}")
+
+
+@choices_group.command("show")
+@click.argument("field_name")
+@connection_options
+@click.pass_context
+@_api_errors
+def choices_show(ctx, field_name):
+    """Print one choice set's records in display order."""
+    client = _connect(ctx)
+    records = er.get_choices(client, field_name)
+    if not records:
+        click.echo(f"error: no choices found for field {field_name!r}")
+        sys.exit(1)
+    for r in sorted(records, key=choice_sort_key):
+        active = "" if r.get("is_active", True) else "  (inactive)"
+        icon = f"  icon={r['icon']}" if r.get("icon") else ""
+        click.echo(f"{r.get('value'):<40} {r.get('display')}{icon}{active}")

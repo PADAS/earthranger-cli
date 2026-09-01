@@ -87,6 +87,12 @@ def plan_field_choices(existing: list[dict], desired: list[dict]) -> list[Choice
     return ops
 
 
+def choice_sort_key(record: dict):
+    """Server display order: ordernum ascending, nulls last, then value."""
+    num = record.get("ordernum")
+    return (num is None, num if num is not None else 0, record.get("value") or "")
+
+
 def _differs(have: dict, want: dict) -> bool:
     return (
         have.get("display") != want["display"]

@@ -369,3 +369,72 @@ def test_pull_fieldless_collection_round_trips():
     assert pulled_et["fields"] == []
     records = apply_spec(fake, parse_spec(result.spec))
     assert {r.action for r in records} == {"unchanged"}
+
+
+SHARED_SET_SPEC = {
+    "category": {"value": "wm", "display": "Wildlife Monitoring"},
+    "choices": {
+        "shared_actions": [
+            {"value": "stopped", "display": "Halted"},
+            {"value": "warned", "display": "Warned", "icon": "warn_icon"},
+        ]
+    },
+    "event_types": [
+        {
+            "value": "t1",
+            "display": "T1",
+            "fields": [
+                {
+                    "key": "action",
+                    "label": "Action",
+                    "type": "select",
+                    "choices_field": "shared_actions",
+                }
+            ],
+        },
+        {
+            "value": "t2",
+            "display": "T2",
+            "fields": [
+                {
+                    "key": "response",
+                    "label": "Response",
+                    "type": "multiselect",
+                    "choices_field": "shared_actions",
+                }
+            ],
+        },
+    ],
+}
+
+
+def test_pull_hoists_shared_sets_and_round_trips():
+    fake = _server_from_spec(SHARED_SET_SPEC)
+    result = pull_category(fake, "wm")
+    assert result.unsupported == []
+    spec = result.spec
+    assert list(spec["choices"]) == ["shared_actions"]
+    assert spec["choices"]["shared_actions"] == [
+        {"value": "stopped", "display": "Halted"},
+        {"value": "warned", "display": "Warned", "icon": "warn_icon"},
+    ]
+    for et in spec["event_types"]:
+        f = et["fields"][0]
+        assert f["choices_field"] == "shared_actions"
+        assert "options" not in f
+    records = apply_spec(fake, parse_spec(spec))
+    assert {r.action for r in records} == {"unchanged"}
+    assert fake.writes() == []
+
+
+def test_pull_orders_options_by_ordernum():
+    fake = _server_from_spec(SPEC_DATA)
+    recs = fake.choices["sighting_species"]
+    for r, num in zip(recs, [1, 0]):
+        r["ordernum"] = num
+    result = pull_category(fake, "wm")
+    field = result.spec["event_types"][0]["fields"][0]
+    values = [o["value"] if isinstance(o, dict) else o for o in field["options"]]
+    assert values == ["lion_cub", "elephant"]
+    records = apply_spec(fake, parse_spec(result.spec))
+    assert {r.action for r in records} == {"unchanged"}
