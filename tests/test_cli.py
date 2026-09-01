@@ -569,3 +569,22 @@ def test_profile_current():
     result = _run(["--profile", "sandbox", "profile", "current"])
     assert result.exit_code == 0
     assert result.output == "sandbox\n"
+
+
+def test_profile_use_prints_export_line():
+    config_store.add_profile("prod", server="myreserve")
+    result = _run(["profile", "use", "prod"])
+    assert result.exit_code == 0
+    assert result.output == "export ER_PROFILE=prod\n"
+
+
+def test_profile_use_no_arg_prints_unset():
+    result = _run(["profile", "use"])
+    assert result.exit_code == 0
+    assert result.output == "unset ER_PROFILE\n"
+
+
+def test_profile_use_unknown_errors():
+    result = _run(["profile", "use", "zzz"])
+    assert result.exit_code == 1
+    assert "error: no profile named 'zzz'" in result.output

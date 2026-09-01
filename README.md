@@ -31,19 +31,29 @@ or per command — selection is never global:
 ```bash
 er profile add sandbox --server sandbox --username me
 er profile add prod --server myreserve --username me
-export ER_PROFILE=prod                        # this shell targets prod
+er profile use prod                    # this shell targets prod (needs the wrapper below)
 er --profile sandbox events list categories   # one-off override
 er profile list                        # marker shows this shell's selection
 er profile current                     # prints it (exit 1 if none) — prompt-friendly
 ```
 
 A selected profile supplies the server and default username when you
-don't pass them; explicit `--server`/`--username` flags always win. A
-small zsh helper makes switching ergonomic and can drive a prompt
-indicator:
+don't pass them; explicit `--server`/`--username` flags always win.
+
+`er profile use` prints an `export ER_PROFILE=...` line (a subprocess
+can't set its parent shell's env), so add this wrapper to your zshrc —
+it evals that line in place and passes every other command through; the
+optional prompt segment shows the shell's selection:
 
 ```zsh
-er-use() { [[ -z $1 ]] && unset ER_PROFILE || export ER_PROFILE="$1"; }
+er() {
+  if [[ $1 == profile && $2 == use ]]; then
+    local out; out=$(command er "$@") || { [[ -n $out ]] && print -r -- "$out"; return 1; }
+    eval "$out"
+  else
+    command er "$@"
+  fi
+}
 _er_prompt() { [[ -n $ER_PROFILE ]] && print -n "%F{yellow}(er:$ER_PROFILE)%f "; }
 setopt PROMPT_SUBST; PROMPT='$(_er_prompt)'"$PROMPT"
 ```
@@ -132,7 +142,7 @@ auth login'`.
 | `events show event-type V` | Full v2 event-type JSON + its Choice records |
 | `events pull CATEGORY [-o FILE] [--skip-unsupported]` | Reconstruct a DSL spec from the server (reverse of apply) |
 | `auth login/status/logout` | Cache/inspect/clear the token for the current `--server` |
-| `profile add/list/remove/current` | Named site profiles; selected per shell via `--profile NAME` or `ER_PROFILE` |
+| `profile add/use/list/remove/current` | Named site profiles; `use` selects per shell (via the wrapper), `--profile NAME` per command |
 
 ## Spec reference
 

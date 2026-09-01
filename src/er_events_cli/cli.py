@@ -394,3 +394,21 @@ def profile_current(ctx):
     if not name:
         sys.exit(1)
     click.echo(name)
+
+
+@profile_group.command("use")
+@click.argument("name", required=False)
+@_api_errors
+def profile_use(name):
+    """Select a profile for the current shell.
+
+    A subprocess cannot modify its parent shell's environment, so this prints
+    the `export ER_PROFILE=...` line (or `unset` with no NAME) for the shell
+    to eval — the `er` wrapper function from the README does that for you.
+    """
+    if name is None:
+        click.echo("unset ER_PROFILE")
+        return
+    if config_store.get_profile(name) is None:
+        raise config_store.ConfigError(f"no profile named {name!r}")
+    click.echo(f"export ER_PROFILE={name}")
