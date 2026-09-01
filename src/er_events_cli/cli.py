@@ -52,7 +52,7 @@ def _resolve_connection(ctx) -> tuple[str, str | None]:
     if name:
         profile = config_store.get_profile(name)
         if profile is None:
-            raise click.UsageError(f"Unknown profile {name!r}. See 'er-events profile list'.")
+            raise click.UsageError(f"Unknown profile {name!r}. See 'er profile list'.")
     if profile:
         server = server or profile.get("server")
         username = username or profile.get("username")
@@ -68,7 +68,7 @@ def _connect(ctx):
     """Build an authenticated client.
 
     Precedence: an explicit password (flag or ER_PASSWORD) wins; else a token
-    cached by `er-events auth login`; else an interactive password prompt.
+    cached by `er auth login`; else an interactive password prompt.
     """
     server, username = _resolve_connection(ctx)
     password = ctx.obj["password"]
@@ -96,7 +96,7 @@ def _connect_with_cached_token(ctx, server: str, cached: dict):
         client.auth_headers()
     except ERClientException as e:
         raise ERClientException(
-            f"cached session for {host} expired or invalid — run 'er-events auth login'"
+            f"cached session for {host} expired or invalid — run 'er auth login'"
         ) from e
 
     def _persist_rotation():
@@ -114,16 +114,19 @@ def _connect_with_cached_token(ctx, server: str, cached: dict):
 @click.option(
     "--password", envvar="ER_PASSWORD", help="EarthRanger password (prompted if omitted)."
 )
-@click.option(
-    "--profile", envvar="ER_PROFILE", help="Named profile to use (see 'er-events profile')."
-)
+@click.option("--profile", envvar="ER_PROFILE", help="Named profile to use (see 'er profile').")
 @click.pass_context
 def main(ctx, server, username, password, profile):
-    """Create and edit EarthRanger event categories, choices, and v2 event types."""
+    """EarthRanger site management CLI."""
     ctx.obj = {"server": server, "username": username, "password": password, "profile": profile}
 
 
-@main.command("apply")
+@main.group("events")
+def events_group():
+    """Create and edit event categories, choices, and v2 event types; post events."""
+
+
+@events_group.command("apply")
 @click.argument("spec_file", type=click.Path(exists=True, dir_okay=False))
 @click.option("--dry-run", is_flag=True, help="Show planned changes without writing.")
 @click.pass_context
@@ -147,7 +150,7 @@ def apply_cmd(ctx, spec_file, dry_run):
         click.echo(line)
 
 
-@main.command("post-event")
+@events_group.command("post")
 @click.option("--event-type", "event_type", help="Event type value (required unless --file).")
 @click.option(
     "--field", "fields", multiple=True, help="key=value; value parsed as a YAML scalar. Repeatable."
@@ -195,7 +198,7 @@ def post_event_cmd(ctx, event_type, fields, location, time_, title, file_):
         sys.exit(1)
 
 
-@main.group("list")
+@events_group.group("list")
 def list_group():
     """List objects on the server."""
 
@@ -231,7 +234,7 @@ def list_event_types(ctx, category):
         click.echo(f"{t.get('value'):<40} {t.get('display'):<40} {cat_value}{active}")
 
 
-@main.group("show")
+@events_group.group("show")
 def show_group():
     """Show one object in full."""
 
@@ -302,7 +305,7 @@ def auth_status(ctx):
     click.echo(f"{host}: {state}{as_user} (access token expires {data['expires_at']})")
 
 
-@main.command("pull")
+@events_group.command("pull")
 @click.argument("category_value")
 @click.option("-o", "--output", type=click.Path(dir_okay=False), help="Write the spec to a file.")
 @click.option(
@@ -362,7 +365,7 @@ def profile_list(ctx):
     """List profiles: selection marker (--profile/ER_PROFILE), server, username, auth state."""
     profiles = config_store.list_profiles()
     if not profiles:
-        click.echo("No profiles. Add one with 'er-events profile add NAME --server ...'.")
+        click.echo("No profiles. Add one with 'er profile add NAME --server ...'.")
         return
     active_name = ctx.obj.get("profile")
     for name in sorted(profiles):

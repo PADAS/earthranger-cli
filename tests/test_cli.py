@@ -36,7 +36,7 @@ def _run(args, spec_text=SPEC_YAML, input=None):
 
 
 def test_apply_fresh_site(fake):
-    result = _run(["apply", "spec.yaml"])
+    result = _run(["events", "apply", "spec.yaml"])
     assert result.exit_code == 0
     assert "category    created      wm" in result.output
     assert "event_type  created      sighting" in result.output
@@ -44,14 +44,14 @@ def test_apply_fresh_site(fake):
 
 
 def test_apply_dry_run_prefixes_and_writes_nothing(fake):
-    result = _run(["apply", "spec.yaml", "--dry-run"])
+    result = _run(["events", "apply", "spec.yaml", "--dry-run"])
     assert result.exit_code == 0
     assert "would-created" in result.output
     assert fake.writes() == []
 
 
 def test_apply_bad_spec_lists_all_errors_and_exits_1(fake):
-    result = _run(["apply", "spec.yaml"], spec_text=BAD_SPEC_YAML)
+    result = _run(["events", "apply", "spec.yaml"], spec_text=BAD_SPEC_YAML)
     assert result.exit_code == 1
     assert "category.display: required string" in result.output
     assert "event_types: at least one event type is required" in result.output
@@ -59,7 +59,7 @@ def test_apply_bad_spec_lists_all_errors_and_exits_1(fake):
 
 
 def test_apply_invalid_yaml_exits_cleanly(fake):
-    result = _run(["apply", "spec.yaml"], spec_text="category: {value: [\n")
+    result = _run(["events", "apply", "spec.yaml"], spec_text="category: {value: [\n")
     assert result.exit_code == 1
     assert "error:" in result.output
     assert "invalid YAML" in result.output
@@ -69,7 +69,7 @@ def test_connect_requires_server(monkeypatch):
     monkeypatch.delenv("ER_SERVER", raising=False)
     monkeypatch.delenv("ER_USERNAME", raising=False)
     monkeypatch.delenv("ER_PASSWORD", raising=False)
-    result = _run(["apply", "spec.yaml"])
+    result = _run(["events", "apply", "spec.yaml"])
     assert result.exit_code != 0
     assert "Missing server" in result.output
 
@@ -83,7 +83,7 @@ def test_connect_prompts_for_password(monkeypatch):
 
     monkeypatch.setattr(cli_mod, "make_client", fake_make_client)
     result = _run(
-        ["--server", "myreserve", "--username", "u", "apply", "spec.yaml"],
+        ["--server", "myreserve", "--username", "u", "events", "apply", "spec.yaml"],
         input="secret\n",
     )
     assert result.exit_code == 0
@@ -97,7 +97,7 @@ def test_api_errors_print_cleanly_and_exit_1(fake):
         raise ERClientBadCredentials("Invalid credentials given.")
 
     fake.get_event_categories = bad_creds
-    result = _run(["apply", "spec.yaml"])
+    result = _run(["events", "apply", "spec.yaml"])
     assert result.exit_code == 1
     assert "error: Invalid credentials given." in result.output
 
@@ -109,7 +109,7 @@ def test_network_errors_print_cleanly_and_exit_1(fake):
         raise requests.exceptions.ConnectionError("boom")
 
     fake.get_event_categories = connection_error
-    result = _run(["apply", "spec.yaml"])
+    result = _run(["events", "apply", "spec.yaml"])
     assert result.exit_code == 1
     assert "error:" in result.output
     assert "boom" in result.output
@@ -121,7 +121,8 @@ import json
 def test_post_event_flags(fake):
     result = _run(
         [
-            "post-event",
+            "events",
+            "post",
             "--event-type",
             "sighting",
             "--field",
@@ -147,14 +148,14 @@ def test_post_event_file_invalid_yaml_exits_cleanly(fake):
     with runner.isolated_filesystem():
         with open("events.yaml", "w") as f:
             f.write("category: {value: [\n")
-        result = runner.invoke(main, ["post-event", "--file", "events.yaml"])
+        result = runner.invoke(main, ["events", "post", "--file", "events.yaml"])
     assert result.exit_code == 1
     assert "error:" in result.output
     assert "invalid YAML" in result.output
 
 
 def test_post_event_requires_type_or_file(fake):
-    result = _run(["post-event"])
+    result = _run(["events", "post"])
     assert result.exit_code != 0
 
 
@@ -172,7 +173,7 @@ def test_post_event_batch_partial_failure_exits_1(fake):
                 "- event_type: s\n  event_details: {species: elephant}\n"
                 "- event_type: s\n  event_details: {species: lion}\n"
             )
-        result = runner.invoke(main, ["post-event", "--file", "events.yaml"])
+        result = runner.invoke(main, ["events", "post", "--file", "events.yaml"])
     assert result.exit_code == 1
     assert "posted   s" in result.output
     assert "FAILED   s: boom" in result.output
@@ -183,7 +184,7 @@ def test_list_categories(fake):
         {"value": "wm", "display": "Wildlife Monitoring", "is_active": True},
         {"value": "old", "display": "Old Category", "is_active": False},
     ]
-    result = _run(["list", "categories"])
+    result = _run(["events", "list", "categories"])
     assert result.exit_code == 0
     assert "wm" in result.output
     assert "(inactive)" in result.output
@@ -194,7 +195,7 @@ def test_list_event_types_filters_by_category(fake):
         {"value": "a", "display": "A", "category": {"value": "wm"}, "is_active": True},
         {"value": "b", "display": "B", "category": "other", "is_active": True},
     ]
-    result = _run(["list", "event-types", "--category", "wm"])
+    result = _run(["events", "list", "event-types", "--category", "wm"])
     assert result.exit_code == 0
     assert "a" in result.output
     assert " b " not in result.output
@@ -212,7 +213,7 @@ def test_show_event_type_includes_choices(fake):
         {"value": "s", "display": "S", "category": "wm", "schema": schema},
     ]
     fake.choices = {"s_species": [{"id": "1", "value": "elephant", "display": "Elephant"}]}
-    result = _run(["show", "event-type", "s"])
+    result = _run(["events", "show", "event-type", "s"])
     assert result.exit_code == 0
     data = json.loads(result.output)
     assert data["event_type"]["value"] == "s"
@@ -232,14 +233,14 @@ def test_show_event_type_handles_stringified_schema(fake):
         {"value": "s", "display": "S", "category": "wm", "schema": json.dumps(schema)},
     ]
     fake.choices = {"s_species": [{"id": "1", "value": "elephant", "display": "Elephant"}]}
-    result = _run(["show", "event-type", "s"])
+    result = _run(["events", "show", "event-type", "s"])
     assert result.exit_code == 0
     data = json.loads(result.output)
     assert data["choices"]["s_species"][0]["value"] == "elephant"
 
 
 def test_show_event_type_missing_exits_1(fake):
-    result = _run(["show", "event-type", "nope"])
+    result = _run(["events", "show", "event-type", "nope"])
     assert result.exit_code == 1
     assert "no event type with value 'nope'" in result.output
 
@@ -304,7 +305,7 @@ def test_connect_uses_cached_token_without_password(monkeypatch):
     token_store.save_token("sandbox.pamdas.org", AUTH, FUTURE, "chris")
     fake = FakeER()
     monkeypatch.setattr(cli_mod, "make_token_client", lambda **kw: fake)
-    result = _run(["--server", "sandbox", "list", "categories"])
+    result = _run(["--server", "sandbox", "events", "list", "categories"])
     assert result.exit_code == 0
     assert fake.auth["access_token"] == "acc-1"
     assert ("auth_headers",) in fake.calls
@@ -320,7 +321,17 @@ def test_connect_explicit_password_beats_cache(monkeypatch):
 
     monkeypatch.setattr(cli_mod, "make_client", fake_make_client)
     result = _run(
-        ["--server", "sandbox", "--username", "u", "--password", "pw", "list", "categories"]
+        [
+            "--server",
+            "sandbox",
+            "--username",
+            "u",
+            "--password",
+            "pw",
+            "events",
+            "list",
+            "categories",
+        ]
     )
     assert result.exit_code == 0
     assert captured == {"username": "u", "password": "pw"}
@@ -338,7 +349,7 @@ def test_connect_cached_token_skipped_when_username_differs(monkeypatch):
 
     monkeypatch.setattr(cli_mod, "make_client", fake_make_client)
     result = _run(
-        ["--server", "sandbox", "--username", "alice", "list", "categories"], input="pw\n"
+        ["--server", "sandbox", "--username", "alice", "events", "list", "categories"], input="pw\n"
     )
     assert result.exit_code == 0
     assert captured == {"server": "sandbox", "username": "alice", "password": "pw"}
@@ -348,7 +359,7 @@ def test_connect_cached_token_used_when_username_matches(monkeypatch):
     token_store.save_token("sandbox.pamdas.org", AUTH, FUTURE, "chris")
     fake = FakeER()
     monkeypatch.setattr(cli_mod, "make_token_client", lambda **kw: fake)
-    result = _run(["--server", "sandbox", "--username", "chris", "list", "categories"])
+    result = _run(["--server", "sandbox", "--username", "chris", "events", "list", "categories"])
     assert result.exit_code == 0
     assert fake.auth["access_token"] == "acc-1"
     assert ("auth_headers",) in fake.calls
@@ -365,11 +376,11 @@ def test_connect_expired_cached_session_message(monkeypatch):
 
     fake.auth_headers = failing_auth_headers
     monkeypatch.setattr(cli_mod, "make_token_client", lambda **kw: fake)
-    result = _run(["--server", "sandbox", "list", "categories"])
+    result = _run(["--server", "sandbox", "events", "list", "categories"])
     assert result.exit_code == 1
     assert (
         "error: cached session for sandbox.pamdas.org expired or invalid — "
-        "run 'er-events auth login'" in result.output
+        "run 'er auth login'" in result.output
     )
 
 
@@ -384,7 +395,7 @@ def test_rotated_token_is_persisted_after_command(monkeypatch):
 
     fake.auth_headers = rotating_auth_headers
     monkeypatch.setattr(cli_mod, "make_token_client", lambda **kw: fake)
-    result = _run(["--server", "sandbox", "list", "categories"])
+    result = _run(["--server", "sandbox", "events", "list", "categories"])
     assert result.exit_code == 0
     data = token_store.load_token("sandbox.pamdas.org")
     assert data["access_token"] == "acc-2"
@@ -433,7 +444,7 @@ def _seed_pull_server(fake):
 
 def test_pull_prints_spec_yaml(fake):
     _seed_pull_server(fake)
-    result = _run(["pull", "wm"])
+    result = _run(["events", "pull", "wm"])
     assert result.exit_code == 0
     assert "value: wm" in result.output
     assert "- elephant" in result.output
@@ -443,7 +454,7 @@ def test_pull_writes_file(fake):
     _seed_pull_server(fake)
     runner = CliRunner()
     with runner.isolated_filesystem():
-        result = runner.invoke(main, ["pull", "wm", "-o", "out.yaml"])
+        result = runner.invoke(main, ["events", "pull", "wm", "-o", "out.yaml"])
         assert result.exit_code == 0
         with open("out.yaml") as f:
             text = f.read()
@@ -454,18 +465,18 @@ def test_pull_writes_file(fake):
 def test_pull_refuses_lossy_without_flag(fake):
     payload = _seed_pull_server(fake)
     payload["schema"]["ui"]["fields"]["species"]["type"] = "LOCATION"
-    result = _run(["pull", "wm"])
+    result = _run(["events", "pull", "wm"])
     assert result.exit_code == 1
     assert "warning:" in result.output
     assert "--skip-unsupported" in result.output
-    result = _run(["pull", "wm", "--skip-unsupported"])
+    result = _run(["events", "pull", "wm", "--skip-unsupported"])
     assert result.exit_code == 0
     assert "# Skipped constructs" in result.output
 
 
 def test_pull_missing_category_exits_1(fake):
     fake.categories = []
-    result = _run(["pull", "nope"])
+    result = _run(["events", "pull", "nope"])
     assert result.exit_code == 1
     assert "error: no category with value 'nope'" in result.output
 
@@ -523,7 +534,7 @@ def test_profile_flag_selects_profile(monkeypatch):
 
     monkeypatch.setattr(cli_mod, "make_token_client", fake_token_client)
     monkeypatch.delenv("ER_SERVER", raising=False)
-    result = _run(["--profile", "prod", "list", "categories"])
+    result = _run(["--profile", "prod", "events", "list", "categories"])
     assert result.exit_code == 0
     assert seen["server"] == "myreserve"
 
@@ -539,13 +550,13 @@ def test_explicit_server_flag_overrides_profile(monkeypatch):
         return fake
 
     monkeypatch.setattr(cli_mod, "make_token_client", fake_token_client)
-    result = _run(["--server", "other", "list", "categories"])
+    result = _run(["--server", "other", "events", "list", "categories"])
     assert result.exit_code == 0
     assert seen["server"] == "other"
 
 
 def test_unknown_profile_flag_is_usage_error():
-    result = _run(["--profile", "zzz", "list", "categories"])
+    result = _run(["--profile", "zzz", "events", "list", "categories"])
     assert result.exit_code != 0
     assert "Unknown profile 'zzz'" in result.output
 

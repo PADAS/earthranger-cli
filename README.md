@@ -5,7 +5,7 @@ categories, choices, and v2 event types — and posting events — directly
 against the EarthRanger API, authenticated with a username and password.
 
 You describe what you want in a small YAML spec (no hand-written JSON
-Schema); `er-events apply` generates the ER v2 schema envelope and the
+Schema); `er events apply` generates the ER v2 schema envelope and the
 shared Choice records, then idempotently creates what's missing and
 patches what changed. Nothing is ever deleted — removal means
 `is_active: false`.
@@ -22,19 +22,19 @@ The easiest way: log in once and let the CLI cache your tokens.
 
 ```bash
 export ER_SERVER=myreserve          # site name, or a full https:// URL
-er-events auth login --username me  # prompts for your password
+er auth login --username me  # prompts for your password
 ```
 
 Working across sites? Save each as a profile and select one per shell
 or per command — selection is never global:
 
 ```bash
-er-events profile add sandbox --server sandbox --username me
-er-events profile add prod --server myreserve --username me
+er profile add sandbox --server sandbox --username me
+er profile add prod --server myreserve --username me
 export ER_PROFILE=prod                        # this shell targets prod
-er-events --profile sandbox list categories   # one-off override
-er-events profile list                        # marker shows this shell's selection
-er-events profile current                     # prints it (exit 1 if none) — prompt-friendly
+er --profile sandbox events list categories   # one-off override
+er profile list                        # marker shows this shell's selection
+er profile current                     # prints it (exit 1 if none) — prompt-friendly
 ```
 
 A selected profile supplies the server and default username when you
@@ -52,7 +52,7 @@ setopt PROMPT_SUBST; PROMPT='$(_er_prompt)'"$PROMPT"
 tokens (never your password) in `~/.config/er-events/tokens/<host>.json`
 (0600). Subsequent commands on that server just work — expired access
 tokens are refreshed automatically and the rotated tokens re-cached.
-`er-events auth status` shows the cached session; `er-events auth logout`
+`er auth status` shows the cached session; `er auth logout`
 deletes it. One cache per server host: logging in again (as anyone)
 replaces it.
 
@@ -94,14 +94,14 @@ auth login'`.
 2. Preview what would change, then apply:
 
    ```bash
-   er-events apply spec.yaml --dry-run
-   er-events apply spec.yaml
+   er events apply spec.yaml --dry-run
+   er events apply spec.yaml
    ```
 
 3. Post an event against the new type:
 
    ```bash
-   er-events post-event --event-type animal_sighting \
+   er events post --event-type animal_sighting \
        --field species=elephant --field count=3 \
        --location -1.286,36.817
    ```
@@ -111,7 +111,7 @@ auth login'`.
    differs; dropped options are deactivated, never deleted.
 
 5. Absorb server-side edits into your file: if someone changed a value
-   in ER's UI, `er-events pull wildlife_monitoring -o spec.yaml`
+   in ER's UI, `er events pull wildlife_monitoring -o spec.yaml`
    rewrites your spec from the live server; `apply --dry-run` should
    then report all `unchanged`. Constructs the DSL can't express
    (headers, conditional sections, non-positional section ids,
@@ -124,13 +124,13 @@ auth login'`.
 
 | Command | What it does |
 |---|---|
-| `apply SPEC [--dry-run]` | Upsert category, choices, and event types from a spec |
-| `post-event --event-type V --field k=v ...` | Post one event (`--location LAT,LON`, `--time`, `--title`) |
-| `post-event --file events.yaml` | Post a batch; exits 1 if any fail |
-| `list categories` | List categories (inactive included) |
-| `list event-types [--category V]` | List event types |
-| `show event-type V` | Full v2 event-type JSON + its Choice records |
-| `pull CATEGORY [-o FILE] [--skip-unsupported]` | Reconstruct a DSL spec from the server (reverse of apply) |
+| `events apply SPEC [--dry-run]` | Upsert category, choices, and event types from a spec |
+| `events post --event-type V --field k=v ...` | Post one event (`--location LAT,LON`, `--time`, `--title`) |
+| `events post --file events.yaml` | Post a batch; exits 1 if any fail |
+| `events list categories` | List categories (inactive included) |
+| `events list event-types [--category V]` | List event types |
+| `events show event-type V` | Full v2 event-type JSON + its Choice records |
+| `events pull CATEGORY [-o FILE] [--skip-unsupported]` | Reconstruct a DSL spec from the server (reverse of apply) |
 | `auth login/status/logout` | Cache/inspect/clear the token for the current `--server` |
 | `profile add/list/remove/current` | Named site profiles; selected per shell via `--profile NAME` or `ER_PROFILE` |
 

@@ -44,7 +44,7 @@ against the resulting types.
   managed with uv. Python ≥3.11.
 - Runtime deps: `earthranger-client` (PyPI, ≥1.16.0), `click`, `pyyaml`.
 - Dev deps: `pytest`, `ruff`.
-- Console script: `er-events`.
+- Console script: `er` (with the event commands under `er events`).
 
 `earthranger-client`'s `ERClient` provides `post_event_category`,
 `patch_event_category`, `post_event_type(version="v2.0")`,
@@ -74,7 +74,7 @@ Connection parameters resolve in priority order:
 `--server` accepts either a bare site name (`myreserve` →
 `https://myreserve.pamdas.org`) or a full `https://` URL.
 
-Beyond one-shot password auth: `er-events auth login` exchanges a
+Beyond one-shot password auth: `er auth login` exchanges a
 password for OAuth tokens once and caches them (never the password)
 per server host in `~/.config/er-events/tokens/<host>.json`;
 subsequent commands on that host reuse the cache automatically
@@ -280,7 +280,7 @@ Upsert per field:
 
 ## Commands
 
-### `er-events apply SPEC.yaml [--dry-run]`
+### `er events apply SPEC.yaml [--dry-run]`
 
 The workhorse and the editing path. Order of operations:
 
@@ -307,14 +307,14 @@ upsert).
 `--dry-run` performs all GETs and the full diff, prints the same summary
 with a `would-*` prefix, and performs no writes.
 
-### `er-events post-event`
+### `er events post`
 
 ```
-er-events post-event --event-type animal_sighting \
+er events post --event-type animal_sighting \
     --field species=elephant --field count=3 \
     [--location -1.286,36.817] [--time 2026-08-31T12:00:00Z] \
     [--title "Elephant sighting"]
-er-events post-event --file events.yaml
+er events post --file events.yaml
 ```
 
 - `--field key=value`, repeatable. Values parsed as YAML scalars so
@@ -330,14 +330,14 @@ er-events post-event --file events.yaml
 
 ### Read-only helpers
 
-- `er-events list categories` — value, display, is_active.
-- `er-events list event-types [--category VALUE]` — value, display,
+- `er events list categories` — value, display, is_active.
+- `er events list event-types [--category VALUE]` — value, display,
   category, is_active.
-- `er-events show event-type VALUE` — the full v2 event-type JSON
+- `er events show event-type VALUE` — the full v2 event-type JSON
   (schema included) plus the Choice records for every `$ref` field it
   references. Output is JSON (pipe-friendly).
 
-### `er-events pull CATEGORY [-o FILE] [--skip-unsupported]`
+### `er events pull CATEGORY [-o FILE] [--skip-unsupported]`
 
 The reverse of `apply`: reconstructs a DSL spec from a live category's
 event types and choices, for everything the DSL can express. Anything
