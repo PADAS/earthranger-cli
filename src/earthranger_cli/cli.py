@@ -101,22 +101,32 @@ def _connect(ctx):
     server, username = _resolve_connection(ctx)
     password = ctx.obj["password"]
     name = ctx.obj.get("profile")
-    profile = config_store.get_profile(name) if name else None
-    if not password and profile is not None:
-        cached = token_store.load_token(name)
+    if not password and name:
+        profile, cached = _profile_session_snapshot(name)
         # The session is bound to the profile's server: a --server/ER_SERVER
         # override must never receive the profile's token — compared as full
         # normalized URLs, so an http:// downgrade or a different base path on
         # the same host also misses. Likewise an explicit --username that
-        # isn't the session's owner.
-        server_matches = normalize_server(server) == normalize_server(profile["server"])
-        if cached and server_matches and (not username or cached.get("username") == username):
-            return _connect_with_cached_token(ctx, name, profile, server, cached)
+        # isn't the session's owner. The profile+token pair is read under the
+        # profile lock so a concurrent repoint+re-login can't pair the new
+        # session with the previously resolved server.
+        if profile is not None and cached:
+            server_matches = normalize_server(server) == normalize_server(profile["server"])
+            if server_matches and (not username or cached.get("username") == username):
+                return _connect_with_cached_token(ctx, name, profile, server, cached)
     if not username:
         raise click.UsageError("Missing username: pass --username or set ER_USERNAME.")
     if not password:
         password = click.prompt("Password", hide_input=True)
     return make_client(server=server, username=username, password=password)
+
+
+def _profile_session_snapshot(name: str) -> tuple[dict | None, dict | None]:
+    """One coherent (profile, token) pair, read together under the profile
+    lock — an unlocked pair could mix identities during a concurrent
+    'profile set server' + 'auth login'."""
+    with token_store.profile_lock(name):
+        return config_store.get_profile(name), token_store.load_token(name)
 
 
 def _connect_with_cached_token(ctx, name: str, profile: dict, server: str, cached: dict):
@@ -394,9 +404,9 @@ def auth_logout(ctx):
 def auth_status(ctx):
     """Report the selected profile's cached session and its expiry."""
     name = _require_selected_profile(ctx)
-    profile = config_store.get_profile(name) or {}
+    profile, data = _profile_session_snapshot(name)
+    profile = profile or {}
     host = token_store.server_host(profile.get("server") or "")
-    data = token_store.load_token(name)
     if not data:
         click.echo(f"{name} ({host}): not authenticated")
         return
@@ -437,8 +447,7 @@ def pull_cmd(ctx, category_value, output, skip_unsupported):
         click.echo(text, nl=False)
 
 
-def _auth_state(profile_name: str) -> str:
-    data = token_store.load_token(profile_name)
+def _auth_state(data: dict | None) -> str:
     if not data:
         return "not authenticated"
     return "expired" if token_store.is_expired(data) else "valid"
@@ -494,11 +503,13 @@ def profile_list(ctx):
         return
     active_name = ctx.obj.get("profile")
     for name in sorted(profiles):
-        p = profiles[name]
+        p, data = _profile_session_snapshot(name)
+        if p is None:
+            continue  # removed since the listing was read
         marker = "*" if name == active_name else " "
         username = p.get("username") or "-"
         host = token_store.server_host(p.get("server") or "")
-        click.echo(f"{marker} {name:<16} {host:<40} {username:<16} {_auth_state(name)}")
+        click.echo(f"{marker} {name:<16} {host:<40} {username:<16} {_auth_state(data)}")
 
 
 @profile_group.command("remove")
@@ -587,12 +598,11 @@ def profile_show(ctx, name):
             raise click.UsageError(
                 "no profile selected — pass a NAME or select one with 'er profile use'."
             )
-    profile = config_store.get_profile(name)
+    profile, data = _profile_session_snapshot(name)
     if profile is None:
         raise config_store.ConfigError(f"no profile named {name!r}")
     server = profile["server"]
     host = token_store.server_host(server)
-    data = token_store.load_token(name)
     if not data:
         auth = "not authenticated"
     else:

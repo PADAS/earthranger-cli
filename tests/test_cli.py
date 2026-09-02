@@ -1074,10 +1074,18 @@ def test_rotation_persist_failure_warns_not_crashes(monkeypatch):
     fake.auth_headers = rotating_auth_headers
     monkeypatch.setattr(cli_mod, "make_token_client", lambda **kw: fake)
 
-    def broken_lock(name):
-        raise config_store.ConfigError("could not acquire session lock")
+    real_lock = token_store.profile_lock
+    calls = {"n": 0}
 
-    monkeypatch.setattr(cli_mod.token_store, "profile_lock", broken_lock)
+    def flaky_lock(name):
+        # the connect-time snapshot works; the persist at command close hits
+        # a filesystem failure
+        calls["n"] += 1
+        if calls["n"] > 1:
+            raise config_store.ConfigError("could not acquire session lock")
+        return real_lock(name)
+
+    monkeypatch.setattr(cli_mod.token_store, "profile_lock", flaky_lock)
     result = _run(["events", "list", "categories"])
     assert result.exit_code == 0  # the command itself succeeded
     assert "warning:" in result.stderr and "rotated session" in result.stderr
@@ -1091,3 +1099,61 @@ def test_profile_add_clears_orphan_token():
     result = _run(["profile", "add", "dev", "--server", "other", "--username", "eve"])
     assert result.exit_code == 0
     assert token_store.load_token("dev") is None
+
+
+def test_connect_snapshot_taken_under_lock(monkeypatch):
+    # L1/r3916209159 — profile and token must be read as one coherent pair
+    # under the profile lock; a replacement session committed just before we
+    # acquire it must not be sent to the previously resolved (stale) server
+    config_store.add_profile("dev", server="sandbox", username="chris")
+    monkeypatch.setenv("ER_PROFILE", "dev")
+    token_store.save_token("dev", AUTH, FUTURE, "chris")
+    real_lock = token_store.profile_lock
+
+    from contextlib import contextmanager
+
+    @contextmanager
+    def racing_lock(name):
+        with real_lock(name):
+            # a concurrent 'profile set server' + 'auth login' won the race
+            config_store.set_profile_property("dev", "server", "other")
+            token_store.save_token("dev", {**AUTH, "access_token": "theirs"}, FUTURE, "chris")
+            yield
+
+    monkeypatch.setattr(cli_mod.token_store, "profile_lock", racing_lock)
+    captured = {}
+
+    def fake_make_client(*, server, username, password):
+        captured.update(server=server, password=password)
+        return FakeER()
+
+    monkeypatch.setattr(cli_mod, "make_client", fake_make_client)
+    result = _run(["events", "list", "categories"], input="pw\n")
+    assert result.exit_code == 0
+    # the coherent snapshot says the profile now points at "other", which no
+    # longer matches the resolved server — fall back to the password path
+    assert captured == {"server": "sandbox", "password": "pw"}
+
+
+def test_auth_status_reports_one_coherent_identity(monkeypatch):
+    # L1 suppressed cli:399 — status must describe the profile and session as
+    # they stand together under the lock, never a torn old-host/new-session mix
+    config_store.add_profile("dev", server="sandbox", username="chris")
+    monkeypatch.setenv("ER_PROFILE", "dev")
+    token_store.save_token("dev", AUTH, FUTURE, "chris")
+    real_lock = token_store.profile_lock
+
+    from contextlib import contextmanager
+
+    @contextmanager
+    def racing_lock(name):
+        with real_lock(name):
+            config_store.set_profile_property("dev", "server", "other")
+            token_store.save_token("dev", {**AUTH, "access_token": "theirs"}, FUTURE, "eve")
+            yield
+
+    monkeypatch.setattr(cli_mod.token_store, "profile_lock", racing_lock)
+    result = _run(["auth", "status"])
+    assert result.exit_code == 0
+    assert "other.pamdas.org" in result.output  # the session's actual host
+    assert "as eve" in result.output
