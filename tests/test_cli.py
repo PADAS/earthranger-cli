@@ -1168,3 +1168,65 @@ def test_profile_add_traversal_name_cannot_touch_other_sessions():
     assert result.exit_code == 1
     assert "error:" in result.output + result.stderr
     assert token_store.load_token("dev") is not None  # untouched
+
+
+def test_token_flag_uses_static_client_and_needs_no_username(monkeypatch):
+    captured = {}
+
+    def fake_static(*, server, token):
+        captured.update(server=server, token=token)
+        return FakeER()
+
+    monkeypatch.setattr(cli_mod, "make_static_token_client", fake_static)
+    monkeypatch.setattr(
+        cli_mod, "make_client", lambda **kw: pytest.fail("password client must not be built")
+    )
+    result = _run(["--server", "sandbox", "--token", "tok-1", "events", "list", "categories"])
+    assert result.exit_code == 0
+    assert captured == {"server": "sandbox", "token": "tok-1"}
+
+
+def test_token_env_var_is_honoured_and_accepted_after_subcommand(monkeypatch):
+    captured = {}
+    monkeypatch.setattr(
+        cli_mod,
+        "make_static_token_client",
+        lambda *, server, token: captured.update(server=server, token=token) or FakeER(),
+    )
+    monkeypatch.setenv("ER_TOKEN", "tok-env")
+    result = _run(["events", "list", "categories", "--server", "sandbox"])
+    assert result.exit_code == 0
+    assert captured == {"server": "sandbox", "token": "tok-env"}
+
+    monkeypatch.delenv("ER_TOKEN")
+    result = _run(["events", "list", "categories", "--server", "sandbox", "--token", "tok-late"])
+    assert result.exit_code == 0
+    assert captured["token"] == "tok-late"
+
+
+def test_token_beats_password_and_cached_session(monkeypatch):
+    config_store.add_profile("dev", server="sandbox", username="chris")
+    monkeypatch.setenv("ER_PROFILE", "dev")
+    token_store.save_token("dev", AUTH, FUTURE, "chris")
+    captured = {}
+    monkeypatch.setattr(
+        cli_mod,
+        "make_static_token_client",
+        lambda *, server, token: captured.update(server=server, token=token) or FakeER(),
+    )
+    monkeypatch.setattr(
+        cli_mod, "make_client", lambda **kw: pytest.fail("password client must not be built")
+    )
+    monkeypatch.setattr(
+        cli_mod, "make_token_client", lambda **kw: pytest.fail("cached session must not be used")
+    )
+    result = _run(["--password", "pw", "--token", "tok-1", "events", "list", "categories"])
+    assert result.exit_code == 0
+    assert captured == {"server": "sandbox", "token": "tok-1"}  # server came from the profile
+
+
+def test_token_without_server_is_usage_error(monkeypatch):
+    monkeypatch.delenv("ER_PROFILE", raising=False)
+    result = _run(["--token", "tok-1", "events", "list", "categories"])
+    assert result.exit_code == 2
+    assert "Missing server" in result.output

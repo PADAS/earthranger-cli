@@ -15,7 +15,7 @@ from . import client as er
 from . import config_store, token_store
 from .apply import ApplyError, apply_spec, extract_choice_fields, normalize_v2_schema
 from .choices import choice_sort_key
-from .client import make_client, make_token_client, normalize_server
+from .client import make_client, make_static_token_client, make_token_client, normalize_server
 from .dsl import SpecError, load_spec
 from .events import FieldArgError, build_event, load_events_file, parse_field_args, post_events
 from .pull import PullError, pull_category, render_spec_yaml
@@ -45,12 +45,21 @@ def connection_options(f):
     """Accept the connection flags on a leaf command too (people naturally type
     them after the subcommand); provided values override the root group's."""
 
-    def wrapper(*args, server_=None, username_=None, password_=None, profile_=None, **kwargs):
+    def wrapper(
+        *args,
+        server_=None,
+        username_=None,
+        password_=None,
+        token_=None,
+        profile_=None,
+        **kwargs,
+    ):
         ctx = click.get_current_context()
         for key, val in (
             ("server", server_),
             ("username", username_),
             ("password", password_),
+            ("token", token_),
             ("profile", profile_),
         ):
             if val:
@@ -60,6 +69,7 @@ def connection_options(f):
     wrapper = functools.update_wrapper(wrapper, f)
     for opt in (
         click.option("--profile", "profile_", help="Named profile to use."),
+        click.option("--token", "token_", help="Pre-issued OAuth bearer token."),
         click.option("--password", "password_", help="EarthRanger password."),
         click.option("--username", "username_", help="EarthRanger username."),
         click.option("--server", "server_", help="ER site name or full https:// URL."),
@@ -95,10 +105,16 @@ def _resolve_connection(ctx) -> tuple[str, str | None]:
 def _connect(ctx):
     """Build an authenticated client.
 
-    Precedence: an explicit password (flag or ER_PASSWORD) wins; else a token
-    cached by `er auth login`; else an interactive password prompt.
+    Precedence: an explicit bearer token (--token or ER_TOKEN) wins; else an
+    explicit password (flag or ER_PASSWORD); else the selected profile's
+    stored record (a static token from `auth login --token` or a session
+    cached by `auth login`); else an interactive password prompt.
     """
     server, username = _resolve_connection(ctx)
+    token = ctx.obj.get("token")
+    if token:
+        # the token is the identity: no username, no cache, no refresh
+        return make_static_token_client(server=server, token=token)
     password = ctx.obj["password"]
     name = ctx.obj.get("profile")
     if not password and name:
@@ -178,11 +194,22 @@ def _connect_with_cached_token(ctx, name: str, profile: dict, server: str, cache
 @click.option(
     "--password", envvar="ER_PASSWORD", help="EarthRanger password (prompted if omitted)."
 )
+@click.option(
+    "--token",
+    envvar="ER_TOKEN",
+    help="Pre-issued OAuth bearer token (wins over --password and cached sessions).",
+)
 @click.option("--profile", envvar="ER_PROFILE", help="Named profile to use (see 'er profile').")
 @click.pass_context
-def main(ctx, server, username, password, profile):
+def main(ctx, server, username, password, token, profile):
     """EarthRanger site management CLI."""
-    ctx.obj = {"server": server, "username": username, "password": password, "profile": profile}
+    ctx.obj = {
+        "server": server,
+        "username": username,
+        "password": password,
+        "token": token,
+        "profile": profile,
+    }
 
 
 @main.group("events")
