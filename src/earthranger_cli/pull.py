@@ -18,7 +18,7 @@ import yaml
 from . import client as er
 from .choices import choice_sort_key
 from .dsl import CHOICES_FIELD_RE, PRIORITY_BY_VALUE
-from .schema_gen import choice_field_name
+from .schema_gen import _encode_is_exactly, choice_field_name
 
 _REF_FIELD_RE = re.compile(r"choices\.json\?field=([^&\"']+)$")
 # JSON Schema format -> DSL: uri gets its own field type, the rest are formats.
@@ -146,10 +146,15 @@ def _invert_event_type(client, et: dict, unsupported: list[str]) -> dict | None:
 
     out_sections: list[dict] = []
     kept_keys: set[str] = set()
+    extra_required: list[str] = []
     for section in sections_result:
+        sec_props = section["props"]
+        extra_required.extend(section["extra_required"])
         sec_fields: list[dict] = []
         for key in section["order"]:
-            f, reason = _invert_field(client, value, key, properties[key], ui_fields.get(key) or {})
+            f, reason = _invert_field(
+                client, value, key, sec_props[key], ui_fields.get(key) or {}, ui_fields
+            )
             if f is None:
                 unsupported.append(f"event type {value!r}, field {key!r}: {reason}; skipped")
                 continue
@@ -169,8 +174,22 @@ def _invert_event_type(client, et: dict, unsupported: list[str]) -> dict | None:
             sec_out["label"] = section["label"]
         if section["columns"] != 1:
             sec_out["columns"] = section["columns"]
+        if not section["active"]:
+            sec_out["active"] = False
+        if section["condition"] is not None:
+            sec_out["condition"] = section["condition"]
         sec_out["fields"] = sec_fields
         out_sections.append(sec_out)
+
+    for sec_out in out_sections:
+        cond = sec_out.get("condition")
+        if cond and cond.get("field") not in kept_keys:
+            unsupported.append(
+                f"event type {value!r}: conditional section {sec_out.get('label')!r} "
+                f"references controlling field {cond.get('field')!r}, which was "
+                "skipped; condition dropped"
+            )
+            del sec_out["condition"]
 
     if not out_sections:
         unsupported.append(f"event type {value!r}: no fields could be expressed; skipped entirely")
@@ -184,7 +203,11 @@ def _invert_event_type(client, et: dict, unsupported: list[str]) -> dict | None:
     if et.get("is_collection"):
         out["is_collection"] = True
     _copy_type_defaults(et, out)
-    if len(out_sections) == 1:
+    if (
+        len(out_sections) == 1
+        and "condition" not in out_sections[0]
+        and "active" not in out_sections[0]
+    ):
         single = out_sections[0]
         layout = {
             "label": single.get("label", "Details"),
@@ -195,16 +218,18 @@ def _invert_event_type(client, et: dict, unsupported: list[str]) -> dict | None:
         out["fields"] = single["fields"]
     else:
         out["sections"] = out_sections
-    required = [k for k in (json_block.get("required") or []) if k in kept_keys]
+    required = [
+        k for k in list(json_block.get("required") or []) + extra_required if k in kept_keys
+    ]
     if required:
         out["required"] = required
     return out
 
 
 def _read_sections(json_block, ui_block, properties, ui_fields):
-    """Return a list of {label, columns, order, right} for a sectioned schema
-    the DSL can express (positional section-N ids, no headers/conditions), or a
-    reason string when it cannot."""
+    """Return a list of section dicts (label, columns, order, right, active,
+    condition, props, extra_required) for a sectioned schema the DSL can
+    express, or a reason string when it cannot."""
     sections = ui_block.get("sections") or {}
     order_ids = ui_block.get("order") or []
     if not sections:
@@ -216,17 +241,66 @@ def _read_sections(json_block, ui_block, properties, ui_fields):
         return f"layout section ids {order_ids!r} are not positional {expected_ids!r}"
     if ui_block.get("headers"):
         return "layout uses headers"
-    if json_block.get("allOf"):
-        return "layout uses conditional sections"
+
+    # conditional sections: each json.allOf block is tied to a section by
+    # x-section and carries that section's fields in then.properties
+    branches: dict[str, dict] = {}
+    for block in json_block.get("allOf") or []:
+        sid = block.get("x-section")
+        then = block.get("then") or {}
+        if not isinstance(sid, str) or not isinstance(then.get("properties"), dict):
+            return "layout uses a conditional block the DSL cannot express"
+        extra_block = set(block) - {"if", "then", "x-section"}
+        extra_then = set(then) - {"properties", "required"}
+        if extra_block or extra_then:
+            keywords = ", ".join(sorted(extra_block | extra_then))
+            return (
+                f"layout conditional block for {sid!r} carries keywords the DSL "
+                f"cannot express ({keywords})"
+            )
+        if sid in branches:
+            return f"layout has duplicate conditional branches for {sid!r}"
+        if sid not in sections:
+            return f"layout has a conditional branch for unknown section {sid!r}"
+        branches[sid] = {**then, "_if": block.get("if")}
 
     out: list[dict] = []
     all_keys: list[str] = []
     for sid in order_ids:
         section = sections[sid]
-        if section.get("isActive") is not True:
-            return f"layout section {sid!r} is inactive (isActive: false)"
-        if section.get("conditions"):
-            return "layout uses section conditions"
+        conditions = section.get("conditions") or []
+        condition = None
+        if conditions:
+            if len(conditions) > 1:
+                return f"layout section {sid!r} has multiple conditions"
+            cond = conditions[0]
+            extra_keys = set(cond) - {"field", "id", "operator", "value"}
+            if extra_keys:
+                return (
+                    f"layout section {sid!r} condition carries keys the DSL cannot "
+                    f"express ({', '.join(sorted(extra_keys))})"
+                )
+            if not isinstance(cond.get("field"), str) or not cond.get("field"):
+                return f"layout section {sid!r} condition has no field"
+            if not isinstance(cond.get("value"), str) or not cond.get("value"):
+                return f"layout section {sid!r} condition has an empty value"
+            if cond.get("operator") != "IS_EXACTLY":
+                return (
+                    f"layout section {sid!r} condition operator "
+                    f"{cond.get('operator')!r} is not supported yet"
+                )
+            if sid not in branches:
+                return f"layout section {sid!r} has a condition but no allOf branch"
+            expected_if = _encode_is_exactly(cond.get("field"), cond.get("value"))
+            if branches[sid].get("_if") != expected_if:
+                return f"layout section {sid!r} conditional branch does not match its UI condition"
+            condition = {
+                "field": cond.get("field"),
+                "operator": "is_exactly",
+                "value": cond.get("value"),
+            }
+        elif sid in branches:
+            return f"layout has an allOf branch for unconditioned section {sid!r}"
         label = section.get("label")
         columns = section.get("columns")
         if not isinstance(label, str) or columns not in (1, 2):
@@ -238,19 +312,89 @@ def _read_sections(json_block, ui_block, properties, ui_fields):
         if columns == 1 and right:
             return f"layout section {sid!r} puts fields in the right column of a 1-column section"
         all_keys.extend(left + right)
-        out.append({"label": label, "columns": columns, "order": left + right, "right": set(right)})
-    if set(all_keys) != set(properties) or set(all_keys) != set(ui_fields):
+        branch = branches.get(sid) or {}
+        if condition is not None and set(left + right) != set(branch.get("properties") or {}):
+            return (
+                f"layout section {sid!r} conditional branch properties do not "
+                "match its section columns"
+            )
+        out.append(
+            {
+                "label": label,
+                "columns": columns,
+                "order": left + right,
+                "right": set(right),
+                "active": section.get("isActive") is not False,
+                "condition": condition,
+                "props": branch.get("properties") if condition else properties,
+                "extra_required": list(branch.get("required") or []),
+            }
+        )
+    # requiredness must keep its scope: the generator routes required keys to
+    # where their fields live, so cross-scope entries would silently change
+    # from conditional to global (or vice versa) on re-apply
+    for r in json_block.get("required") or []:
+        if r not in properties:
+            return (
+                f"top-level required entry {r!r} is not a top-level property "
+                "(requiredness would change scope)"
+            )
+    for sid, then in branches.items():
+        for r in then.get("required") or []:
+            if not isinstance(r, str) or r not in (then.get("properties") or {}):
+                return (
+                    f"conditional branch for {sid!r} requires {r!r}, which is not "
+                    "one of its own properties (requiredness would change scope)"
+                )
+
+    # conditionalDependents must mirror the conditions exactly: the generator
+    # rebuilds them from the conditions, so any divergence (missing linkage,
+    # orphaned or extra dependents) would be silently rewritten on apply
+    expected_dependents: dict[str, list[str]] = {}
+    for sid, sec in zip(order_ids, out):
+        cond = sec["condition"]
+        if cond is not None:
+            expected_dependents.setdefault(cond["field"], []).append(sid)
+    for fkey, f in ui_fields.items():
+        actual = f.get("conditionalDependents") or []
+        if list(actual) != expected_dependents.get(fkey, []):
+            return (
+                f"ui field {fkey!r} has conditionalDependents {list(actual)!r} that "
+                "do not match its conditions"
+            )
+
+    # collection sub-fields appear in ui.fields as dotted keys under their
+    # collection's key; only dotted keys actually referenced by a collection's
+    # columns are exempt from coverage — anything else dotted is orphaned
+    collection_columns: set[str] = set()
+    for f in ui_fields.values():
+        if isinstance(f, dict) and f.get("type") == "COLLECTION":
+            collection_columns.update(f.get("leftColumn") or [])
+            collection_columns.update(f.get("rightColumn") or [])
+    top_ui_keys: set[str] = set()
+    for k in ui_fields:
+        if "." in k:
+            if k not in collection_columns:
+                return f"layout leaves dotted UI field {k!r} outside any collection"
+        else:
+            top_ui_keys.add(k)
+    expected = set(properties)
+    for then in branches.values():
+        expected |= set(then["properties"])
+    if set(all_keys) != expected or set(all_keys) != top_ui_keys:
         return "layout leaves fields outside the sections"
     return out
 
 
-def _invert_field(client, et_value, key, json_prop, ui_field):
+def _invert_field(client, et_value, key, json_prop, ui_field, all_ui_fields=None):
     """Return (dsl_field_dict, None) or (None, reason)."""
-    if json_prop.get("deprecated"):
-        return None, "deprecated fields have no DSL equivalent"
     ui_type = ui_field.get("type")
     out: dict = {"key": key, "label": json_prop.get("title")}
+    if json_prop.get("deprecated"):
+        out["active"] = False
 
+    if ui_type == "COLLECTION":
+        return _invert_collection(client, key, json_prop, ui_field, all_ui_fields or {}, out)
     if ui_type == "CHOICE_LIST":
         return _invert_choice_field(client, et_value, key, json_prop, ui_field, out)
     if ui_type == "TEXT":
@@ -290,6 +434,89 @@ def _invert_field(client, et_value, key, json_prop, ui_field):
         return None, f"UI field type {ui_type!r} has no DSL equivalent"
 
     _copy_extras(json_prop, ui_field, out)
+    return out, None
+
+
+def _invert_collection(client, key, json_prop, ui_field, all_ui_fields, out):
+    out["type"] = "collection"
+    item_name = ui_field.get("itemName")
+    if not isinstance(item_name, str) or not item_name:
+        return None, "collection has no itemName"
+    out["item_name"] = item_name
+    if ui_field.get("buttonText"):
+        out["button_text"] = ui_field["buttonText"]
+    if ui_field.get("itemIdentifier"):
+        out["item_identifier"] = ui_field["itemIdentifier"]
+    if ui_field.get("columns") == 2:
+        out["columns"] = 2
+    extra_outer = set(json_prop) - {
+        "type",
+        "title",
+        "deprecated",
+        "description",
+        "items",
+        "minItems",
+        "maxItems",
+        "unevaluatedItems",
+    }
+    items = json_prop.get("items") or {}
+    extra_items = set(items) - {"type", "properties", "required", "unevaluatedProperties"}
+    if extra_outer or extra_items:
+        keywords = ", ".join(sorted(extra_outer | extra_items))
+        return None, f"collection carries keywords the DSL cannot express ({keywords})"
+    props = items.get("properties") or {}
+    if not props:
+        return None, "collection has no sub-fields"
+    left = list(ui_field.get("leftColumn") or [])
+    right = list(ui_field.get("rightColumn") or [])
+    right_set = set(right)
+    sub_fields: list[dict] = []
+    seen: set[str] = set()
+    prefix = f"{key}."
+    for dotted in left + right:
+        if not isinstance(dotted, str) or not dotted.startswith(prefix):
+            return None, f"collection column {dotted!r} does not belong to this collection"
+        sub_key = dotted[len(prefix) :]
+        if "." in sub_key:
+            return None, f"collection column {dotted!r} is nested more than one level"
+        if sub_key in seen:
+            return None, f"collection has a duplicate column entry for {sub_key!r}"
+        seen.add(sub_key)
+        sub_json = props.get(sub_key)
+        if sub_json is None:
+            return None, f"collection sub-field {sub_key!r} has no json property"
+        sub_ui = all_ui_fields.get(dotted) or {}
+        if sub_ui.get("type") in ("COLLECTION", "CHOICE_LIST"):
+            return None, (
+                f"collection sub-field {sub_key!r} is a {sub_ui.get('type')}, "
+                "which is not supported inside a collection yet"
+            )
+        sub, reason = _invert_field(client, "", sub_key, sub_json, sub_ui, all_ui_fields)
+        if sub is None:
+            return None, f"collection sub-field {sub_key!r}: {reason}"
+        if dotted in right_set:
+            sub["column"] = "right"
+        sub_fields.append(sub)
+    if seen != set(props):
+        return None, "collection layout leaves sub-fields outside its columns"
+    if json_prop.get("minItems") is not None:
+        out["min"] = json_prop["minItems"]
+    if json_prop.get("maxItems") is not None:
+        out["max"] = json_prop["maxItems"]
+    out["fields"] = sub_fields
+    required = list(items.get("required") or [])
+    for r in required:
+        if not isinstance(r, str) or r not in props:
+            return None, (f"collection requires {r!r}, which is not one of its sub-fields")
+    if required:
+        out["required"] = required
+    # collections take description only; hint/default have no DSL form here
+    if ui_field.get("placeholder"):
+        return None, "collection has an unsupported placeholder"
+    if json_prop.get("default") not in (None, ""):
+        return None, "collection has an unsupported default"
+    if json_prop.get("description"):
+        out["description"] = json_prop["description"]
     return out, None
 
 
@@ -338,7 +565,8 @@ def _copy_extras(json_prop: dict, ui_field: dict, out: dict) -> None:
         out["hint"] = ui_field["placeholder"]
     if json_prop.get("description"):
         out["description"] = json_prop["description"]
-    if "default" in json_prop:
+    if "default" in json_prop and json_prop["default"] != "":
+        # default: "" is builder echo noise, wire-equivalent to no default
         out["default"] = json_prop["default"]
 
 

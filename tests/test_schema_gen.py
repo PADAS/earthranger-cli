@@ -331,3 +331,146 @@ def test_auto_resolve_and_ordernum_in_payload_only_when_declared():
     assert payload["auto_resolve"] is True
     assert payload["resolve_time"] == 12
     assert payload["ordernum"] == 30
+
+
+def _conditional_event_type():
+    from earthranger_cli.dsl import ConditionSpec, SectionSpec
+
+    return EventTypeSpec(
+        value="fire",
+        display="Fire",
+        fields=[],
+        required=["cause", "investigator"],
+        sections=[
+            SectionSpec(
+                label="",
+                fields=[
+                    FieldSpec(
+                        key="cause",
+                        label="Cause",
+                        type="select",
+                        options=[OptionSpec("manmade", "Manmade")],
+                    )
+                ],
+            ),
+            SectionSpec(
+                label="Arson",
+                condition=ConditionSpec(field="cause", operator="is_exactly", value="manmade"),
+                fields=[FieldSpec(key="investigator", label="Investigator", type="string")],
+            ),
+            SectionSpec(
+                label="Notes",
+                active=False,
+                fields=[FieldSpec(key="notes", label="Notes", type="textarea")],
+            ),
+        ],
+    )
+
+
+def test_conditional_section_envelope():
+    schema = build_schema(_conditional_event_type())
+    j, ui = schema["json"], schema["ui"]
+    # conditional fields live only in allOf.then, not top-level properties
+    assert sorted(j["properties"]) == ["cause", "notes"]
+    assert j["required"] == ["cause"]
+    assert len(j["allOf"]) == 1
+    block = j["allOf"][0]
+    assert block["x-section"] == "section-2"
+    assert sorted(block["then"]["properties"]) == ["investigator"]
+    assert block["then"]["required"] == ["investigator"]
+    iff = block["if"]["allOf"][0]
+    assert iff["required"] == ["cause"]
+    any_of = iff["properties"]["cause"]["anyOf"]
+    assert {"const": "manmade", "type": "string"} in any_of
+    assert {"allOf": [{"contains": {"const": "manmade"}}], "maxItems": 1, "type": "array"} in any_of
+    # ui: condition triple with deterministic id; controller gains the dependent
+    cond = ui["sections"]["section-2"]["conditions"][0]
+    assert cond == {
+        "field": "cause",
+        "id": "condition-section-2-1",
+        "operator": "IS_EXACTLY",
+        "value": "manmade",
+    }
+    assert ui["fields"]["cause"]["conditionalDependents"] == ["section-2"]
+    assert "conditions" not in ui["sections"]["section-1"]
+    # inactive section
+    assert ui["sections"]["section-3"]["isActive"] is False
+    assert ui["sections"]["section-1"]["isActive"] is True
+
+
+def test_non_conditional_schema_has_no_allof():
+    schema = build_schema(_event_type())
+    assert "allOf" not in schema["json"]
+
+
+def test_inactive_field_emits_deprecated_true():
+    json_prop, _ = build_property_pair(
+        FieldSpec(key="old", label="Old", type="string", active=False), "t1"
+    )
+    assert json_prop["deprecated"] is True
+
+
+def _collection_field():
+    return FieldSpec(
+        key="Demo1",
+        label="Demo1",
+        type="collection",
+        item_name="demo",
+        button_text="button1",
+        fields=[
+            FieldSpec(key="Text_1", label="Text 1", type="string"),
+            FieldSpec(key="Count", label="Count", type="integer"),
+        ],
+        required=["Text_1"],
+    )
+
+
+def test_collection_envelope():
+    et = EventTypeSpec(value="fire", display="Fire", fields=[_collection_field()])
+    schema = build_schema(et)
+    prop = schema["json"]["properties"]["Demo1"]
+    assert prop["type"] == "array"
+    assert prop["deprecated"] is False
+    assert prop["unevaluatedItems"] is False
+    items = prop["items"]
+    assert items["type"] == "object"
+    assert items["unevaluatedProperties"] is False
+    assert items["required"] == ["Text_1"]
+    assert items["properties"]["Text_1"] == {
+        "type": "string",
+        "title": "Text 1",
+        "deprecated": False,
+    }
+    assert items["properties"]["Count"]["type"] == "number"
+    ui = schema["ui"]
+    coll = ui["fields"]["Demo1"]
+    assert coll == {
+        "type": "COLLECTION",
+        "parent": "section-1",
+        "buttonText": "button1",
+        "columns": 1,
+        "itemIdentifier": "",
+        "itemName": "demo",
+        "leftColumn": ["Demo1.Text_1", "Demo1.Count"],
+        "rightColumn": [],
+    }
+    assert ui["fields"]["Demo1.Text_1"] == {
+        "type": "TEXT",
+        "inputType": "SHORT_TEXT",
+        "parent": "Demo1",
+    }
+    assert ui["fields"]["Demo1.Count"] == {"type": "NUMERIC", "parent": "Demo1"}
+    # the section column carries only the collection itself
+    assert schema["ui"]["sections"]["section-1"]["leftColumn"] == [
+        {"name": "Demo1", "type": "field"}
+    ]
+
+
+def test_collection_min_max_items():
+    f = _collection_field()
+    f.min = 1
+    f.max = 5
+    et = EventTypeSpec(value="fire", display="Fire", fields=[f])
+    prop = build_schema(et)["json"]["properties"]["Demo1"]
+    assert prop["minItems"] == 1
+    assert prop["maxItems"] == 5

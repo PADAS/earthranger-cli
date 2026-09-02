@@ -131,7 +131,9 @@ def test_empty_options_list_is_valid():
 
 def test_min_only_on_numeric():
     errors = _errors_for(_spec_with_field({"key": "f1", "label": "F", "type": "string", "min": 0}))
-    assert "event_types[0].fields[0].min: only allowed on integer/number fields" in errors
+    assert (
+        "event_types[0].fields[0].min: only allowed on integer/number/collection fields" in errors
+    )
 
 
 def test_required_must_name_declared_field():
@@ -878,4 +880,247 @@ def test_auto_resolve_validation():
     data = _spec_with_field({"key": "n", "label": "N", "type": "string"})
     data["event_types"][0]["ordernum"] = "first"
     errors = _errors_for(data)
-    assert any("ordernum" in e and "integer" in e for e in errors)
+    assert any("ordernum" in e and "number" in e for e in errors)
+
+
+CONDITIONAL = {
+    "category": {"value": "c1", "display": "C1"},
+    "event_types": [
+        {
+            "value": "fire",
+            "display": "Fire",
+            "sections": [
+                {
+                    "label": "",
+                    "fields": [
+                        {
+                            "key": "cause",
+                            "label": "Cause",
+                            "type": "select",
+                            "options": ["manmade", "natural"],
+                        }
+                    ],
+                },
+                {
+                    "label": "Arson",
+                    "condition": {"field": "cause", "operator": "is_exactly", "value": "manmade"},
+                    "fields": [{"key": "investigator", "label": "Investigator", "type": "string"}],
+                },
+                {
+                    "label": "Notes",
+                    "active": False,
+                    "fields": [{"key": "notes", "label": "Notes", "type": "textarea"}],
+                },
+            ],
+            "required": ["cause", "investigator"],
+        }
+    ],
+}
+
+
+def test_section_condition_and_active_parse():
+    import copy
+
+    spec = parse_spec(copy.deepcopy(CONDITIONAL))
+    sections = spec.event_types[0].sections
+    assert sections[0].condition is None and sections[0].active is True
+    cond = sections[1].condition
+    assert (cond.field, cond.operator, cond.value) == ("cause", "is_exactly", "manmade")
+    assert sections[2].active is False
+
+
+def test_section_condition_validation():
+    import copy
+
+    data = copy.deepcopy(CONDITIONAL)
+    data["event_types"][0]["sections"][1]["condition"]["operator"] = "contains"
+    errors = _errors_for(data)
+    assert any("operator" in e and "is_exactly" in e for e in errors)
+
+    data = copy.deepcopy(CONDITIONAL)
+    data["event_types"][0]["sections"][1]["condition"]["field"] = "nope"
+    errors = _errors_for(data)
+    assert any("condition.field" in e and "nope" in e for e in errors)
+
+    data = copy.deepcopy(CONDITIONAL)
+    data["event_types"][0]["sections"][1]["condition"]["field"] = "investigator"
+    errors = _errors_for(data)
+    assert any("own section" in e for e in errors)
+
+    data = copy.deepcopy(CONDITIONAL)
+    data["event_types"][0]["sections"][2]["active"] = "no"
+    errors = _errors_for(data)
+    assert any("active: must be true or false" in e for e in errors)
+
+
+def test_ordernum_accepts_fractional_ranks():
+    # ER's event-type ranking produces fractional ordernums (e.g. 0.5)
+    data = _spec_with_field({"key": "n", "label": "N", "type": "string"})
+    data["event_types"][0]["ordernum"] = 0.5
+    assert parse_spec(data).event_types[0].ordernum == 0.5
+
+
+def test_field_active_false_parses():
+    spec = parse_spec(
+        _spec_with_field({"key": "old", "label": "Old", "type": "string", "active": False})
+    )
+    assert spec.event_types[0].fields[0].active is False
+    errors = _errors_for(
+        _spec_with_field({"key": "old", "label": "Old", "type": "string", "active": "no"})
+    )
+    assert any("active: must be true or false" in e for e in errors)
+
+
+COLLECTION_FIELD = {
+    "key": "sightings",
+    "label": "Sightings",
+    "type": "collection",
+    "item_name": "sighting",
+    "button_text": "Add sighting",
+    "fields": [
+        {"key": "text_1", "label": "Text 1", "type": "string"},
+        {"key": "count", "label": "Count", "type": "integer"},
+    ],
+    "required": ["text_1"],
+}
+
+
+def test_collection_field_parses():
+    import copy
+
+    spec = parse_spec(_spec_with_field(copy.deepcopy(COLLECTION_FIELD)))
+    f = spec.event_types[0].fields[0]
+    assert f.type == "collection"
+    assert f.item_name == "sighting"
+    assert f.button_text == "Add sighting"
+    assert [sub.key for sub in f.fields] == ["text_1", "count"]
+    assert f.required == ["text_1"]
+
+
+def test_collection_validation():
+    import copy
+
+    data = copy.deepcopy(COLLECTION_FIELD)
+    del data["item_name"]
+    errors = _errors_for(_spec_with_field(data))
+    assert any("item_name" in e and "required" in e for e in errors)
+
+    data = copy.deepcopy(COLLECTION_FIELD)
+    data["fields"] = []
+    errors = _errors_for(_spec_with_field(data))
+    assert any("fields" in e and "at least one" in e for e in errors)
+
+    data = copy.deepcopy(COLLECTION_FIELD)
+    data["fields"].append({"key": "species", "label": "S", "type": "select", "options": ["a"]})
+    errors = _errors_for(_spec_with_field(data))
+    assert any("'select' is not supported inside a collection" in e for e in errors)
+
+    data = copy.deepcopy(COLLECTION_FIELD)
+    data["required"] = ["nope"]
+    errors = _errors_for(_spec_with_field(data))
+    assert any("'nope' is not a declared" in e for e in errors)
+
+    data = copy.deepcopy(COLLECTION_FIELD)
+    data["fields"][1]["key"] = "text_1"
+    errors = _errors_for(_spec_with_field(data))
+    assert any("duplicate key 'text_1'" in e for e in errors)
+
+
+def test_collection_only_keys_rejected_on_scalar_fields():
+    # Copilot r3909054834: columns/required were silently ignored on scalars
+    errors = _errors_for(
+        _spec_with_field({"key": "n", "label": "N", "type": "string", "required": ["x"]})
+    )
+    assert any("required: only allowed on collection fields" in e for e in errors)
+    errors = _errors_for(
+        _spec_with_field({"key": "n", "label": "N", "type": "string", "columns": 2})
+    )
+    assert any("columns: only allowed on collection fields" in e for e in errors)
+
+
+def test_ordernum_must_be_finite():
+    # NaN/inf are not valid JSON numbers (Copilot r3908976431)
+    for bad in (float("nan"), float("inf")):
+        data = _spec_with_field({"key": "n", "label": "N", "type": "string"})
+        data["event_types"][0]["ordernum"] = bad
+        errors = _errors_for(data)
+        assert any("ordernum" in e and "finite" in e for e in errors)
+
+
+def test_condition_controller_must_be_string_valued():
+    # the IS_EXACTLY encoding can never match boolean/number controllers
+    # (Copilot r3908976459)
+    import copy
+
+    data = copy.deepcopy(CONDITIONAL)
+    data["event_types"][0]["sections"][0]["fields"].append(
+        {"key": "flag", "label": "Flag", "type": "boolean"}
+    )
+    data["event_types"][0]["sections"][1]["condition"]["field"] = "flag"
+    errors = _errors_for(data)
+    assert any("condition.field" in e and "'flag'" in e and "boolean" in e for e in errors)
+
+
+def test_required_entries_validated_as_strings():
+    # unhashable/falsy shapes must produce SpecError, not TypeError
+    import copy
+
+    data = copy.deepcopy(COLLECTION_FIELD)
+    data["required"] = [[]]
+    errors = _errors_for(_spec_with_field(data))
+    assert any("required" in e and "string" in e for e in errors)
+
+    data = copy.deepcopy(COLLECTION_FIELD)
+    data["required"] = False
+    errors = _errors_for(_spec_with_field(data))
+    assert any("required: must be a list" in e for e in errors)
+
+    et_data = _spec_with_field({"key": "n", "label": "N", "type": "string"})
+    et_data["event_types"][0]["required"] = [{"x": 1}]
+    errors = _errors_for(et_data)
+    assert any("required" in e and "string" in e for e in errors)
+
+
+def test_huge_integer_ordernum_is_specerror_not_crash():
+    # math.isfinite(10**400) raises OverflowError (Copilot r3 suppressed dsl:386)
+    data = _spec_with_field({"key": "n", "label": "N", "type": "string"})
+    data["event_types"][0]["ordernum"] = 10**400
+    parsed = parse_spec(data)  # ints are always finite; must not crash
+    assert parsed.event_types[0].ordernum == 10**400
+
+
+def test_condition_dependency_cycles_rejected():
+    # Copilot r3909364204: A depends on B's field, B on A's -> both start hidden
+    import copy
+
+    data = copy.deepcopy(CONDITIONAL)
+    sections = data["event_types"][0]["sections"]
+    # section-1 (holds 'cause') becomes conditional on 'investigator' (section-2),
+    # while section-2 is already conditional on 'cause' (section-1)
+    sections[0]["condition"] = {
+        "field": "investigator",
+        "operator": "is_exactly",
+        "value": "someone",
+    }
+    errors = _errors_for(data)
+    assert any("cycle" in e for e in errors)
+
+
+def test_columns_true_rejected_everywhere():
+    # Copilot r4 suppressed dsl:639: True == 1 sneaks past `in (1, 2)`
+    import copy
+
+    data = _spec_with_field({"key": "n", "label": "N", "type": "string"})
+    data["event_types"][0]["layout"] = {"columns": True}
+    errors = _errors_for(data)
+    assert any("layout.columns" in e for e in errors)
+
+    data = copy.deepcopy(SECTIONED)
+    data["event_types"][0]["sections"][1]["columns"] = True
+    errors = _errors_for(data)
+    assert any("columns: must be 1 or 2" in e for e in errors)
+
+    data = copy.deepcopy(COLLECTION_FIELD)
+    data["columns"] = True
+    errors = _errors_for(_spec_with_field(data))
+    assert any("columns: must be 1 or 2" in e for e in errors)

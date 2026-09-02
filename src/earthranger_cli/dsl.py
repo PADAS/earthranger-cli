@@ -7,6 +7,7 @@ All problems are collected into one SpecError so users fix everything in one pas
 
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass, field
 
@@ -23,6 +24,7 @@ SUPPORTED_TYPES = {
     "url",
     "select",
     "multiselect",
+    "collection",
 }
 CHOICE_TYPES = {"select", "multiselect"}
 # EventType.default_priority vocabulary (das activity/constants.py)
@@ -69,6 +71,14 @@ class FieldSpec:
     format: str | None = None  # string fields only: url | email | uuid
     column: str = "left"  # "right" needs layout columns: 2
     choices_field: str | None = None  # explicit Choice.field name (overrides derivation)
+    active: bool = True  # false -> the field is deprecated/hidden on ER
+    # collection (sub-form) fields only:
+    fields: list[FieldSpec] | None = None  # sub-fields (scalar types only)
+    item_name: str | None = None  # ui itemName (required for collections)
+    button_text: str | None = None
+    item_identifier: str | None = None
+    columns: int = 1  # collection's own column layout; sub-fields may use column: right
+    required: list[str] = field(default_factory=list)  # required sub-field keys
 
 
 # Types whose ER UI variant has a placeholder slot (boolean/date/datetime don't).
@@ -93,10 +103,22 @@ class LayoutSpec:
 
 
 @dataclass
+class ConditionSpec:
+    """Show a section only when another field has a given value (ER's
+    conditional sections). Only the IS_EXACTLY operator is supported so far."""
+
+    field: str
+    operator: str  # "is_exactly"
+    value: str
+
+
+@dataclass
 class SectionSpec:
     label: str = "Details"
     columns: int = 1
     fields: list[FieldSpec] = field(default_factory=list)
+    active: bool = True
+    condition: ConditionSpec | None = None
 
 
 @dataclass
@@ -112,7 +134,7 @@ class EventTypeSpec:
     geometry_type: str | None = None  # "Point" | "Polygon"; immutable once set in ER
     auto_resolve: bool | None = None
     resolve_time: int | None = None  # hours; pairs with auto_resolve
-    ordernum: int | None = None  # explicit display order (spec order is NOT positional here)
+    ordernum: float | None = None  # explicit display rank; ER uses fractional inserts (0.5)
     default_state: str | None = None
     readonly: bool | None = None  # None = never sent; server value preserved
     layout: LayoutSpec = field(default_factory=LayoutSpec)
@@ -292,15 +314,21 @@ def _parse_event_type(raw: object, path: str, errors: list[str]) -> EventTypeSpe
                 seen_keys.add(f.key)
                 fields.append(f)
 
-    required_raw = raw.get("required") or []
-    if not isinstance(required_raw, list):
+    required_raw = raw.get("required")
+    if required_raw is None:
+        required_raw = []
+    elif not isinstance(required_raw, list):
         errors.append(f"{path}.required: must be a list of field keys")
         required_raw = []
     keys = {f.key for f in fields}
+    required: list[str] = []
     for r in required_raw:
-        if r not in keys:
+        if not isinstance(r, str):
+            errors.append(f"{path}.required: entries must be strings (field keys)")
+        elif r not in keys:
             errors.append(f"{path}.required: {r!r} is not a declared field key")
-    required = [r for r in required_raw if r in keys]
+        else:
+            required.append(r)
 
     is_active = raw.get("is_active", True)
     if not isinstance(is_active, bool):
@@ -351,8 +379,12 @@ def _parse_event_type(raw: object, path: str, errors: list[str]) -> EventTypeSpe
             "ER stores the flag but never auto-resolves anything"
         )
     ordernum = raw.get("ordernum")
-    if ordernum is not None and (isinstance(ordernum, bool) or not isinstance(ordernum, int)):
-        errors.append(f"{path}.ordernum: must be an integer")
+    if ordernum is not None and (
+        isinstance(ordernum, bool)
+        or not isinstance(ordernum, (int, float))
+        or (isinstance(ordernum, float) and not math.isfinite(ordernum))
+    ):
+        errors.append(f"{path}.ordernum: must be a finite number")
         ordernum = None
 
     geometry_type = raw.get("geometry_type")
@@ -407,9 +439,14 @@ def _parse_sections(raw: object, path: str, errors: list[str]) -> list[SectionSp
             errors.append(f"{sec_path}.label: must be a string")
             label = "Details"
         columns = sec_raw.get("columns", 1)
-        if columns not in (1, 2):
+        if isinstance(columns, bool) or columns not in (1, 2):
             errors.append(f"{sec_path}.columns: must be 1 or 2")
             columns = 1
+        active = sec_raw.get("active", True)
+        if not isinstance(active, bool):
+            errors.append(f"{sec_path}.active: must be true or false")
+            active = True
+        condition = _parse_condition(sec_raw.get("condition"), f"{sec_path}.condition", errors)
         fields_raw = sec_raw.get("fields")
         sec_fields: list[FieldSpec] = []
         if not isinstance(fields_raw, list) or not fields_raw:
@@ -425,8 +462,85 @@ def _parse_sections(raw: object, path: str, errors: list[str]) -> list[SectionSp
                         f"{sec_path}.fields[{j}].column: 'right' requires section columns: 2"
                     )
                 sec_fields.append(f)
-        sections.append(SectionSpec(label=label, columns=columns, fields=sec_fields))
+        sections.append(
+            SectionSpec(
+                label=label,
+                columns=columns,
+                fields=sec_fields,
+                active=active,
+                condition=condition,
+            )
+        )
+    _check_conditions(sections, path, errors)
     return sections
+
+
+def _parse_condition(raw: object, path: str, errors: list[str]) -> ConditionSpec | None:
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        errors.append(f"{path}: must be a mapping with field, operator, value")
+        return None
+    operator = raw.get("operator")
+    if operator != "is_exactly":
+        errors.append(f"{path}.operator: {operator!r} is not supported (supported: is_exactly)")
+        return None
+    field_key = raw.get("field")
+    value = raw.get("value")
+    if not isinstance(field_key, str) or not field_key:
+        errors.append(f"{path}.field: required string (a field key)")
+        return None
+    if not isinstance(value, str) or not value:
+        errors.append(f"{path}.value: required string")
+        return None
+    return ConditionSpec(field=field_key, operator=operator, value=value)
+
+
+def _check_conditions(sections: list[SectionSpec], path: str, errors: list[str]) -> None:
+    all_keys = {f.key for sec in sections for f in sec.fields}
+    owner = {f.key: i for i, sec in enumerate(sections) for f in sec.fields}
+    # conditional sections must not form dependency cycles: if A's controller
+    # lives in B and B's in A, both start hidden and neither can be filled in
+    for start, sec in enumerate(sections):
+        if sec.condition is None:
+            continue
+        seen = {start}
+        current = sec
+        while current.condition is not None:
+            nxt = owner.get(current.condition.field)
+            if nxt is None:
+                break
+            if nxt in seen:
+                errors.append(
+                    f"{path}[{start}].condition: conditional sections form a "
+                    "dependency cycle (each controller lives in a section that is "
+                    "itself hidden until the other is filled)"
+                )
+                break
+            seen.add(nxt)
+            current = sections[nxt]
+    for k, sec in enumerate(sections):
+        cond = sec.condition
+        if cond is None:
+            continue
+        sec_path = f"{path}[{k}].condition"
+        controller = next(
+            (f for sec2 in sections for f in sec2.fields if f.key == cond.field), None
+        )
+        string_valued = ("string", "textarea", "url", "select", "multiselect")
+        if cond.field not in all_keys:
+            errors.append(f"{sec_path}.field: {cond.field!r} is not a declared field key")
+        elif controller is not None and controller.type not in string_valued:
+            errors.append(
+                f"{sec_path}.field: {cond.field!r} is a {controller.type} field — "
+                "ER's IS_EXACTLY condition encoding can only match string-valued "
+                f"controllers ({', '.join(string_valued)})"
+            )
+        elif any(f.key == cond.field for f in sec.fields):
+            errors.append(
+                f"{sec_path}.field: {cond.field!r} lives in the section's own section — "
+                "the controlling field must be outside the conditional section"
+            )
 
 
 def _parse_layout(raw: object, path: str, errors: list[str]) -> LayoutSpec:
@@ -440,7 +554,7 @@ def _parse_layout(raw: object, path: str, errors: list[str]) -> LayoutSpec:
         errors.append(f"{path}.label: must be a string")
         label = "Details"
     columns = raw.get("columns", 1)
-    if columns not in (1, 2):
+    if isinstance(columns, bool) or columns not in (1, 2):
         errors.append(f"{path}.columns: must be 1 or 2")
         columns = 1
     return LayoutSpec(label=label, columns=columns)
@@ -473,11 +587,13 @@ def _parse_field(raw: object, path: str, errors: list[str]) -> FieldSpec:
     maximum = raw.get("max")
     for name, val in (("min", minimum), ("max", maximum)):
         if val is not None:
-            if ftype not in NUMERIC_TYPES:
-                errors.append(f"{path}.{name}: only allowed on integer/number fields")
+            if ftype not in NUMERIC_TYPES and ftype != "collection":
+                errors.append(f"{path}.{name}: only allowed on integer/number/collection fields")
             elif isinstance(val, bool) or not isinstance(val, (int, float)):
                 errors.append(f"{path}.{name}: must be a number")
-    if ftype not in NUMERIC_TYPES:
+            elif ftype == "collection" and (not isinstance(val, int) or val < 0):
+                errors.append(f"{path}.{name}: must be a non-negative integer for a collection")
+    if ftype not in NUMERIC_TYPES and ftype != "collection":
         minimum = maximum = None
 
     hint = raw.get("hint")
@@ -520,6 +636,71 @@ def _parse_field(raw: object, path: str, errors: list[str]) -> FieldSpec:
             )
             choices_field = None
 
+    field_active = raw.get("active", True)
+    if not isinstance(field_active, bool):
+        errors.append(f"{path}.active: must be true or false")
+        field_active = True
+
+    sub_fields: list[FieldSpec] | None = None
+    item_name = raw.get("item_name")
+    button_text = raw.get("button_text")
+    item_identifier = raw.get("item_identifier")
+    sub_required: list = []
+    coll_columns = 1
+    if ftype == "collection":
+        if not isinstance(item_name, str) or not item_name:
+            errors.append(f"{path}.item_name: required string for a collection")
+            item_name = None
+        for name, val in (("button_text", button_text), ("item_identifier", item_identifier)):
+            if val is not None and not isinstance(val, str):
+                errors.append(f"{path}.{name}: must be a string")
+        coll_columns = raw.get("columns", 1)
+        if isinstance(coll_columns, bool) or coll_columns not in (1, 2):
+            errors.append(f"{path}.columns: must be 1 or 2")
+            coll_columns = 1
+        sub_raw = raw.get("fields")
+        sub_fields = []
+        if not isinstance(sub_raw, list) or not sub_raw:
+            errors.append(f"{path}.fields: at least one sub-field is required")
+        else:
+            seen_sub: set[str] = set()
+            for j, f_raw in enumerate(sub_raw):
+                sub = _parse_field(f_raw, f"{path}.fields[{j}]", errors)
+                if sub.type in CHOICE_TYPES or sub.type == "collection":
+                    errors.append(
+                        f"{path}.fields[{j}].type: {sub.type!r} is not supported "
+                        "inside a collection yet"
+                    )
+                    continue
+                if sub.key and sub.key in seen_sub:
+                    errors.append(f"{path}.fields[{j}].key: duplicate key {sub.key!r}")
+                seen_sub.add(sub.key)
+                if sub.column == "right" and coll_columns != 2:
+                    errors.append(
+                        f"{path}.fields[{j}].column: 'right' requires collection columns: 2"
+                    )
+                sub_fields.append(sub)
+        sub_required_raw = raw.get("required")
+        if sub_required_raw is None:
+            sub_required_raw = []
+        elif not isinstance(sub_required_raw, list):
+            errors.append(f"{path}.required: must be a list of sub-field keys")
+            sub_required_raw = []
+        sub_keys = {f.key for f in sub_fields}
+        for r in sub_required_raw:
+            if not isinstance(r, str):
+                errors.append(f"{path}.required: entries must be strings (sub-field keys)")
+            elif r not in sub_keys:
+                errors.append(f"{path}.required: {r!r} is not a declared sub-field key")
+            elif r not in sub_required:
+                sub_required.append(r)
+    else:
+        for name in ("item_name", "button_text", "item_identifier", "columns", "required"):
+            if raw.get(name) is not None:
+                errors.append(f"{path}.{name}: only allowed on collection fields")
+        if raw.get("fields") is not None:
+            errors.append(f"{path}.fields: only allowed on collection fields")
+
     column = raw.get("column", "left")
     if column not in ("left", "right"):
         errors.append(f"{path}.column: must be 'left' or 'right'")
@@ -548,6 +729,13 @@ def _parse_field(raw: object, path: str, errors: list[str]) -> FieldSpec:
         format=fmt,
         column=column,
         choices_field=choices_field,
+        active=field_active,
+        fields=sub_fields,
+        item_name=item_name if ftype == "collection" else None,
+        button_text=button_text if ftype == "collection" else None,
+        item_identifier=item_identifier if ftype == "collection" else None,
+        columns=coll_columns,
+        required=sub_required,
     )
 
 

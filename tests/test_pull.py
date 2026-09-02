@@ -178,16 +178,17 @@ def test_pull_skips_schema_with_auto_generate():
     assert "sighting" not in [t["value"] for t in result.spec["event_types"]]
 
 
-def test_pull_skips_event_type_with_inactive_section():
+def test_pull_inactive_section_round_trips():
+    # inactive sections are now expressible: pulled as active: false
     fake = _server_from_spec(SPEC_DATA)
     et = fake.event_types[0]
     et["schema"]["ui"]["sections"]["section-1"]["isActive"] = False
     result = pull_category(fake, "wm")
-    assert any(
-        "sighting" in w and "layout section 'section-1' is inactive (isActive: false)" in w
-        for w in result.unsupported
-    )
-    assert "sighting" not in [t["value"] for t in result.spec["event_types"]]
+    assert result.unsupported == []
+    pulled = next(t for t in result.spec["event_types"] if t["value"] == "sighting")
+    assert pulled["sections"][0]["active"] is False
+    records = apply_spec(fake, parse_spec(result.spec))
+    assert {r.action for r in records} == {"unchanged"}
 
 
 def test_pull_handles_json_stringified_v2_schema():
@@ -485,3 +486,406 @@ def test_pull_emits_auto_resolve_and_ordernum():
         assert key not in other
     records = apply_spec(fake, parse_spec(result.spec))
     assert {r.action for r in records} == {"unchanged"}
+
+
+CONDITIONAL_SPEC = {
+    "category": {"value": "wm", "display": "Wildlife Monitoring"},
+    "event_types": [
+        {
+            "value": "fire",
+            "display": "Fire",
+            "sections": [
+                {
+                    "label": "",
+                    "fields": [
+                        {
+                            "key": "cause",
+                            "label": "Cause",
+                            "type": "select",
+                            "options": ["manmade", "natural"],
+                        }
+                    ],
+                },
+                {
+                    "label": "Arson",
+                    "condition": {"field": "cause", "operator": "is_exactly", "value": "manmade"},
+                    "fields": [{"key": "investigator", "label": "Investigator", "type": "string"}],
+                },
+                {
+                    "label": "Notes",
+                    "active": False,
+                    "fields": [{"key": "notes", "label": "Notes", "type": "textarea"}],
+                },
+            ],
+            "required": ["cause", "investigator"],
+        }
+    ],
+}
+
+
+def test_pull_round_trips_conditional_and_inactive_sections():
+    fake = _server_from_spec(CONDITIONAL_SPEC)
+    # the server's condition ids are random; ours are deterministic — the diff
+    # must not care
+    fake.event_types[0]["schema"]["ui"]["sections"]["section-2"]["conditions"][0]["id"] = (
+        "condition-yNlkNW7x_2y5QesCt2J6f"
+    )
+    result = pull_category(fake, "wm")
+    assert result.unsupported == []
+    et = result.spec["event_types"][0]
+    assert et["sections"][1]["condition"] == {
+        "field": "cause",
+        "operator": "is_exactly",
+        "value": "manmade",
+    }
+    assert et["sections"][2]["active"] is False
+    assert sorted(et["required"]) == ["cause", "investigator"]
+    records = apply_spec(fake, parse_spec(result.spec))
+    assert {r.action for r in records} == {"unchanged"}
+    assert fake.writes() == []
+
+
+def test_pull_unsupported_condition_operator_named():
+    fake = _server_from_spec(CONDITIONAL_SPEC)
+    ui = fake.event_types[0]["schema"]["ui"]
+    ui["sections"]["section-2"]["conditions"][0]["operator"] = "CONTAINS"
+    result = pull_category(fake, "wm")
+    assert any("CONTAINS" in w and "not" in w for w in result.unsupported)
+    assert "fire" not in [t["value"] for t in result.spec["event_types"]]
+
+
+def test_pull_tolerates_collection_subfield_ui_keys():
+    fake = _server_from_spec(SPEC_DATA)
+    et = fake.event_types[0]
+    schema = et["schema"]
+    schema["json"]["properties"]["stuff"] = {
+        "type": "array",
+        "title": "Stuff",
+        "deprecated": False,
+        "items": {},
+        "unevaluatedItems": False,
+    }
+    schema["ui"]["fields"]["stuff"] = {
+        "type": "COLLECTION",
+        "parent": "section-1",
+        "columns": 1,
+        "itemName": "Item",
+        "leftColumn": [],
+        "rightColumn": [],
+    }
+    schema["ui"]["fields"]["stuff.inner"] = {
+        "type": "TEXT",
+        "inputType": "SHORT_TEXT",
+        "parent": "stuff",
+    }
+    schema["ui"]["sections"]["section-1"]["leftColumn"].append({"name": "stuff", "type": "field"})
+    result = pull_category(fake, "wm")
+    # its dotted key is orphaned (the fabricated collection's columns are
+    # empty), so the layout refuses rather than silently dropping the entry
+    assert any("stuff.inner" in w and "outside any collection" in w for w in result.unsupported)
+    assert "sighting" not in [t["value"] for t in result.spec["event_types"]]
+
+
+def test_pull_deprecated_field_round_trips_as_inactive():
+    fake = _server_from_spec(SPEC_DATA)
+    et = fake.event_types[0]
+    et["schema"]["json"]["properties"]["notes"]["deprecated"] = True
+    result = pull_category(fake, "wm")
+    assert result.unsupported == []
+    pulled = next(t for t in result.spec["event_types"] if t["value"] == "sighting")
+    notes = next(f for f in pulled["fields"] if f["key"] == "notes")
+    assert notes["active"] is False
+    records = apply_spec(fake, parse_spec(result.spec))
+    assert {r.action for r in records} == {"unchanged"}
+
+
+COLLECTION_SPEC = {
+    "category": {"value": "wm", "display": "Wildlife Monitoring"},
+    "event_types": [
+        {
+            "value": "fire",
+            "display": "Fire",
+            "fields": [
+                {"key": "title", "label": "Title", "type": "string"},
+                {
+                    "key": "Demo1",
+                    "label": "Demo1",
+                    "type": "collection",
+                    "item_name": "demo",
+                    "button_text": "button1",
+                    "fields": [
+                        {"key": "Text_1", "label": "Text 1", "type": "string"},
+                        {"key": "Count", "label": "Count", "type": "number"},
+                    ],
+                    "required": ["Text_1"],
+                },
+            ],
+        }
+    ],
+}
+
+
+def test_pull_round_trips_collections():
+    fake = _server_from_spec(COLLECTION_SPEC)
+    # simulate ER builder echo noise inside the collection's items
+    items = fake.event_types[0]["schema"]["json"]["properties"]["Demo1"]["items"]
+    for prop in items["properties"].values():
+        prop["description"] = ""
+        prop["default"] = ""
+    result = pull_category(fake, "wm")
+    assert result.unsupported == []
+    pulled = result.spec["event_types"][0]
+    coll = next(f for f in pulled["fields"] if f["key"] == "Demo1")
+    assert coll["type"] == "collection"
+    assert coll["item_name"] == "demo"
+    assert coll["button_text"] == "button1"
+    assert [sub["key"] for sub in coll["fields"]] == ["Text_1", "Count"]
+    assert coll["required"] == ["Text_1"]
+    records = apply_spec(fake, parse_spec(result.spec))
+    assert {r.action for r in records} == {"unchanged"}
+    assert fake.writes() == []
+
+
+def test_pull_nested_collection_refused_by_name():
+    fake = _server_from_spec(COLLECTION_SPEC)
+    items = fake.event_types[0]["schema"]["json"]["properties"]["Demo1"]["items"]
+    items["properties"]["inner"] = {
+        "type": "array",
+        "title": "Inner",
+        "deprecated": False,
+        "items": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "unevaluatedProperties": False,
+        },
+        "unevaluatedItems": False,
+    }
+    ui = fake.event_types[0]["schema"]["ui"]["fields"]
+    ui["Demo1.inner"] = {
+        "type": "COLLECTION",
+        "parent": "Demo1",
+        "columns": 1,
+        "itemName": "x",
+        "leftColumn": [],
+        "rightColumn": [],
+    }
+    ui["Demo1"]["leftColumn"].append("Demo1.inner")
+    result = pull_category(fake, "wm")
+    assert any("Demo1" in w and "inner" in w for w in result.unsupported)
+
+
+def test_pull_preserves_collection_right_column_order():
+    # Copilot r3909054870: sorted(right) reordered intentionally ordered columns
+    import copy
+
+    spec_data = copy.deepcopy(COLLECTION_SPEC)
+    coll = spec_data["event_types"][0]["fields"][1]
+    coll["columns"] = 2
+    coll["fields"] = [
+        {"key": "left_1", "label": "L1", "type": "string"},
+        {"key": "z_right", "label": "Z", "type": "string", "column": "right"},
+        {"key": "a_right", "label": "A", "type": "string", "column": "right"},
+    ]
+    coll["required"] = []
+    fake = _server_from_spec(spec_data)
+    result = pull_category(fake, "wm")
+    assert result.unsupported == []
+    pulled_coll = next(f for f in result.spec["event_types"][0]["fields"] if f["key"] == "Demo1")
+    assert [s["key"] for s in pulled_coll["fields"]] == ["left_1", "z_right", "a_right"]
+    records = apply_spec(fake, parse_spec(result.spec))
+    assert {r.action for r in records} == {"unchanged"}
+
+
+def test_pull_refuses_mismatched_conditional_predicate():
+    # Copilot suppressed pull.py:243: json if-branch must match the UI condition
+    fake = _server_from_spec(CONDITIONAL_SPEC)
+    block = fake.event_types[0]["schema"]["json"]["allOf"][0]
+    block["if"]["allOf"][0]["properties"]["cause"]["anyOf"][-1]["const"] = "natural"
+    result = pull_category(fake, "wm")
+    assert any("fire" in w and "does not match its UI condition" in w for w in result.unsupported)
+    assert "fire" not in [t["value"] for t in result.spec["event_types"]]
+
+
+def test_pull_drops_conditional_section_when_controller_skipped():
+    # Copilot suppressed pull.py:180: a condition referencing a skipped field
+    # must not produce an unparseable spec
+    fake = _server_from_spec(CONDITIONAL_SPEC)
+    schema = fake.event_types[0]["schema"]
+    # make the controlling field unsupported (pattern validation)
+    schema["json"]["properties"]["cause"]["pattern"] = "^[a-zA-Z0-9]+$"
+    del schema["json"]["properties"]["cause"]["anyOf"]
+    schema["ui"]["fields"]["cause"] = {
+        "type": "TEXT",
+        "inputType": "SHORT_TEXT",
+        "parent": "section-1",
+        "conditionalDependents": ["section-2"],
+    }
+    result = pull_category(fake, "wm")
+    assert any("controlling field" in w and "cause" in w for w in result.unsupported)
+    pulled = next(t for t in result.spec["event_types"] if t["value"] == "fire")
+    parse_spec(result.spec)  # the pulled spec must still parse
+    assert all("condition" not in s for s in pulled.get("sections", []))
+
+
+def test_pull_refuses_crossed_branch_section_association():
+    # Copilot r3909107709: crossed x-section/properties must refuse, not KeyError
+    fake = _server_from_spec(CONDITIONAL_SPEC)
+    j = fake.event_types[0]["schema"]["json"]
+    j["allOf"][0]["then"]["properties"] = {
+        "someone_elses_key": {"type": "string", "title": "X", "deprecated": False}
+    }
+    j["properties"]["investigator"] = {"type": "string", "title": "I", "deprecated": False}
+    result = pull_category(fake, "wm")
+    assert any("fire" in w and "match its section" in w for w in result.unsupported)
+
+
+def test_pull_collection_with_unsupported_extras_refused():
+    fake = _server_from_spec(COLLECTION_SPEC)
+    props = fake.event_types[0]["schema"]["json"]["properties"]
+    props["Demo1"]["default"] = "weird"
+    result = pull_category(fake, "wm")
+    assert any("Demo1" in w and "default" in w for w in result.unsupported)
+
+
+def test_pull_refuses_collection_without_item_name():
+    # Copilot r3909282552
+    fake = _server_from_spec(COLLECTION_SPEC)
+    del fake.event_types[0]["schema"]["ui"]["fields"]["Demo1"]["itemName"]
+    result = pull_category(fake, "wm")
+    assert any("Demo1" in w and "itemName" in w for w in result.unsupported)
+
+
+def test_pull_refuses_duplicate_or_unknown_branch_sections():
+    # Copilot r3 suppressed pull:253
+    import copy
+
+    fake = _server_from_spec(CONDITIONAL_SPEC)
+    j = fake.event_types[0]["schema"]["json"]
+    j["allOf"].append(copy.deepcopy(j["allOf"][0]))
+    result = pull_category(fake, "wm")
+    assert any("duplicate conditional branch" in w for w in result.unsupported)
+
+    fake = _server_from_spec(CONDITIONAL_SPEC)
+    j = fake.event_types[0]["schema"]["json"]
+    j["allOf"][0]["x-section"] = "section-99"
+    result = pull_category(fake, "wm")
+    assert any("unknown section" in w for w in result.unsupported)
+
+
+def test_pull_refuses_orphaned_dotted_ui_keys():
+    # Copilot r3 suppressed pull:313: dotted keys not referenced by any
+    # collection's columns must refuse, not silently vanish
+    fake = _server_from_spec(SPEC_DATA)
+    fake.event_types[0]["schema"]["ui"]["fields"]["ghost.sub"] = {
+        "type": "TEXT",
+        "inputType": "SHORT_TEXT",
+        "parent": "ghost",
+    }
+    result = pull_category(fake, "wm")
+    assert any("ghost.sub" in w for w in result.unsupported)
+
+
+def test_pull_refuses_extra_conditional_keywords():
+    # Copilot r3909364234: else / then.minProperties would be silently deleted
+
+    fake = _server_from_spec(CONDITIONAL_SPEC)
+    fake.event_types[0]["schema"]["json"]["allOf"][0]["else"] = {"properties": {}}
+    result = pull_category(fake, "wm")
+    assert any("else" in w for w in result.unsupported)
+
+    fake = _server_from_spec(CONDITIONAL_SPEC)
+    fake.event_types[0]["schema"]["json"]["allOf"][0]["then"]["minProperties"] = 1
+    result = pull_category(fake, "wm")
+    assert any("minProperties" in w for w in result.unsupported)
+
+
+def test_pull_refuses_unsupported_collection_keywords():
+    # Copilot r3909448464
+    fake = _server_from_spec(COLLECTION_SPEC)
+    props = fake.event_types[0]["schema"]["json"]["properties"]
+    props["Demo1"]["uniqueItems"] = True
+    result = pull_category(fake, "wm")
+    assert any("Demo1" in w and "uniqueItems" in w for w in result.unsupported)
+
+    fake = _server_from_spec(COLLECTION_SPEC)
+    props = fake.event_types[0]["schema"]["json"]["properties"]
+    props["Demo1"]["items"]["minProperties"] = 1
+    result = pull_category(fake, "wm")
+    assert any("Demo1" in w and "minProperties" in w for w in result.unsupported)
+
+
+def test_pull_refuses_foreign_or_duplicate_collection_columns():
+    # Copilot r3909448540
+    fake = _server_from_spec(COLLECTION_SPEC)
+    ui = fake.event_types[0]["schema"]["ui"]["fields"]["Demo1"]
+    ui["leftColumn"][0] = "Other.Text_1"
+    result = pull_category(fake, "wm")
+    # refused either as a foreign column or as the orphaned real sub-field
+    assert any("Other.Text_1" in w or "Demo1.Text_1" in w for w in result.unsupported)
+
+    fake = _server_from_spec(COLLECTION_SPEC)
+    ui = fake.event_types[0]["schema"]["ui"]["fields"]["Demo1"]
+    ui["leftColumn"].append(ui["leftColumn"][0])
+    result = pull_category(fake, "wm")
+    assert any("duplicate" in w and "Demo1" in w for w in result.unsupported)
+
+
+def test_pull_refuses_broken_conditional_dependents_linkage():
+    # Copilot r5 suppressed pull:290
+    fake = _server_from_spec(CONDITIONAL_SPEC)
+    ui = fake.event_types[0]["schema"]["ui"]["fields"]
+    ui["cause"]["conditionalDependents"] = []  # missing linkage
+    result = pull_category(fake, "wm")
+    assert any("conditionalDependents" in w for w in result.unsupported)
+
+    fake = _server_from_spec(CONDITIONAL_SPEC)
+    ui = fake.event_types[0]["schema"]["ui"]["fields"]
+    ui["notes"] = ui.get("notes") or {}
+    ui["investigator"]["conditionalDependents"] = ["section-3"]  # orphaned extra
+    result = pull_category(fake, "wm")
+    assert any("conditionalDependents" in w for w in result.unsupported)
+
+
+def test_pull_refuses_required_scope_shifts():
+    # r6 suppressed pull:223/320 — requiredness must keep its scope
+    fake = _server_from_spec(CONDITIONAL_SPEC)
+    j = fake.event_types[0]["schema"]["json"]
+    j["required"] = ["investigator"]  # branch-scoped field required globally
+    result = pull_category(fake, "wm")
+    assert any("required" in w and "investigator" in w for w in result.unsupported)
+
+    fake = _server_from_spec(CONDITIONAL_SPEC)
+    j = fake.event_types[0]["schema"]["json"]
+    j["allOf"][0]["then"]["required"] = ["cause"]  # top-level field required in branch
+    result = pull_category(fake, "wm")
+    assert any("required" in w and "cause" in w for w in result.unsupported)
+
+
+def test_pull_refuses_malformed_ui_conditions():
+    # r6 suppressed pull:284
+    fake = _server_from_spec(CONDITIONAL_SPEC)
+    conds = fake.event_types[0]["schema"]["ui"]["sections"]["section-2"]["conditions"]
+    conds[0]["extra_knob"] = "x"
+    result = pull_category(fake, "wm")
+    assert any("extra_knob" in w for w in result.unsupported)
+
+    fake = _server_from_spec(CONDITIONAL_SPEC)
+    schema = fake.event_types[0]["schema"]
+    conds = schema["ui"]["sections"]["section-2"]["conditions"]
+    conds[0]["value"] = ""
+    # keep the json branch consistent with the empty value
+    from earthranger_cli.schema_gen import _encode_is_exactly
+
+    schema["json"]["allOf"][0]["if"] = _encode_is_exactly("cause", "")
+    result = pull_category(fake, "wm")
+    assert any("condition" in w and "value" in w for w in result.unsupported)
+
+
+def test_pull_refuses_unknown_collection_required():
+    # r6 suppressed pull:482
+    fake = _server_from_spec(COLLECTION_SPEC)
+    items = fake.event_types[0]["schema"]["json"]["properties"]["Demo1"]["items"]
+    items["required"] = ["ghost"]
+    result = pull_category(fake, "wm")
+    assert any("Demo1" in w and "ghost" in w for w in result.unsupported)

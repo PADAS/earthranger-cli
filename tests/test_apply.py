@@ -282,3 +282,62 @@ def test_auto_resolve_and_ordernum_diffed_only_when_declared():
     apply_spec(fake, spec)
     patched = next(c for c in fake.calls if c[0] == "patch_event_type")
     assert patched[1]["resolve_time"] == 12
+
+
+def test_condition_ids_are_canonicalized_in_diff():
+    import copy as _copy
+
+    from earthranger_cli.apply import _canonical_schema
+    from earthranger_cli.dsl import parse_spec as _ps
+    from earthranger_cli.schema_gen import build_event_type_payload as _bp
+
+    spec = _ps(
+        {
+            "category": {"value": "c", "display": "C"},
+            "event_types": [
+                {
+                    "value": "t",
+                    "display": "T",
+                    "sections": [
+                        {"label": "", "fields": [{"key": "a", "label": "A", "type": "string"}]},
+                        {
+                            "label": "X",
+                            "condition": {"field": "a", "operator": "is_exactly", "value": "x"},
+                            "fields": [{"key": "b", "label": "B", "type": "string"}],
+                        },
+                    ],
+                }
+            ],
+        }
+    )
+    schema = _bp(spec.event_types[0], "c")["schema"]
+    other = _copy.deepcopy(schema)
+    other["ui"]["sections"]["section-2"]["conditions"][0]["id"] = "condition-random123"
+    assert _canonical_schema(schema) == _canonical_schema(other)
+
+
+def test_canonical_strips_echo_noise_in_nested_properties():
+    import copy as _copy
+
+    from earthranger_cli.apply import _canonical_schema
+
+    schema = {
+        "json": {
+            "properties": {"a": {"type": "string", "title": "A", "deprecated": False}},
+            "allOf": [
+                {
+                    "if": {},
+                    "then": {
+                        "properties": {"b": {"type": "string", "title": "B", "deprecated": False}}
+                    },
+                    "x-section": "section-2",
+                }
+            ],
+        },
+        "ui": {"fields": {}, "headers": {}, "order": [], "sections": {}},
+    }
+    noisy = _copy.deepcopy(schema)
+    noisy["json"]["properties"]["a"]["description"] = ""
+    noisy["json"]["properties"]["a"]["default"] = ""
+    noisy["json"]["allOf"][0]["then"]["properties"]["b"]["description"] = ""
+    assert _canonical_schema(schema) == _canonical_schema(noisy)

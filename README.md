@@ -75,8 +75,8 @@ export ER_PASSWORD=...              # or --password; omit both to be prompted
 ```
 
 If the cached session's refresh token has expired, commands fail with
-`error: cached session for <host> expired or invalid — run 'er-events
-auth login'`.
+`error: cached session for <host> expired or invalid — run 'er auth
+login'`.
 
 ## Walkthrough
 
@@ -123,10 +123,11 @@ auth login'`.
 5. Absorb server-side edits into your file: if someone changed a value
    in ER's UI, `er events pull wildlife_monitoring -o spec.yaml`
    rewrites your spec from the live server; `apply --dry-run` should
-   then report all `unchanged`. Constructs the DSL can't express
-   (headers, conditional sections, non-positional section ids,
-   auto-generate schemas, inactive layout sections, pattern validation,
-   deprecated fields) are reported and refused unless you pass
+   then report all `unchanged`. The few constructs the DSL can't
+   express (location fields, headers, condition operators other than
+   `is_exactly`, non-positional section ids, auto-generate schemas,
+   pattern validation, choice-list or nested sub-fields inside
+   collections) are reported and refused unless you pass
    `--skip-unsupported`, which drops them and lists what was skipped in
    a comment at the top of the file.
 
@@ -151,8 +152,30 @@ Field types: `string`, `textarea`, `integer` (advisory — ER stores it as
 optional `min`/`max`), `boolean`, `date`, `datetime`, `url`, `select`,
 `multiselect` (both take `options`).
 
-Every field also takes optional `hint` (ER's placeholder, max 32 chars;
-not on `boolean`/`date`/`datetime`), `description`, and `default`
+Sub-forms are `type: collection` fields: repeating groups of scalar
+sub-fields (`item_name` labels one entry; optional `button_text`,
+`item_identifier`, `columns: 2` with sub-field `column: right`,
+`min`/`max` item counts, and a `required:` list of sub-field keys):
+
+```yaml
+- key: sightings
+  label: Sightings
+  type: collection
+  item_name: sighting
+  fields:
+    - {key: species_note, label: Species note, type: string}
+    - {key: count, label: Count, type: integer}
+  required: [species_note]
+```
+
+Choice-list or nested-collection sub-fields aren't supported yet and
+are refused by name.
+
+Every field takes optional `active: false` (the field is
+deprecated/hidden on ER but its historical data remains) and
+`description`. Scalar and choice fields additionally take `hint` (ER's
+placeholder, max 32 chars; not on `boolean`/`date`/`datetime` or
+collections), and scalar fields take `default`
 (`string`/`textarea`/`url`/`integer`/`number`/`boolean` only). `string`
 fields take `format: url | email | uuid` — the builder's "Format
 Validation" (`url` is sent as JSON Schema `uri`).
@@ -199,8 +222,12 @@ Per event type an optional `layout: {label, columns}` (default
 `{label: Details, columns: 1}`) controls the form section; with
 `columns: 2`, per-field `column: right` places a field in the right
 column. Multi-section forms use `sections:` instead of `fields:`/
-`layout:` — a list of `{label?, columns?, fields: [...]}` mappings,
-one per form section, in order:
+`layout:` — a list of `{label?, columns?, active?, condition?, fields: [...]}`
+mappings, one per form section, in order. `active: false` hides a
+section; `condition: {field, operator: is_exactly, value}` shows it only
+when another (outside) field has the given value — the only condition
+operator ER's builder offers that the DSL supports so far; the other
+operators are refused by name on pull:
 
 ```yaml
 - value: entry_alert
@@ -227,7 +254,8 @@ event type read-only in ER — v2 schemas have no per-field read-only),
 point or a drawn polygon), `auto_resolve` + `resolve_time` (auto-resolve
 events after N hours — `auto_resolve: true` requires `resolve_time`,
 since ER silently ignores the flag without it), and `ordernum` (explicit
-display order; deliberately not derived from spec position, because a
+display rank — a number; ER uses fractional ranks like `0.5` for
+insert-between — deliberately not derived from spec position, because a
 spec doesn't own every event type in its category). These are sent only when declared: omitted
 keys leave the server's values untouched. `geometry_type` is immutable
 once an event type exists — apply refuses a spec that declares a
