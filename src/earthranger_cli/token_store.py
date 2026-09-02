@@ -21,6 +21,11 @@ from urllib.parse import urlparse
 from .client import normalize_server
 from .config_store import ConfigError, config_dir, write_private
 
+# Static (pre-issued) bearer tokens have no refresh token; we give them the
+# same nominal expiry erclient assigns to a constructor `token=` so the
+# existing "is it valid?" check never triggers a refresh attempt.
+STATIC_EXPIRES = datetime(2099, 1, 1, tzinfo=UTC)
+
 
 def tokens_dir() -> Path:
     return config_dir() / "tokens"
@@ -74,7 +79,9 @@ def profile_lock(profile: str):
             fcntl.flock(f, fcntl.LOCK_UN)
 
 
-def save_token(profile: str, auth: dict, expires_at: datetime, username: str) -> None:
+def save_token(
+    profile: str, auth: dict, expires_at: datetime, username: str, *, static: bool = False
+) -> None:
     path = token_file(profile)
     payload = {
         "access_token": auth["access_token"],
@@ -86,6 +93,10 @@ def save_token(profile: str, auth: dict, expires_at: datetime, username: str) ->
         # host-keyed cache file (or a copied record) is never adopted
         "profile": profile,
     }
+    if static:
+        # a pre-issued bearer token: no refresh token, never rotated, and
+        # reported as such by `auth status`
+        payload["static"] = True
     write_private(path, json.dumps(payload, indent=2))
 
 
@@ -109,6 +120,10 @@ def load_token(profile: str) -> dict | None:
 
 def is_expired(data: dict) -> bool:
     return datetime.fromisoformat(data["expires_at"]) <= datetime.now(UTC)
+
+
+def is_static(data: dict) -> bool:
+    return bool(data.get("static"))
 
 
 def delete_token(profile: str) -> bool:
