@@ -757,3 +757,32 @@ def test_profile_set_errors(monkeypatch):
     result = _run(["profile", "set", "username", "me"])
     assert result.exit_code == 1
     assert "no profile named 'zzz'" in result.output
+
+
+def test_set_username_clears_mismatched_cached_auth(monkeypatch):
+    config_store.add_profile("sandbox", server="sandbox", username="chris")
+    token_store.save_token("sandbox.pamdas.org", AUTH, FUTURE, "chris")
+    monkeypatch.setenv("ER_PROFILE", "sandbox")
+    result = _run(["profile", "set", "username", "alice"])
+    assert result.exit_code == 0
+    assert token_store.load_token("sandbox.pamdas.org") is None
+    assert "Cleared cached auth for sandbox.pamdas.org (was 'chris')" in result.output
+    assert "er auth login" in result.output
+
+
+def test_set_same_username_keeps_cached_auth(monkeypatch):
+    config_store.add_profile("sandbox", server="sandbox", username="chris")
+    token_store.save_token("sandbox.pamdas.org", AUTH, FUTURE, "chris")
+    monkeypatch.setenv("ER_PROFILE", "sandbox")
+    result = _run(["profile", "set", "username", "chris"])
+    assert result.exit_code == 0
+    assert token_store.load_token("sandbox.pamdas.org") is not None
+    assert "Cleared" not in result.output
+
+
+def test_set_username_without_cache_is_quiet(monkeypatch):
+    config_store.add_profile("sandbox", server="sandbox")
+    monkeypatch.setenv("ER_PROFILE", "sandbox")
+    result = _run(["profile", "set", "username", "alice"])
+    assert result.exit_code == 0
+    assert "Cleared" not in result.output

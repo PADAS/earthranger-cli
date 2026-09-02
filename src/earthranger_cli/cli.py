@@ -471,6 +471,17 @@ def profile_set(ctx, key, value):
         )
     config_store.set_profile_property(name, key, value)
     click.echo(f"Set {key} for profile {name!r}.")
+    if key == "username":
+        # a cached session belongs to whoever logged in; if that isn't the new
+        # username, drop it so the next command re-authenticates as the right user
+        host = token_store.server_host(config_store.get_profile(name)["server"])
+        cached = token_store.load_token(host)
+        if cached and cached.get("username") != value:
+            token_store.delete_token(host)
+            click.echo(
+                f"Cleared cached auth for {host} (was {cached.get('username')!r}); "
+                "run 'er auth login' to sign in as the new user."
+            )
 
 
 @profile_group.command("show")
