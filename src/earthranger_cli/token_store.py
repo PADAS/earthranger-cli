@@ -52,10 +52,17 @@ def profile_lock(profile: str):
         # unsafe names surface as the normal configuration error, matching
         # the validation config_store applies at creation time
         raise ConfigError(str(e)) from e
-    target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     lock_path = target.parent / (target.name + ".lock")
-    with open(lock_path, "w") as f:
-        fcntl.flock(f, fcntl.LOCK_EX)
+    try:
+        target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        f = open(lock_path, "w")  # noqa: SIM115 — enters `with f:` below; open split out so only acquisition converts to ConfigError
+    except OSError as e:
+        raise ConfigError(f"could not acquire session lock for profile {profile!r}: {e}") from e
+    with f:
+        try:
+            fcntl.flock(f, fcntl.LOCK_EX)
+        except OSError as e:
+            raise ConfigError(f"could not acquire session lock for profile {profile!r}: {e}") from e
         try:
             yield
         finally:

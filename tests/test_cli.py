@@ -355,7 +355,12 @@ def test_connect_without_profile_never_uses_cache(monkeypatch):
 
 
 def test_connect_explicit_password_beats_cache(monkeypatch):
-    token_store.save_token("sandbox.pamdas.org", AUTH, FUTURE, "chris")
+    # a valid session on the selected profile must still lose to an explicit
+    # password (the token would otherwise be used — same server, no username
+    # mismatch)
+    config_store.add_profile("dev", server="sandbox", username="chris")
+    monkeypatch.setenv("ER_PROFILE", "dev")
+    token_store.save_token("dev", AUTH, FUTURE, "chris")
     captured = {}
 
     def fake_make_client(*, server, username, password):
@@ -383,7 +388,9 @@ def test_connect_explicit_password_beats_cache(monkeypatch):
 def test_connect_cached_token_skipped_when_username_differs(monkeypatch):
     # a cached token belongs to "chris"; an explicit --username alice must not
     # silently ride on chris's cached session.
-    token_store.save_token("sandbox.pamdas.org", AUTH, FUTURE, "chris")
+    config_store.add_profile("dev", server="sandbox", username="chris")
+    monkeypatch.setenv("ER_PROFILE", "dev")
+    token_store.save_token("dev", AUTH, FUTURE, "chris")
     captured = {}
 
     def fake_make_client(*, server, username, password):

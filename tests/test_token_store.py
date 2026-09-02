@@ -127,3 +127,20 @@ def test_load_token_rejects_record_for_other_profile_or_legacy(tmp_path, monkeyp
     assert token_store.load_token("dev") is None
     path.write_text(json.dumps({**legacy, "profile": "dev"}))
     assert token_store.load_token("dev") is not None
+
+
+def test_profile_lock_oserror_is_config_error(tmp_path, monkeypatch):
+    # J1/r3915824089 — filesystem failures acquiring the lock must surface as
+    # ConfigError (caught by the CLI), not a raw OSError traceback
+    import pytest
+
+    from earthranger_cli.config_store import ConfigError
+
+    monkeypatch.setenv("ER_EVENTS_CONFIG_DIR", str(tmp_path))
+    tokens = tmp_path / "tokens"
+    tokens.mkdir(mode=0o500)  # lock file can't be created
+    try:
+        with pytest.raises(ConfigError, match="session lock"), token_store.profile_lock("dev"):
+            pass
+    finally:
+        tokens.chmod(0o700)

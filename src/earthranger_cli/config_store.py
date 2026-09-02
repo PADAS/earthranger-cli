@@ -9,10 +9,12 @@ with ``ER_EVENTS_CONFIG_DIR``.
 
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import re
 import tempfile
+from contextlib import contextmanager
 from pathlib import Path
 
 _PROFILE_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
@@ -49,6 +51,33 @@ def write_private(path: Path, text: str) -> None:
         raise
 
 
+@contextmanager
+def _config_lock():
+    """Serialize read-modify-write of the shared config.json across processes.
+
+    Per-profile session locks (token_store.profile_lock) don't cover this:
+    two profiles' mutations race on the one file. Lock order is always
+    profile_lock (outer, taken by the CLI) then this (inner, taken here);
+    nothing under this lock ever takes a profile lock, so no deadlock.
+    """
+    path = config_dir() / "config.json.lock"
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        os.chmod(path.parent, 0o700)
+        f = open(path, "w")  # noqa: SIM115 — enters `with f:` below; open split out so only acquisition converts to ConfigError
+    except OSError as e:
+        raise ConfigError(f"could not acquire config lock: {e}") from e
+    with f:
+        try:
+            fcntl.flock(f, fcntl.LOCK_EX)
+        except OSError as e:
+            raise ConfigError(f"could not acquire config lock: {e}") from e
+        try:
+            yield
+        finally:
+            fcntl.flock(f, fcntl.LOCK_UN)
+
+
 def _load() -> dict:
     path = config_file()
     if not path.exists():
@@ -72,12 +101,13 @@ def add_profile(name: str, *, server: str, username: str | None = None) -> None:
         raise ConfigError(
             f"invalid profile name {name!r} (use lowercase letters, digits, '-', '_')"
         )
-    cfg = _load()
-    profile: dict = {"server": server}
-    if username:
-        profile["username"] = username
-    cfg["profiles"][name] = profile
-    _save(cfg)
+    with _config_lock():
+        cfg = _load()
+        profile: dict = {"server": server}
+        if username:
+            profile["username"] = username
+        cfg["profiles"][name] = profile
+        _save(cfg)
 
 
 def get_profile(name: str) -> dict | None:
@@ -96,17 +126,19 @@ def set_profile_property(name: str, key: str, value: str) -> None:
         raise ConfigError(f"unknown profile property {key!r} (settable: {', '.join(PROFILE_KEYS)})")
     if not isinstance(value, str) or not value:
         raise ConfigError(f"{key}: a non-empty value is required")
-    cfg = _load()
-    if name not in cfg["profiles"]:
-        raise ConfigError(f"no profile named {name!r}")
-    cfg["profiles"][name][key] = value
-    _save(cfg)
+    with _config_lock():
+        cfg = _load()
+        if name not in cfg["profiles"]:
+            raise ConfigError(f"no profile named {name!r}")
+        cfg["profiles"][name][key] = value
+        _save(cfg)
 
 
 def remove_profile(name: str) -> bool:
-    cfg = _load()
-    if name not in cfg["profiles"]:
-        return False
-    del cfg["profiles"][name]
-    _save(cfg)
-    return True
+    with _config_lock():
+        cfg = _load()
+        if name not in cfg["profiles"]:
+            return False
+        del cfg["profiles"][name]
+        _save(cfg)
+        return True
