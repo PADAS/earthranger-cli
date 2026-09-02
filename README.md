@@ -51,8 +51,14 @@ the optional prompt segment shows the shell's selection:
 ```zsh
 er() {
   if [[ $1 == profile && ($2 == use || $2 == add) ]]; then
-    local out; out=$(command er "$@") || { [[ -n $out ]] && print -r -- "$out"; return 1; }
-    [[ -n $out ]] && eval "$out"
+    local out
+    out=$(command er "$@") || { [[ -n $out ]] && print -r -- "$out"; return 1; }
+    # eval only the switch protocol; anything else (e.g. --help) prints normally
+    if [[ $out == "unset ER_PROFILE" || ($out == "export ER_PROFILE="* && $out != *$'\n'*) ]]; then
+      eval "$out"
+    elif [[ -n $out ]]; then
+      print -r -- "$out"
+    fi
   else
     command er "$@"
   fi
