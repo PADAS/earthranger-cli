@@ -9,7 +9,7 @@ import sys
 
 import click
 import requests.exceptions
-from erclient.er_errors import ERClientException
+from erclient.er_errors import ERClientBadCredentials, ERClientException
 
 from . import client as er
 from . import config_store, token_store
@@ -28,6 +28,9 @@ def _api_errors(f):
     def wrapper(*args, **kwargs):
         try:
             return f(*args, **kwargs)
+        except ERClientBadCredentials as e:
+            click.echo(f"error: {_bad_credentials_message(e)}")
+            sys.exit(1)
         except (
             ApplyError,
             PullError,
@@ -39,6 +42,27 @@ def _api_errors(f):
             sys.exit(1)
 
     return wrapper
+
+
+def _bad_credentials_message(e: ERClientBadCredentials) -> str:
+    """A 401 mid-command: say which credential the server refused and how to fix it.
+
+    A static token can't be checked up front (erclient treats it as valid
+    until 2099), so this is where a revoked or expired one first shows up.
+    """
+    ctx = click.get_current_context(silent=True)
+    obj = (ctx.obj if ctx is not None else None) or {}
+    if obj.get("token"):
+        return f"credentials rejected ({e}) — check --token / ER_TOKEN."
+    if obj.get("password"):
+        return f"credentials rejected ({e}) — check --username / --password."
+    name = obj.get("profile")
+    if name:
+        return (
+            f"credentials rejected ({e}) — the credential stored on profile {name!r} is "
+            "expired or revoked; run 'er auth login' (or 'er auth login --token')."
+        )
+    return f"credentials rejected ({e})."
 
 
 def connection_options(f):
@@ -148,14 +172,17 @@ def _profile_session_snapshot(name: str) -> tuple[dict | None, dict | None]:
 def _connect_with_cached_token(ctx, name: str, profile: dict, server: str, cached: dict):
     client = make_token_client(server=server)
     token_store.apply_to_client(client, cached)
+    if token_store.is_static(cached):
+        # nothing to refresh or rotate; a revoked static token can only be
+        # learned from the first real request (reported by _api_errors)
+        return client
     try:
         # Eager: refreshes an expired access token now (via the refresh token),
         # so a dead session fails here with a clear message instead of mid-command.
         client.auth_headers()
     except ERClientException as e:
-        kind = "static token" if token_store.is_static(cached) else "cached session"
         raise ERClientException(
-            f"{kind} for profile {name!r} expired or invalid — run 'er auth login'"
+            f"cached session for profile {name!r} expired or invalid — run 'er auth login'"
         ) from e
     profile_snapshot = dict(profile)
 
@@ -381,12 +408,25 @@ def auth_login(ctx):
         # owner so the profile's identity and the username-match rule work
         client = make_static_token_client(server=server, token=token)
         try:
-            username = client.get_me()["username"]
-        except (ERClientException, KeyError, TypeError) as e:
+            owner = client.get_me()["username"]
+        except ERClientBadCredentials as e:
+            # only a 401 means the token is bad; outages, 404s and 403s
+            # propagate to _api_errors with their own message
             click.echo(f"error: token rejected by {host}: {e}")
             sys.exit(1)
-        auth = {"access_token": token, "token_type": "Bearer"}
-        expires_at = token_store.STATIC_EXPIRES
+        except (KeyError, TypeError):
+            click.echo(f"error: unexpected /user/me/ response from {host}; token not stored.")
+            sys.exit(1)
+        explicit = ctx.obj.get("username")
+        if explicit and explicit != owner:
+            # same rule as _connect: never let an explicit identity ride on
+            # someone else's credential
+            raise click.UsageError(f"token belongs to {owner!r}, not --username {explicit!r}.")
+        username = owner
+        # erclient seeded these from the token; storing them (rather than a
+        # copy) keeps the record identical to what just passed /user/me/
+        auth = client.auth
+        expires_at = client.auth_expires
         static = True
     else:
         password = ctx.obj["password"]
