@@ -1307,6 +1307,8 @@ def test_auth_login_token_explicit_username_must_match_owner(monkeypatch):
         "token belongs to 'chris', not 'alice' (from --username / ER_USERNAME); "
         "pass --username chris or unset ER_USERNAME."
     ) in result.output
+    assert token_store.load_token("dev") is None
+    assert config_store.get_profile("dev")["username"] == "alice"
 
 
 def test_auth_login_token_env_username_is_also_an_identity_claim(monkeypatch):
@@ -1320,8 +1322,6 @@ def test_auth_login_token_env_username_is_also_an_identity_claim(monkeypatch):
     assert result.exit_code == 2
     assert "unset ER_USERNAME" in result.output
     assert token_store.load_token("dev") is None
-    assert token_store.load_token("dev") is None
-    assert config_store.get_profile("dev")["username"] == "alice"
 
 
 def test_auth_login_token_updates_profile_default_username_to_owner(monkeypatch):
