@@ -362,7 +362,7 @@ def auth_group():
 @click.pass_context
 @_api_errors
 def auth_login(ctx):
-    """Log in and cache the session on the selected profile (gcloud-style)."""
+    """Log in (password, or --token) and cache the credential on the selected profile."""
     name = _require_selected_profile(ctx)
     server, username = _resolve_connection(ctx)
     profile = config_store.get_profile(name) or {}
@@ -372,16 +372,34 @@ def auth_login(ctx):
             f"({normalize_server(profile.get('server') or '')}); update it first "
             "with 'er profile set server ...'."
         )
-    password = ctx.obj["password"]
-    if not username:
-        raise click.UsageError("Missing username: pass --username or set ER_USERNAME.")
-    if not password:
-        password = click.prompt("Password", hide_input=True)
     host = token_store.server_host(server)
-    client = make_client(server=server, username=username, password=password)
-    if not client.login():
-        click.echo(f"error: login failed for {username!r} at {host}")
-        sys.exit(1)
+    token = ctx.obj.get("token")
+    if token:
+        # a pre-issued bearer token: verify it against /user/me/ so a typo
+        # fails here rather than on the first real command, and learn the
+        # owner so the profile's identity and the username-match rule work
+        client = make_static_token_client(server=server, token=token)
+        try:
+            username = client.get_me()["username"]
+        except (ERClientException, KeyError, TypeError) as e:
+            click.echo(f"error: token rejected by {host}: {e}")
+            sys.exit(1)
+        auth = {"access_token": token, "token_type": "Bearer"}
+        expires_at = token_store.STATIC_EXPIRES
+        static = True
+    else:
+        password = ctx.obj["password"]
+        if not username:
+            raise click.UsageError("Missing username: pass --username or set ER_USERNAME.")
+        if not password:
+            password = click.prompt("Password", hide_input=True)
+        client = make_client(server=server, username=username, password=password)
+        if not client.login():
+            click.echo(f"error: login failed for {username!r} at {host}")
+            sys.exit(1)
+        auth = client.auth
+        expires_at = client.auth_expires
+        static = False
     with token_store.profile_lock(name):
         # the token was minted for the profile as it stood before the network
         # round-trip; if a concurrent command repointed it since, this session
@@ -392,12 +410,18 @@ def auth_login(ctx):
                 "re-run 'er auth login'."
             )
             sys.exit(1)
-        token_store.save_token(name, client.auth, client.auth_expires, username)
+        token_store.save_token(name, auth, expires_at, username, static=static)
         if profile.get("username") != username:
             # the profile's identity follows whoever actually logged in
             config_store.set_profile_property(name, "username", username)
             click.echo(f"Profile {name!r} username set to {username!r}.")
-    click.echo(f"Authenticated. Session cached on profile {name!r} ({host}).")
+    if static:
+        click.echo(
+            f"Authenticated with a static token. Stored on profile {name!r} ({host}); "
+            "it will not be refreshed — re-run 'er auth login --token' when it expires."
+        )
+    else:
+        click.echo(f"Authenticated. Session cached on profile {name!r} ({host}).")
 
 
 def _require_selected_profile(ctx) -> str:

@@ -1230,3 +1230,52 @@ def test_token_without_server_is_usage_error(monkeypatch):
     result = _run(["--token", "tok-1", "events", "list", "categories"])
     assert result.exit_code == 2
     assert "Missing server" in result.output
+
+
+def test_auth_login_with_token_verifies_and_stores_static_record(monkeypatch):
+    config_store.add_profile("dev", server="sandbox")
+    monkeypatch.setenv("ER_PROFILE", "dev")
+    fake = FakeER()
+    monkeypatch.setattr(cli_mod, "make_static_token_client", lambda **kw: fake)
+    monkeypatch.setattr(
+        cli_mod, "make_client", lambda **kw: pytest.fail("password client must not be built")
+    )
+    result = _run(["auth", "login", "--token", "tok-1"])
+    assert result.exit_code == 0, result.output
+    assert ("get_me",) in fake.calls
+    assert "Authenticated with a static token" in result.output
+    data = token_store.load_token("dev")
+    assert data["access_token"] == "tok-1"
+    assert data["username"] == "chris"
+    assert token_store.is_static(data)
+    assert config_store.get_profile("dev")["username"] == "chris"
+    assert "Profile 'dev' username set to 'chris'." in result.output
+
+
+def test_auth_login_with_bad_token_exits_1_and_caches_nothing(monkeypatch):
+    from erclient.er_errors import ERClientException
+
+    config_store.add_profile("dev", server="sandbox", username="chris")
+    monkeypatch.setenv("ER_PROFILE", "dev")
+    fake = FakeER()
+
+    def failing_get_me():
+        raise ERClientException("401 Unauthorized")
+
+    fake.get_me = failing_get_me
+    monkeypatch.setattr(cli_mod, "make_static_token_client", lambda **kw: fake)
+    result = _run(["auth", "login", "--token", "bad"])
+    assert result.exit_code == 1
+    assert "error: token rejected by sandbox.pamdas.org" in result.output
+    assert token_store.load_token("dev") is None
+
+
+def test_auth_login_token_still_requires_matching_server(monkeypatch):
+    config_store.add_profile("dev", server="sandbox", username="chris")
+    monkeypatch.setenv("ER_PROFILE", "dev")
+    monkeypatch.setattr(
+        cli_mod, "make_static_token_client", lambda **kw: pytest.fail("must not reach network")
+    )
+    result = _run(["auth", "login", "--token", "tok-1", "--server", "other"])
+    assert result.exit_code == 2
+    assert "differs from profile 'dev'" in result.output
