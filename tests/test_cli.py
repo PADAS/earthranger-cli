@@ -268,51 +268,99 @@ class FakeLoginClient(FakeER):
         return self._succeed
 
 
-def test_auth_login_caches_token(monkeypatch):
+def test_auth_login_requires_profile(monkeypatch):
     monkeypatch.setattr(cli_mod, "make_client", lambda **kw: FakeLoginClient())
     result = _run(["--server", "sandbox", "--username", "u", "auth", "login"], input="pw\n")
+    assert result.exit_code != 0
+    assert "selected profile is required" in result.output + result.stderr
+
+
+def test_auth_login_caches_on_profile(monkeypatch):
+    config_store.add_profile("dev", server="sandbox", username="u")
+    monkeypatch.setenv("ER_PROFILE", "dev")
+    monkeypatch.setattr(cli_mod, "make_client", lambda **kw: FakeLoginClient())
+    result = _run(["auth", "login"], input="pw\n")
     assert result.exit_code == 0
-    assert "Authenticated. Token cached for sandbox.pamdas.org." in result.output
-    data = token_store.load_token("sandbox.pamdas.org")
+    assert "Authenticated. Session cached on profile 'dev' (sandbox.pamdas.org)." in result.output
+    data = token_store.load_token("dev")
     assert data["access_token"] == "acc-1"
     assert data["username"] == "u"
 
 
+def test_auth_login_updates_profile_username(monkeypatch):
+    config_store.add_profile("dev", server="sandbox", username="old")
+    monkeypatch.setenv("ER_PROFILE", "dev")
+    monkeypatch.setattr(cli_mod, "make_client", lambda **kw: FakeLoginClient())
+    result = _run(["auth", "login", "--username", "alice", "--password", "pw"])
+    assert result.exit_code == 0
+    assert "Profile 'dev' username set to 'alice'." in result.output
+    assert config_store.get_profile("dev")["username"] == "alice"
+    assert token_store.load_token("dev")["username"] == "alice"
+
+
 def test_auth_login_failure_exits_1(monkeypatch):
+    config_store.add_profile("dev", server="sandbox")
+    monkeypatch.setenv("ER_PROFILE", "dev")
     monkeypatch.setattr(cli_mod, "make_client", lambda **kw: FakeLoginClient(succeed=False))
-    result = _run(["--server", "sandbox", "--username", "u", "--password", "bad", "auth", "login"])
+    result = _run(["auth", "login", "--username", "u", "--password", "bad"])
     assert result.exit_code == 1
     assert "error: login failed for 'u' at sandbox.pamdas.org" in result.output
-    assert token_store.load_token("sandbox.pamdas.org") is None
+    assert token_store.load_token("dev") is None
 
 
-def test_auth_status_and_logout():
-    result = _run(["--server", "sandbox", "auth", "status"])
-    assert "sandbox.pamdas.org: not authenticated" in result.output
-    token_store.save_token("sandbox.pamdas.org", AUTH, FUTURE, "chris")
-    result = _run(["--server", "sandbox", "auth", "status"])
-    assert "sandbox.pamdas.org: valid as chris" in result.output
-    token_store.save_token("sandbox.pamdas.org", AUTH, PAST, "chris")
-    result = _run(["--server", "sandbox", "auth", "status"])
-    assert "sandbox.pamdas.org: expired" in result.output
-    result = _run(["--server", "sandbox", "auth", "logout"])
+def test_auth_status_and_logout(monkeypatch):
+    config_store.add_profile("dev", server="sandbox", username="chris")
+    monkeypatch.setenv("ER_PROFILE", "dev")
+    result = _run(["auth", "status"])
+    assert "dev (sandbox.pamdas.org): not authenticated" in result.output
+    token_store.save_token("dev", AUTH, FUTURE, "chris")
+    result = _run(["auth", "status"])
+    assert "dev (sandbox.pamdas.org): valid as chris" in result.output
+    token_store.save_token("dev", AUTH, PAST, "chris")
+    result = _run(["auth", "status"])
+    assert "dev (sandbox.pamdas.org): expired" in result.output
+    result = _run(["auth", "logout"])
     assert "Logged out." in result.output
-    result = _run(["--server", "sandbox", "auth", "logout"])
-    assert "No cached token." in result.output
+    result = _run(["auth", "logout"])
+    assert "No cached session." in result.output
 
 
 def test_connect_uses_cached_token_without_password(monkeypatch):
-    token_store.save_token("sandbox.pamdas.org", AUTH, FUTURE, "chris")
+    config_store.add_profile("dev", server="sandbox", username="chris")
+    monkeypatch.setenv("ER_PROFILE", "dev")
+    token_store.save_token("dev", AUTH, FUTURE, "chris")
     fake = FakeER()
     monkeypatch.setattr(cli_mod, "make_token_client", lambda **kw: fake)
-    result = _run(["--server", "sandbox", "events", "list", "categories"])
+    result = _run(["events", "list", "categories"])
     assert result.exit_code == 0
     assert fake.auth["access_token"] == "acc-1"
     assert ("auth_headers",) in fake.calls
 
 
+def test_connect_without_profile_never_uses_cache(monkeypatch):
+    token_store.save_token("dev", AUTH, FUTURE, "chris")
+    captured = {}
+
+    def fake_make_client(*, server, username, password):
+        captured.update(username=username, password=password)
+        return FakeER()
+
+    monkeypatch.setattr(cli_mod, "make_client", fake_make_client)
+    result = _run(
+        ["--server", "sandbox", "--username", "chris", "events", "list", "categories"],
+        input="pw\n",
+    )
+    assert result.exit_code == 0
+    assert captured["password"] == "pw"  # password path, not the cache
+
+
 def test_connect_explicit_password_beats_cache(monkeypatch):
-    token_store.save_token("sandbox.pamdas.org", AUTH, FUTURE, "chris")
+    # a valid session on the selected profile must still lose to an explicit
+    # password (the token would otherwise be used — same server, no username
+    # mismatch)
+    config_store.add_profile("dev", server="sandbox", username="chris")
+    monkeypatch.setenv("ER_PROFILE", "dev")
+    token_store.save_token("dev", AUTH, FUTURE, "chris")
     captured = {}
 
     def fake_make_client(*, server, username, password):
@@ -340,7 +388,9 @@ def test_connect_explicit_password_beats_cache(monkeypatch):
 def test_connect_cached_token_skipped_when_username_differs(monkeypatch):
     # a cached token belongs to "chris"; an explicit --username alice must not
     # silently ride on chris's cached session.
-    token_store.save_token("sandbox.pamdas.org", AUTH, FUTURE, "chris")
+    config_store.add_profile("dev", server="sandbox", username="chris")
+    monkeypatch.setenv("ER_PROFILE", "dev")
+    token_store.save_token("dev", AUTH, FUTURE, "chris")
     captured = {}
 
     def fake_make_client(*, server, username, password):
@@ -356,7 +406,9 @@ def test_connect_cached_token_skipped_when_username_differs(monkeypatch):
 
 
 def test_connect_cached_token_used_when_username_matches(monkeypatch):
-    token_store.save_token("sandbox.pamdas.org", AUTH, FUTURE, "chris")
+    config_store.add_profile("dev", server="sandbox", username="chris")
+    monkeypatch.setenv("ER_PROFILE", "dev")
+    token_store.save_token("dev", AUTH, FUTURE, "chris")
     fake = FakeER()
     monkeypatch.setattr(cli_mod, "make_token_client", lambda **kw: fake)
     result = _run(["--server", "sandbox", "--username", "chris", "events", "list", "categories"])
@@ -368,7 +420,9 @@ def test_connect_cached_token_used_when_username_matches(monkeypatch):
 def test_connect_expired_cached_session_message(monkeypatch):
     from erclient.er_errors import ERClientException
 
-    token_store.save_token("sandbox.pamdas.org", AUTH, PAST, "chris")
+    config_store.add_profile("dev", server="sandbox", username="chris")
+    monkeypatch.setenv("ER_PROFILE", "dev")
+    token_store.save_token("dev", AUTH, PAST, "chris")
     fake = FakeER()
 
     def failing_auth_headers():
@@ -379,13 +433,15 @@ def test_connect_expired_cached_session_message(monkeypatch):
     result = _run(["--server", "sandbox", "events", "list", "categories"])
     assert result.exit_code == 1
     assert (
-        "error: cached session for sandbox.pamdas.org expired or invalid — "
+        "error: cached session for profile 'dev' expired or invalid — "
         "run 'er auth login'" in result.output
     )
 
 
 def test_rotated_token_is_persisted_after_command(monkeypatch):
-    token_store.save_token("sandbox.pamdas.org", AUTH, PAST, "chris")
+    config_store.add_profile("dev", server="sandbox", username="chris")
+    monkeypatch.setenv("ER_PROFILE", "dev")
+    token_store.save_token("dev", AUTH, PAST, "chris")
     fake = FakeER()
 
     def rotating_auth_headers():
@@ -397,7 +453,7 @@ def test_rotated_token_is_persisted_after_command(monkeypatch):
     monkeypatch.setattr(cli_mod, "make_token_client", lambda **kw: fake)
     result = _run(["--server", "sandbox", "events", "list", "categories"])
     assert result.exit_code == 0
-    data = token_store.load_token("sandbox.pamdas.org")
+    data = token_store.load_token("dev")
     assert data["access_token"] == "acc-2"
     assert data["refresh_token"] == "ref-2"
     assert data["username"] == "chris"
@@ -525,7 +581,7 @@ def test_env_profile_supplies_server_and_username(monkeypatch):
 def test_profile_flag_selects_profile(monkeypatch):
     config_store.add_profile("sandbox", server="sandbox")
     config_store.add_profile("prod", server="myreserve", username="ops")
-    token_store.save_token("myreserve.pamdas.org", AUTH, FUTURE, "ops")
+    token_store.save_token("prod", AUTH, FUTURE, "ops")
     fake = FakeER()
     seen = {}
 
@@ -540,18 +596,21 @@ def test_profile_flag_selects_profile(monkeypatch):
     assert seen["server"] == "myreserve"
 
 
-def test_explicit_server_flag_overrides_profile(monkeypatch):
-    config_store.add_profile("sandbox", server="sandbox")
-    token_store.save_token("other.pamdas.org", AUTH, FUTURE, "x")
-    fake = FakeER()
+def test_explicit_server_flag_overrides_profile_server(monkeypatch):
+    # --server rewires the host; the profile's session stays home (see
+    # test_server_override_bypasses_cached_session), so the override
+    # authenticates with a password against the override host
+    config_store.add_profile("dev", server="sandbox", username="x")
+    monkeypatch.setenv("ER_PROFILE", "dev")
+    token_store.save_token("dev", AUTH, FUTURE, "x")
     seen = {}
 
-    def fake_token_client(*, server):
-        seen["server"] = server
-        return fake
+    def fake_make_client(*, server, username, password):
+        seen.update(server=server, username=username, password=password)
+        return FakeER()
 
-    monkeypatch.setattr(cli_mod, "make_token_client", fake_token_client)
-    result = _run(["--server", "other", "events", "list", "categories"])
+    monkeypatch.setattr(cli_mod, "make_client", fake_make_client)
+    result = _run(["--server", "other", "--password", "pw", "events", "list", "categories"])
     assert result.exit_code == 0
     assert seen["server"] == "other"
 
@@ -593,7 +652,7 @@ def test_profile_use_unknown_errors():
 
 def test_profile_show_by_name():
     config_store.add_profile("prod", server="myreserve", username="chris")
-    token_store.save_token("myreserve.pamdas.org", AUTH, FUTURE, "chris")
+    token_store.save_token("prod", AUTH, FUTURE, "chris")
     result = _run(["profile", "show", "prod"])
     assert result.exit_code == 0
     assert "name:      prod" in result.output
@@ -630,8 +689,20 @@ def test_connection_flags_accepted_after_subcommand(monkeypatch):
         return FakeLoginClient()
 
     monkeypatch.setattr(cli_mod, "make_client", fake_make_client)
+    config_store.add_profile("dev", server="sandbox")
     result = _run(
-        ["auth", "login", "--server", "sandbox", "--username", "chrisd", "--password", "pw"]
+        [
+            "auth",
+            "login",
+            "--server",
+            "sandbox",
+            "--username",
+            "chrisd",
+            "--password",
+            "pw",
+            "--profile",
+            "dev",
+        ]
     )
     assert result.exit_code == 0
     assert captured == {"server": "sandbox", "username": "chrisd", "password": "pw"}
@@ -640,7 +711,7 @@ def test_connection_flags_accepted_after_subcommand(monkeypatch):
 def test_trailing_flags_override_globals(monkeypatch):
     config_store.add_profile("sandbox", server="sandbox")
     config_store.add_profile("prod", server="myreserve")
-    token_store.save_token("myreserve.pamdas.org", AUTH, FUTURE, "ops")
+    token_store.save_token("prod", AUTH, FUTURE, "ops")
     fake = FakeER()
     seen = {}
 
@@ -757,3 +828,343 @@ def test_profile_set_errors(monkeypatch):
     result = _run(["profile", "set", "username", "me"])
     assert result.exit_code == 1
     assert "no profile named 'zzz'" in result.output
+
+
+def test_server_override_bypasses_cached_session(monkeypatch):
+    # F4/r-suppressed cli:110 — never send a profile's token to another host
+    config_store.add_profile("dev", server="sandbox", username="chris")
+    monkeypatch.setenv("ER_PROFILE", "dev")
+    token_store.save_token("dev", AUTH, FUTURE, "chris")
+    captured = {}
+
+    def fake_make_client(*, server, username, password):
+        captured.update(server=server, password=password)
+        return FakeER()
+
+    monkeypatch.setattr(cli_mod, "make_client", fake_make_client)
+    result = _run(["--server", "other", "events", "list", "categories"], input="pw\n")
+    assert result.exit_code == 0
+    assert captured == {"server": "other", "password": "pw"}  # password path
+
+
+def test_auth_login_rejects_server_mismatch(monkeypatch):
+    # F5/r-suppressed cli:315
+    config_store.add_profile("dev", server="sandbox", username="chris")
+    monkeypatch.setenv("ER_PROFILE", "dev")
+    result = _run(["auth", "login", "--server", "other", "--password", "pw"])
+    assert result.exit_code != 0
+    out = result.output + result.stderr
+    assert "differs from profile" in out and "er profile set server" in out
+    assert token_store.load_token("dev") is None
+
+
+def test_profile_add_overwrite_invalidates_session():
+    # F2/r3910689341
+    config_store.add_profile("dev", server="sandbox", username="chris")
+    token_store.save_token("dev", AUTH, FUTURE, "chris")
+    result = _run(["profile", "add", "dev", "--server", "other", "--username", "chris"])
+    assert result.exit_code == 0
+    assert token_store.load_token("dev") is None
+    assert "Cleared cached session" in result.stderr
+
+    # identical re-add keeps the session
+    config_store.add_profile("dev2", server="sandbox", username="chris")
+    token_store.save_token("dev2", AUTH, FUTURE, "chris")
+    result = _run(["profile", "add", "dev2", "--server", "sandbox", "--username", "chris"])
+    assert result.exit_code == 0
+    assert token_store.load_token("dev2") is not None
+
+
+def test_auth_status_labels_profile_server_not_override(monkeypatch):
+    # F3/r3910689367
+    config_store.add_profile("dev", server="sandbox", username="chris")
+    monkeypatch.setenv("ER_PROFILE", "dev")
+    token_store.save_token("dev", AUTH, FUTURE, "chris")
+    result = _run(["--server", "other", "auth", "status"])
+    assert "dev (sandbox.pamdas.org): valid" in result.output
+    assert "other" not in result.output
+
+
+def test_rotation_not_persisted_if_session_replaced(monkeypatch):
+    # F1/r3910689280 — compare-and-swap against the original cache
+    config_store.add_profile("dev", server="sandbox", username="chris")
+    monkeypatch.setenv("ER_PROFILE", "dev")
+    token_store.save_token("dev", AUTH, PAST, "chris")
+    fake = FakeER()
+
+    def rotating_auth_headers():
+        # another process invalidates the session mid-command
+        token_store.delete_token("dev")
+        fake.auth = {"access_token": "acc-2", "refresh_token": "r2", "token_type": "Bearer"}
+        fake.auth_expires = FUTURE
+        return {}
+
+    fake.auth_headers = rotating_auth_headers
+    monkeypatch.setattr(cli_mod, "make_token_client", lambda **kw: fake)
+    result = _run(["events", "list", "categories"])
+    assert result.exit_code == 0
+    assert token_store.load_token("dev") is None  # not resurrected
+
+
+def test_delete_failures_are_loud(monkeypatch):
+    # F6+F7/r-suppressed cli:448,500
+    import pathlib
+
+    config_store.add_profile("dev", server="sandbox", username="chris")
+    token_store.save_token("dev", AUTH, FUTURE, "chris")
+
+    def failing_unlink(self):
+        raise PermissionError("read-only fs")
+
+    monkeypatch.setattr(pathlib.Path, "unlink", failing_unlink)
+    monkeypatch.setenv("ER_PROFILE", "dev")
+    result = _run(["profile", "set", "server", "other"])
+    assert result.exit_code == 1
+    assert "could not delete cached session" in result.output
+    assert config_store.get_profile("dev")["server"] == "sandbox"  # not committed
+
+    result = _run(["profile", "remove", "dev"])
+    assert result.exit_code == 1
+    assert config_store.get_profile("dev") is not None  # removal not finalized
+
+
+# --- Copilot round 2 -------------------------------------------------------
+
+
+def test_http_override_of_https_profile_bypasses_cache(monkeypatch):
+    # G1/r3910752034 — same netloc, downgraded scheme: token must stay home
+    config_store.add_profile("dev", server="https://x.example.com", username="chris")
+    monkeypatch.setenv("ER_PROFILE", "dev")
+    token_store.save_token("dev", AUTH, FUTURE, "chris")
+    captured = {}
+
+    def fake_make_client(*, server, username, password):
+        captured.update(server=server, password=password)
+        return FakeER()
+
+    monkeypatch.setattr(cli_mod, "make_client", fake_make_client)
+    result = _run(
+        ["--server", "http://x.example.com", "events", "list", "categories"],
+        input="pw\n",
+    )
+    assert result.exit_code == 0
+    assert captured == {"server": "http://x.example.com", "password": "pw"}
+
+
+def test_auth_login_rejects_scheme_mismatch(monkeypatch):
+    # G1/r3910752034 — login must not mint a session via a downgraded scheme
+    config_store.add_profile("dev", server="https://x.example.com", username="chris")
+    monkeypatch.setenv("ER_PROFILE", "dev")
+    result = _run(["auth", "login", "--server", "http://x.example.com", "--password", "pw"])
+    assert result.exit_code != 0
+    out = result.output + result.stderr
+    assert "differs from profile" in out
+    assert token_store.load_token("dev") is None
+
+
+def test_profile_add_overwrite_clears_unreadable_session():
+    # G3/r3910752085 — invalidation decided from the profiles, not from
+    # whether the old token file currently parses
+    config_store.add_profile("dev", server="sandbox", username="chris")
+    path = token_store.token_file("dev")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("not json{")
+    assert token_store.load_token("dev") is None  # unreadable, but present
+    result = _run(["profile", "add", "dev", "--server", "other", "--username", "chris"])
+    assert result.exit_code == 0
+    assert not path.exists()
+
+
+def test_profile_set_server_clears_unreadable_session(monkeypatch):
+    # G4/r3910752105 — a server change always attempts session deletion
+    config_store.add_profile("dev", server="sandbox", username="chris")
+    monkeypatch.setenv("ER_PROFILE", "dev")
+    path = token_store.token_file("dev")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("not json{")
+    result = _run(["profile", "set", "server", "other"])
+    assert result.exit_code == 0
+    assert not path.exists()
+    assert config_store.get_profile("dev")["server"] == "other"
+
+
+def test_profile_set_username_clears_unverifiable_session(monkeypatch):
+    # G4/r3910752105 — cached owner can't be verified -> clear it
+    config_store.add_profile("dev", server="sandbox", username="chris")
+    monkeypatch.setenv("ER_PROFILE", "dev")
+    path = token_store.token_file("dev")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("not json{")
+    result = _run(["profile", "set", "username", "someone"])
+    assert result.exit_code == 0
+    assert not path.exists()
+
+
+# --- Copilot round 3 -------------------------------------------------------
+
+
+def test_profile_add_invalid_name_is_clean_error():
+    # H1/r3915330064 — unsafe names must fail as a ConfigError, not a traceback
+    result = _run(["profile", "add", "../evil", "--server", "x", "--username", "u"])
+    assert result.exit_code == 1
+    assert "error:" in result.output + result.stderr
+
+
+def test_auth_login_aborts_if_profile_changed_mid_login(monkeypatch):
+    # H2/r3915329961 — a profile repointed during the network login must not
+    # adopt the token minted for the old server
+    config_store.add_profile("dev", server="sandbox", username="chris")
+    monkeypatch.setenv("ER_PROFILE", "dev")
+
+    class RacingLoginClient(FakeLoginClient):
+        def login(self):
+            # simulate a concurrent 'er profile set server' winning the race
+            config_store.set_profile_property("dev", "server", "other")
+            return super().login()
+
+    monkeypatch.setattr(cli_mod, "make_client", lambda **kw: RacingLoginClient())
+    result = _run(["auth", "login", "--username", "chris", "--password", "pw"])
+    assert result.exit_code == 1
+    assert "changed during login" in result.output + result.stderr
+    assert token_store.load_token("dev") is None
+
+
+def test_profile_add_rereads_identity_under_lock(monkeypatch):
+    # H4/r-suppressed cli:440 — the invalidation decision must use the profile
+    # as it stands once the lock is held, not a pre-lock snapshot
+    config_store.add_profile("dev", server="sandbox", username="chris")
+    token_store.save_token("dev", AUTH, FUTURE, "chris")
+    real_lock = token_store.profile_lock
+
+    from contextlib import contextmanager
+
+    @contextmanager
+    def racing_lock(name):
+        with real_lock(name):
+            # another process repointed and re-logged-in just before we
+            # acquired the lock
+            config_store.set_profile_property("dev", "server", "other")
+            token_store.save_token("dev", {**AUTH, "access_token": "theirs"}, FUTURE, "eve")
+            yield
+
+    monkeypatch.setattr(cli_mod.token_store, "profile_lock", racing_lock)
+    # identical to the *stale* snapshot — must still invalidate, because the
+    # post-lock profile ("other"/"eve") differs from what we're writing
+    result = _run(["profile", "add", "dev", "--server", "sandbox", "--username", "chris"])
+    assert result.exit_code == 0
+    assert token_store.load_token("dev") is None
+
+
+# --- Copilot round 5 -------------------------------------------------------
+
+
+def test_rotation_persist_failure_warns_not_crashes(monkeypatch):
+    # K1/r3916126247 — _persist_rotation runs after _api_errors returned; a
+    # lock/storage failure must warn, not traceback, and not fail the command
+    config_store.add_profile("dev", server="sandbox", username="chris")
+    monkeypatch.setenv("ER_PROFILE", "dev")
+    token_store.save_token("dev", AUTH, PAST, "chris")
+    fake = FakeER()
+
+    def rotating_auth_headers():
+        fake.auth = {"access_token": "acc-2", "refresh_token": "r2", "token_type": "Bearer"}
+        fake.auth_expires = FUTURE
+        return {}
+
+    fake.auth_headers = rotating_auth_headers
+    monkeypatch.setattr(cli_mod, "make_token_client", lambda **kw: fake)
+
+    real_lock = token_store.profile_lock
+    calls = {"n": 0}
+
+    def flaky_lock(name):
+        # the connect-time snapshot works; the persist at command close hits
+        # a filesystem failure
+        calls["n"] += 1
+        if calls["n"] > 1:
+            raise config_store.ConfigError("could not acquire session lock")
+        return real_lock(name)
+
+    monkeypatch.setattr(cli_mod.token_store, "profile_lock", flaky_lock)
+    result = _run(["events", "list", "categories"])
+    assert result.exit_code == 0  # the command itself succeeded
+    assert "warning:" in result.stderr and "rotated session" in result.stderr
+
+
+def test_profile_add_clears_orphan_token():
+    # K2/r3916126172 — a token file with no profile in config is an orphan;
+    # creating that profile must not adopt it
+    token_store.save_token("dev", AUTH, FUTURE, "chris")
+    assert config_store.get_profile("dev") is None
+    result = _run(["profile", "add", "dev", "--server", "other", "--username", "eve"])
+    assert result.exit_code == 0
+    assert token_store.load_token("dev") is None
+
+
+def test_connect_snapshot_taken_under_lock(monkeypatch):
+    # L1/r3916209159 — profile and token must be read as one coherent pair
+    # under the profile lock; a replacement session committed just before we
+    # acquire it must not be sent to the previously resolved (stale) server
+    config_store.add_profile("dev", server="sandbox", username="chris")
+    monkeypatch.setenv("ER_PROFILE", "dev")
+    token_store.save_token("dev", AUTH, FUTURE, "chris")
+    real_lock = token_store.profile_lock
+
+    from contextlib import contextmanager
+
+    @contextmanager
+    def racing_lock(name):
+        with real_lock(name):
+            # a concurrent 'profile set server' + 'auth login' won the race
+            config_store.set_profile_property("dev", "server", "other")
+            token_store.save_token("dev", {**AUTH, "access_token": "theirs"}, FUTURE, "chris")
+            yield
+
+    monkeypatch.setattr(cli_mod.token_store, "profile_lock", racing_lock)
+    captured = {}
+
+    def fake_make_client(*, server, username, password):
+        captured.update(server=server, password=password)
+        return FakeER()
+
+    monkeypatch.setattr(cli_mod, "make_client", fake_make_client)
+    result = _run(["events", "list", "categories"], input="pw\n")
+    assert result.exit_code == 0
+    # the coherent snapshot says the profile now points at "other", which no
+    # longer matches the resolved server — fall back to the password path
+    assert captured == {"server": "sandbox", "password": "pw"}
+
+
+def test_auth_status_reports_one_coherent_identity(monkeypatch):
+    # L1 suppressed cli:399 — status must describe the profile and session as
+    # they stand together under the lock, never a torn old-host/new-session mix
+    config_store.add_profile("dev", server="sandbox", username="chris")
+    monkeypatch.setenv("ER_PROFILE", "dev")
+    token_store.save_token("dev", AUTH, FUTURE, "chris")
+    real_lock = token_store.profile_lock
+
+    from contextlib import contextmanager
+
+    @contextmanager
+    def racing_lock(name):
+        with real_lock(name):
+            config_store.set_profile_property("dev", "server", "other")
+            token_store.save_token("dev", {**AUTH, "access_token": "theirs"}, FUTURE, "eve")
+            yield
+
+    monkeypatch.setattr(cli_mod.token_store, "profile_lock", racing_lock)
+    result = _run(["auth", "status"])
+    assert result.exit_code == 0
+    assert "other.pamdas.org" in result.output  # the session's actual host
+    assert "as eve" in result.output
+
+
+def test_profile_add_traversal_name_cannot_touch_other_sessions():
+    # r3916762242 — 'profile add ../tokens/dev' must not acquire dev's lock or
+    # delete dev's session on its way to the name-validation error
+    config_store.add_profile("dev", server="sandbox", username="chris")
+    token_store.save_token("dev", AUTH, FUTURE, "chris")
+    result = _run(["profile", "add", "../tokens/dev", "--server", "x", "--username", "u"])
+    assert result.exit_code == 1
+    assert "error:" in result.output + result.stderr
+    assert token_store.load_token("dev") is not None  # untouched

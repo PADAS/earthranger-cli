@@ -89,3 +89,69 @@ def test_is_expired():
     stale = {"expires_at": (datetime.now(UTC) - timedelta(hours=1)).isoformat()}
     assert token_store.is_expired(fresh) is False
     assert token_store.is_expired(stale) is True
+
+
+def test_profile_lock_is_exclusive(tmp_path, monkeypatch):
+    # G2+G5/r3910752062 — session mutations serialize on a per-profile flock
+    import fcntl
+
+    import pytest
+
+    monkeypatch.setenv("ER_EVENTS_CONFIG_DIR", str(tmp_path))
+    with token_store.profile_lock("dev"):
+        lock_path = token_store.token_file("dev").parent / "dev.json.lock"
+        assert lock_path.exists()
+        with open(lock_path) as other, pytest.raises(BlockingIOError):
+            fcntl.flock(other, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    # released on exit
+    with open(lock_path) as other:
+        fcntl.flock(other, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        fcntl.flock(other, fcntl.LOCK_UN)
+
+
+def test_load_token_rejects_record_for_other_profile_or_legacy(tmp_path, monkeypatch):
+    # H3/r-suppressed token_store:35 — a legacy host-keyed record (no profile
+    # marker) or a record saved for a different profile is never adopted
+    monkeypatch.setenv("ER_EVENTS_CONFIG_DIR", str(tmp_path))
+    path = token_store.token_file("dev")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    legacy = {
+        "access_token": "tok",
+        "refresh_token": "r",
+        "expires_at": "2099-01-01T00:00:00+00:00",
+        "username": "chris",
+    }
+    path.write_text(json.dumps(legacy))
+    assert token_store.load_token("dev") is None
+    path.write_text(json.dumps({**legacy, "profile": "prod"}))
+    assert token_store.load_token("dev") is None
+    path.write_text(json.dumps({**legacy, "profile": "dev"}))
+    assert token_store.load_token("dev") is not None
+
+
+def test_profile_lock_oserror_is_config_error(tmp_path, monkeypatch):
+    # J1/r3915824089 — filesystem failures acquiring the lock must surface as
+    # ConfigError (caught by the CLI), not a raw OSError traceback
+    import pytest
+
+    from earthranger_cli.config_store import ConfigError
+
+    monkeypatch.setenv("ER_EVENTS_CONFIG_DIR", str(tmp_path))
+    tokens = tmp_path / "tokens"
+    tokens.mkdir(mode=0o500)  # lock file can't be created
+    try:
+        with pytest.raises(ConfigError, match="session lock"), token_store.profile_lock("dev"):
+            pass
+    finally:
+        tokens.chmod(0o700)
+
+
+def test_token_file_rejects_traversal_shaped_names(tmp_path, monkeypatch):
+    # r3916762242 — '../tokens/dev' normalizes back into the tokens dir and
+    # aliases 'dev'; only a single path component is a valid profile name
+    import pytest
+
+    monkeypatch.setenv("ER_EVENTS_CONFIG_DIR", str(tmp_path))
+    for bad in ("../tokens/dev", "a/b", ".", "..", ""):
+        with pytest.raises(ValueError):
+            token_store.token_file(bad)

@@ -18,11 +18,13 @@ uv pip install -e .
 
 ## Authenticate
 
-The easiest way: log in once and let the CLI cache your tokens.
+Sessions live on profiles (gcloud-style): create a profile, log in once,
+and every command run under that profile reuses its cached session.
 
 ```bash
-export ER_SERVER=myreserve          # site name, or a full https:// URL
-er auth login --username me  # prompts for your password
+er profile add myreserve --server myreserve --username me   # prints: export ER_PROFILE=myreserve
+export ER_PROFILE=myreserve   # select it in this shell (the wrapper below automates this)
+er auth login                 # prompts for your password
 ```
 
 Working across sites? Save each as a profile and select one per shell
@@ -67,13 +69,16 @@ _er_prompt() { [[ -n $ER_PROFILE ]] && print -n "%F{yellow}(er:$ER_PROFILE)%f ";
 setopt PROMPT_SUBST; PROMPT='$(_er_prompt)'"$PROMPT"
 ```
 
-`auth login` verifies your credentials and caches the access and refresh
-tokens (never your password) in `~/.config/er-events/tokens/<host>.json`
-(0600). Subsequent commands on that server just work — expired access
-tokens are refreshed automatically and the rotated tokens re-cached.
-`er auth status` shows the cached session; `er auth logout`
-deletes it. One cache per server host: logging in again (as anyone)
-replaces it.
+`auth login` requires a selected profile: it verifies your credentials
+and caches the access and refresh tokens (never your password) in
+`~/.config/er-events/tokens/<profile>.json` (0600). Subsequent commands
+under that profile just work — expired access tokens are refreshed
+automatically and the rotated tokens re-cached. `er auth status` shows
+the selected profile's session; `er auth logout` deletes it. The session
+is bound to the profile's identity: `profile set server`, setting
+`username` to a different user, or `profile remove` all clear it, and
+logging in with a different `--username` updates the profile to match.
+Profiles pointing at the same server hold independent sessions.
 
 You can always bypass the cache with an explicit password — it takes
 precedence when present:
@@ -84,8 +89,11 @@ export ER_PASSWORD=...              # or --password; omit both to be prompted
 ```
 
 If the cached session's refresh token has expired, commands fail with
-`error: cached session for <host> expired or invalid — run 'er auth
-login'`.
+`error: cached session for profile '<name>' expired or invalid — run
+'er auth login'`. Without a selected profile there is no session cache —
+bare `--server` one-offs authenticate with `--password`/`ER_PASSWORD`
+each time. (Upgrading from host-keyed caches: run `er auth login` once
+per profile; old `tokens/<host>.json` files are ignored.)
 
 ## Walkthrough
 
@@ -151,7 +159,7 @@ login'`.
 | `events list event-types [--category V]` | List event types |
 | `events show event-type V` | Full v2 event-type JSON + its Choice records |
 | `events pull CATEGORY [-o FILE] [--skip-unsupported]` | Reconstruct a DSL spec from the server (reverse of apply) |
-| `auth login/status/logout` | Cache/inspect/clear the token for the current `--server` |
+| `auth login/status/logout` | Cache/inspect/clear the selected profile's session |
 | `profile add/use/set/show/list/remove/current` | Named site profiles; `use` selects per shell and `add` auto-switches (via the wrapper); `set` edits the selected profile; `--profile NAME` per command |
 
 ## Spec reference
