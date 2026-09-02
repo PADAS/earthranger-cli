@@ -489,9 +489,10 @@ from earthranger_cli import config_store
 def test_profile_add_use_list_remove():
     result = _run(["profile", "add", "sandbox", "--server", "sandbox", "--username", "chris"])
     assert result.exit_code == 0
-    assert "Added profile 'sandbox' (sandbox.pamdas.org)." in result.output
+    assert "Added profile 'sandbox' (sandbox.pamdas.org)." in result.stderr
+    assert result.stdout == "export ER_PROFILE=sandbox\n"  # eval-able: auto-switch
     result = _run(["profile", "add", "prod", "--server", "myreserve"])
-    assert "Added profile 'prod' (myreserve.pamdas.org)." in result.output
+    assert "Added profile 'prod' (myreserve.pamdas.org)." in result.stderr
     result = _run(["--profile", "sandbox", "profile", "list"])
     assert result.exit_code == 0
     lines = result.output.splitlines()
@@ -721,3 +722,38 @@ def test_choices_show_missing_exits_1(fake):
     result = _run(["choices", "show", "nope"])
     assert result.exit_code == 1
     assert "no choices found for field 'nope'" in result.output
+
+
+def test_profile_set_updates_selected_profile(monkeypatch):
+    config_store.add_profile("sandbox", server="sandbox")
+    monkeypatch.setenv("ER_PROFILE", "sandbox")
+    result = _run(["profile", "set", "username", "me"])
+    assert result.exit_code == 0
+    assert "Set username for profile 'sandbox'." in result.output
+    assert config_store.get_profile("sandbox") == {"server": "sandbox", "username": "me"}
+
+
+def test_profile_set_with_trailing_profile_flag():
+    config_store.add_profile("sandbox", server="sandbox")
+    config_store.add_profile("prod", server="old-host")
+    result = _run(["profile", "set", "server", "https://new.example.org", "--profile", "prod"])
+    assert result.exit_code == 0
+    assert config_store.get_profile("prod")["server"] == "https://new.example.org"
+    assert config_store.get_profile("sandbox")["server"] == "sandbox"
+
+
+def test_profile_set_errors(monkeypatch):
+    result = _run(["profile", "set", "username", "me"])  # nothing selected
+    assert result.exit_code != 0
+    assert "no profile selected" in result.output + result.stderr
+
+    config_store.add_profile("sandbox", server="sandbox")
+    monkeypatch.setenv("ER_PROFILE", "sandbox")
+    result = _run(["profile", "set", "color", "green"])
+    assert result.exit_code == 1
+    assert "server, username" in result.output
+
+    monkeypatch.setenv("ER_PROFILE", "zzz")
+    result = _run(["profile", "set", "username", "me"])
+    assert result.exit_code == 1
+    assert "no profile named 'zzz'" in result.output

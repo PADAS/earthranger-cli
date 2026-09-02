@@ -30,8 +30,9 @@ or per command — selection is never global:
 
 ```bash
 er profile add sandbox --server sandbox --username me
-er profile add prod --server myreserve --username me
-er profile use prod                    # this shell targets prod (needs the wrapper below)
+er profile add prod --server myreserve --username me   # adding auto-switches (via the wrapper)
+er profile use sandbox                 # switch this shell (needs the wrapper below)
+er profile set username me2           # edit a property on the selected profile
 er --profile sandbox events list categories   # one-off override
 er profile list                        # marker shows this shell's selection
 er profile current                     # prints it (exit 1 if none) — prompt-friendly
@@ -40,16 +41,24 @@ er profile current                     # prints it (exit 1 if none) — prompt-f
 A selected profile supplies the server and default username when you
 don't pass them; explicit `--server`/`--username` flags always win.
 
-`er profile use` prints an `export ER_PROFILE=...` line (a subprocess
-can't set its parent shell's env), so add this wrapper to your zshrc —
-it evals that line in place and passes every other command through; the
-optional prompt segment shows the shell's selection:
+`er profile use` and `er profile add` print an `export ER_PROFILE=...`
+line on stdout (a subprocess can't set its parent shell's env; add's
+confirmation goes to stderr), so add this wrapper to your zshrc — it
+evals that line in place, which also makes a newly added profile the
+shell's selection immediately, and passes every other command through;
+the optional prompt segment shows the shell's selection:
 
 ```zsh
 er() {
-  if [[ $1 == profile && $2 == use ]]; then
-    local out; out=$(command er "$@") || { [[ -n $out ]] && print -r -- "$out"; return 1; }
-    eval "$out"
+  if [[ $1 == profile && ($2 == use || $2 == add) ]]; then
+    local out
+    out=$(command er "$@") || { [[ -n $out ]] && print -r -- "$out"; return 1; }
+    # eval only the switch protocol; anything else (e.g. --help) prints normally
+    if [[ $out == "unset ER_PROFILE" || ($out == "export ER_PROFILE="* && $out != *$'\n'*) ]]; then
+      eval "$out"
+    elif [[ -n $out ]]; then
+      print -r -- "$out"
+    fi
   else
     command er "$@"
   fi
@@ -143,7 +152,7 @@ login'`.
 | `events show event-type V` | Full v2 event-type JSON + its Choice records |
 | `events pull CATEGORY [-o FILE] [--skip-unsupported]` | Reconstruct a DSL spec from the server (reverse of apply) |
 | `auth login/status/logout` | Cache/inspect/clear the token for the current `--server` |
-| `profile add/use/show/list/remove/current` | Named site profiles; `use` selects per shell (via the wrapper), `--profile NAME` per command |
+| `profile add/use/set/show/list/remove/current` | Named site profiles; `use` selects per shell and `add` auto-switches (via the wrapper); `set` edits the selected profile; `--profile NAME` per command |
 
 ## Spec reference
 
