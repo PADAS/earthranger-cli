@@ -138,14 +138,25 @@ def _connect_with_cached_token(ctx, name: str, profile: dict, server: str, cache
             return
         # compare-and-swap under the profile lock: another process may have
         # logged out, re-logged-in, or repointed the profile mid-command —
-        # never resurrect that session
-        with token_store.profile_lock(name):
-            current = token_store.load_token(name)
-            if not current or current.get("access_token") != cached["access_token"]:
-                return
-            if config_store.get_profile(name) != profile_snapshot:
-                return
-            token_store.save_token(name, auth, client.auth_expires, cached.get("username") or "")
+        # never resurrect that session. This runs from call_on_close, after
+        # _api_errors has returned and the command has succeeded — persistence
+        # is best-effort, so storage failures warn instead of raising.
+        try:
+            with token_store.profile_lock(name):
+                current = token_store.load_token(name)
+                if not current or current.get("access_token") != cached["access_token"]:
+                    return
+                if config_store.get_profile(name) != profile_snapshot:
+                    return
+                token_store.save_token(
+                    name, auth, client.auth_expires, cached.get("username") or ""
+                )
+        except (config_store.ConfigError, OSError) as e:
+            click.echo(
+                f"warning: could not persist rotated session for profile {name!r}: {e} "
+                "— the next command may need to refresh again.",
+                err=True,
+            )
 
     ctx.call_on_close(_persist_rotation)
     return client
@@ -447,6 +458,11 @@ def profile_add(name, p_server, p_username):
     """Add (or overwrite) a profile."""
     with token_store.profile_lock(name):
         existing = config_store.get_profile(name)
+        if existing is None:
+            # no profile in config (never created, or config lost/corrupt) —
+            # any surviving token file is an orphan from an unknown identity
+            # and must not be adopted by the profile being created
+            token_store.delete_token(name)
         if existing is not None:
             # identity is decided from the profiles alone: an existing token
             # file that merely fails to parse right now must still be cleared

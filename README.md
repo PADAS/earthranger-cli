@@ -22,8 +22,9 @@ Sessions live on profiles (gcloud-style): create a profile, log in once,
 and every command run under that profile reuses its cached session.
 
 ```bash
-er profile add myreserve --server myreserve --username me   # auto-switches
-er auth login                                               # prompts for your password
+er profile add myreserve --server myreserve --username me   # prints: export ER_PROFILE=myreserve
+export ER_PROFILE=myreserve   # select it in this shell (the wrapper below automates this)
+er auth login                 # prompts for your password
 ```
 
 Working across sites? Save each as a profile and select one per shell

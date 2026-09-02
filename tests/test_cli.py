@@ -1053,3 +1053,41 @@ def test_profile_add_rereads_identity_under_lock(monkeypatch):
     result = _run(["profile", "add", "dev", "--server", "sandbox", "--username", "chris"])
     assert result.exit_code == 0
     assert token_store.load_token("dev") is None
+
+
+# --- Copilot round 5 -------------------------------------------------------
+
+
+def test_rotation_persist_failure_warns_not_crashes(monkeypatch):
+    # K1/r3916126247 — _persist_rotation runs after _api_errors returned; a
+    # lock/storage failure must warn, not traceback, and not fail the command
+    config_store.add_profile("dev", server="sandbox", username="chris")
+    monkeypatch.setenv("ER_PROFILE", "dev")
+    token_store.save_token("dev", AUTH, PAST, "chris")
+    fake = FakeER()
+
+    def rotating_auth_headers():
+        fake.auth = {"access_token": "acc-2", "refresh_token": "r2", "token_type": "Bearer"}
+        fake.auth_expires = FUTURE
+        return {}
+
+    fake.auth_headers = rotating_auth_headers
+    monkeypatch.setattr(cli_mod, "make_token_client", lambda **kw: fake)
+
+    def broken_lock(name):
+        raise config_store.ConfigError("could not acquire session lock")
+
+    monkeypatch.setattr(cli_mod.token_store, "profile_lock", broken_lock)
+    result = _run(["events", "list", "categories"])
+    assert result.exit_code == 0  # the command itself succeeded
+    assert "warning:" in result.stderr and "rotated session" in result.stderr
+
+
+def test_profile_add_clears_orphan_token():
+    # K2/r3916126172 — a token file with no profile in config is an orphan;
+    # creating that profile must not adopt it
+    token_store.save_token("dev", AUTH, FUTURE, "chris")
+    assert config_store.get_profile("dev") is None
+    result = _run(["profile", "add", "dev", "--server", "other", "--username", "eve"])
+    assert result.exit_code == 0
+    assert token_store.load_token("dev") is None
