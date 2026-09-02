@@ -1303,7 +1303,23 @@ def test_auth_login_token_explicit_username_must_match_owner(monkeypatch):
     monkeypatch.setattr(cli_mod, "make_static_token_client", lambda **kw: _static_fake())
     result = _run(["auth", "login", "--token", "tok-1", "--username", "alice"])
     assert result.exit_code == 2
-    assert "token belongs to 'chris', not --username 'alice'" in result.output
+    assert (
+        "token belongs to 'chris', not 'alice' (from --username / ER_USERNAME); "
+        "pass --username chris or unset ER_USERNAME."
+    ) in result.output
+
+
+def test_auth_login_token_env_username_is_also_an_identity_claim(monkeypatch):
+    # consistent with _connect, which refuses to ride a cached session on a
+    # username that came from ER_USERNAME; the message names the env var
+    config_store.add_profile("dev", server="sandbox")
+    monkeypatch.setenv("ER_PROFILE", "dev")
+    monkeypatch.setenv("ER_USERNAME", "alice")
+    monkeypatch.setattr(cli_mod, "make_static_token_client", lambda **kw: _static_fake())
+    result = _run(["auth", "login", "--token", "tok-1"])
+    assert result.exit_code == 2
+    assert "unset ER_USERNAME" in result.output
+    assert token_store.load_token("dev") is None
     assert token_store.load_token("dev") is None
     assert config_store.get_profile("dev")["username"] == "alice"
 

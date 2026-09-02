@@ -419,9 +419,13 @@ def auth_login(ctx):
             sys.exit(1)
         explicit = ctx.obj.get("username")
         if explicit and explicit != owner:
-            # same rule as _connect: never let an explicit identity ride on
-            # someone else's credential
-            raise click.UsageError(f"token belongs to {owner!r}, not --username {explicit!r}.")
+            # same rule as _connect: a username given via --username or
+            # ER_USERNAME is an identity claim and must not ride on someone
+            # else's credential; a profile default is not a claim (see below)
+            raise click.UsageError(
+                f"token belongs to {owner!r}, not {explicit!r} (from --username / ER_USERNAME); "
+                f"pass --username {owner} or unset ER_USERNAME."
+            )
         username = owner
         # erclient seeded these from the token; storing them (rather than a
         # copy) keeps the record identical to what just passed /user/me/
