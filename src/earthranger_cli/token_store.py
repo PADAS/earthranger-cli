@@ -1,10 +1,12 @@
-"""Per-server OAuth token cache.
+"""Per-profile OAuth token cache (gcloud-style).
 
-Persists the tokens from `er auth login` so later invocations reuse
-them instead of asking for a password. One file per server host under
-``<config>/tokens/<host>.json`` (0600, directory 0700); the config directory
-defaults to ``~/.config/er-events`` and can be overridden with
-``ER_EVENTS_CONFIG_DIR``. Passwords are never stored here.
+Persists the tokens from `er auth login` so later invocations reuse them
+instead of asking for a password. One file per PROFILE under
+``<config>/tokens/<profile>.json`` (0600, directory 0700) — the profile is
+the unit of identity, so its session travels with it and is invalidated when
+its server or username changes. The config directory defaults to
+``~/.config/er-events`` and can be overridden with ``ER_EVENTS_CONFIG_DIR``.
+Passwords are never stored here.
 """
 
 from __future__ import annotations
@@ -26,17 +28,18 @@ def server_host(server: str) -> str:
     return urlparse(normalize_server(server)).netloc
 
 
-def token_file(host: str) -> Path:
+def token_file(profile: str) -> Path:
     tokens = tokens_dir()
-    path = tokens / f"{host}.json"
-    # A host with a path separator or ".." must not escape the tokens dir.
+    path = tokens / f"{profile}.json"
+    # A name with a path separator or ".." must not escape the tokens dir
+    # (profile names are also validated at creation time).
     if path.resolve().parent != tokens.resolve():
-        raise ValueError(f"invalid server host: {host!r}")
+        raise ValueError(f"invalid profile name: {profile!r}")
     return path
 
 
-def save_token(host: str, auth: dict, expires_at: datetime, username: str) -> None:
-    path = token_file(host)
+def save_token(profile: str, auth: dict, expires_at: datetime, username: str) -> None:
+    path = token_file(profile)
     payload = {
         "access_token": auth["access_token"],
         "refresh_token": auth.get("refresh_token") or "",
@@ -47,9 +50,9 @@ def save_token(host: str, auth: dict, expires_at: datetime, username: str) -> No
     write_private(path, json.dumps(payload, indent=2))
 
 
-def load_token(host: str) -> dict | None:
+def load_token(profile: str) -> dict | None:
     try:
-        path = token_file(host)
+        path = token_file(profile)
     except ValueError:
         return None
     if not path.exists():
@@ -67,10 +70,10 @@ def is_expired(data: dict) -> bool:
     return datetime.fromisoformat(data["expires_at"]) <= datetime.now(UTC)
 
 
-def delete_token(host: str) -> bool:
+def delete_token(profile: str) -> bool:
     """Delete the cached token; True iff a file was actually removed."""
     try:
-        token_file(host).unlink()
+        token_file(profile).unlink()
         return True
     except (OSError, ValueError):
         return False

@@ -268,47 +268,90 @@ class FakeLoginClient(FakeER):
         return self._succeed
 
 
-def test_auth_login_caches_token(monkeypatch):
+def test_auth_login_requires_profile(monkeypatch):
     monkeypatch.setattr(cli_mod, "make_client", lambda **kw: FakeLoginClient())
     result = _run(["--server", "sandbox", "--username", "u", "auth", "login"], input="pw\n")
+    assert result.exit_code != 0
+    assert "selected profile is required" in result.output + result.stderr
+
+
+def test_auth_login_caches_on_profile(monkeypatch):
+    config_store.add_profile("dev", server="sandbox", username="u")
+    monkeypatch.setenv("ER_PROFILE", "dev")
+    monkeypatch.setattr(cli_mod, "make_client", lambda **kw: FakeLoginClient())
+    result = _run(["auth", "login"], input="pw\n")
     assert result.exit_code == 0
-    assert "Authenticated. Token cached for sandbox.pamdas.org." in result.output
-    data = token_store.load_token("sandbox.pamdas.org")
+    assert "Authenticated. Session cached on profile 'dev' (sandbox.pamdas.org)." in result.output
+    data = token_store.load_token("dev")
     assert data["access_token"] == "acc-1"
     assert data["username"] == "u"
 
 
+def test_auth_login_updates_profile_username(monkeypatch):
+    config_store.add_profile("dev", server="sandbox", username="old")
+    monkeypatch.setenv("ER_PROFILE", "dev")
+    monkeypatch.setattr(cli_mod, "make_client", lambda **kw: FakeLoginClient())
+    result = _run(["auth", "login", "--username", "alice", "--password", "pw"])
+    assert result.exit_code == 0
+    assert "Profile 'dev' username set to 'alice'." in result.output
+    assert config_store.get_profile("dev")["username"] == "alice"
+    assert token_store.load_token("dev")["username"] == "alice"
+
+
 def test_auth_login_failure_exits_1(monkeypatch):
+    config_store.add_profile("dev", server="sandbox")
+    monkeypatch.setenv("ER_PROFILE", "dev")
     monkeypatch.setattr(cli_mod, "make_client", lambda **kw: FakeLoginClient(succeed=False))
-    result = _run(["--server", "sandbox", "--username", "u", "--password", "bad", "auth", "login"])
+    result = _run(["auth", "login", "--username", "u", "--password", "bad"])
     assert result.exit_code == 1
     assert "error: login failed for 'u' at sandbox.pamdas.org" in result.output
-    assert token_store.load_token("sandbox.pamdas.org") is None
+    assert token_store.load_token("dev") is None
 
 
-def test_auth_status_and_logout():
-    result = _run(["--server", "sandbox", "auth", "status"])
-    assert "sandbox.pamdas.org: not authenticated" in result.output
-    token_store.save_token("sandbox.pamdas.org", AUTH, FUTURE, "chris")
-    result = _run(["--server", "sandbox", "auth", "status"])
-    assert "sandbox.pamdas.org: valid as chris" in result.output
-    token_store.save_token("sandbox.pamdas.org", AUTH, PAST, "chris")
-    result = _run(["--server", "sandbox", "auth", "status"])
-    assert "sandbox.pamdas.org: expired" in result.output
-    result = _run(["--server", "sandbox", "auth", "logout"])
+def test_auth_status_and_logout(monkeypatch):
+    config_store.add_profile("dev", server="sandbox", username="chris")
+    monkeypatch.setenv("ER_PROFILE", "dev")
+    result = _run(["auth", "status"])
+    assert "dev (sandbox.pamdas.org): not authenticated" in result.output
+    token_store.save_token("dev", AUTH, FUTURE, "chris")
+    result = _run(["auth", "status"])
+    assert "dev (sandbox.pamdas.org): valid as chris" in result.output
+    token_store.save_token("dev", AUTH, PAST, "chris")
+    result = _run(["auth", "status"])
+    assert "dev (sandbox.pamdas.org): expired" in result.output
+    result = _run(["auth", "logout"])
     assert "Logged out." in result.output
-    result = _run(["--server", "sandbox", "auth", "logout"])
-    assert "No cached token." in result.output
+    result = _run(["auth", "logout"])
+    assert "No cached session." in result.output
 
 
 def test_connect_uses_cached_token_without_password(monkeypatch):
-    token_store.save_token("sandbox.pamdas.org", AUTH, FUTURE, "chris")
+    config_store.add_profile("dev", server="sandbox", username="chris")
+    monkeypatch.setenv("ER_PROFILE", "dev")
+    token_store.save_token("dev", AUTH, FUTURE, "chris")
     fake = FakeER()
     monkeypatch.setattr(cli_mod, "make_token_client", lambda **kw: fake)
-    result = _run(["--server", "sandbox", "events", "list", "categories"])
+    result = _run(["events", "list", "categories"])
     assert result.exit_code == 0
     assert fake.auth["access_token"] == "acc-1"
     assert ("auth_headers",) in fake.calls
+
+
+def test_connect_without_profile_never_uses_cache(monkeypatch):
+    token_store.save_token("dev", AUTH, FUTURE, "chris")
+    captured = {}
+
+    def fake_make_client(*, server, username, password):
+        captured.update(username=username, password=password)
+        return FakeER()
+
+    monkeypatch.setattr(cli_mod, "make_client", fake_make_client)
+    result = _run(
+        ["--server", "sandbox", "--username", "chris", "events", "list", "categories"],
+        input="pw\n",
+    )
+    assert result.exit_code == 0
+    assert captured["password"] == "pw"  # password path, not the cache
 
 
 def test_connect_explicit_password_beats_cache(monkeypatch):
@@ -356,7 +399,9 @@ def test_connect_cached_token_skipped_when_username_differs(monkeypatch):
 
 
 def test_connect_cached_token_used_when_username_matches(monkeypatch):
-    token_store.save_token("sandbox.pamdas.org", AUTH, FUTURE, "chris")
+    config_store.add_profile("dev", server="sandbox", username="chris")
+    monkeypatch.setenv("ER_PROFILE", "dev")
+    token_store.save_token("dev", AUTH, FUTURE, "chris")
     fake = FakeER()
     monkeypatch.setattr(cli_mod, "make_token_client", lambda **kw: fake)
     result = _run(["--server", "sandbox", "--username", "chris", "events", "list", "categories"])
@@ -368,7 +413,9 @@ def test_connect_cached_token_used_when_username_matches(monkeypatch):
 def test_connect_expired_cached_session_message(monkeypatch):
     from erclient.er_errors import ERClientException
 
-    token_store.save_token("sandbox.pamdas.org", AUTH, PAST, "chris")
+    config_store.add_profile("dev", server="sandbox", username="chris")
+    monkeypatch.setenv("ER_PROFILE", "dev")
+    token_store.save_token("dev", AUTH, PAST, "chris")
     fake = FakeER()
 
     def failing_auth_headers():
@@ -379,13 +426,15 @@ def test_connect_expired_cached_session_message(monkeypatch):
     result = _run(["--server", "sandbox", "events", "list", "categories"])
     assert result.exit_code == 1
     assert (
-        "error: cached session for sandbox.pamdas.org expired or invalid — "
+        "error: cached session for profile 'dev' expired or invalid — "
         "run 'er auth login'" in result.output
     )
 
 
 def test_rotated_token_is_persisted_after_command(monkeypatch):
-    token_store.save_token("sandbox.pamdas.org", AUTH, PAST, "chris")
+    config_store.add_profile("dev", server="sandbox", username="chris")
+    monkeypatch.setenv("ER_PROFILE", "dev")
+    token_store.save_token("dev", AUTH, PAST, "chris")
     fake = FakeER()
 
     def rotating_auth_headers():
@@ -397,7 +446,7 @@ def test_rotated_token_is_persisted_after_command(monkeypatch):
     monkeypatch.setattr(cli_mod, "make_token_client", lambda **kw: fake)
     result = _run(["--server", "sandbox", "events", "list", "categories"])
     assert result.exit_code == 0
-    data = token_store.load_token("sandbox.pamdas.org")
+    data = token_store.load_token("dev")
     assert data["access_token"] == "acc-2"
     assert data["refresh_token"] == "ref-2"
     assert data["username"] == "chris"
@@ -525,7 +574,7 @@ def test_env_profile_supplies_server_and_username(monkeypatch):
 def test_profile_flag_selects_profile(monkeypatch):
     config_store.add_profile("sandbox", server="sandbox")
     config_store.add_profile("prod", server="myreserve", username="ops")
-    token_store.save_token("myreserve.pamdas.org", AUTH, FUTURE, "ops")
+    token_store.save_token("prod", AUTH, FUTURE, "ops")
     fake = FakeER()
     seen = {}
 
@@ -540,9 +589,11 @@ def test_profile_flag_selects_profile(monkeypatch):
     assert seen["server"] == "myreserve"
 
 
-def test_explicit_server_flag_overrides_profile(monkeypatch):
-    config_store.add_profile("sandbox", server="sandbox")
-    token_store.save_token("other.pamdas.org", AUTH, FUTURE, "x")
+def test_explicit_server_flag_overrides_profile_server(monkeypatch):
+    # a selected profile still supplies the session; --server rewires the host
+    config_store.add_profile("dev", server="sandbox", username="x")
+    monkeypatch.setenv("ER_PROFILE", "dev")
+    token_store.save_token("dev", AUTH, FUTURE, "x")
     fake = FakeER()
     seen = {}
 
@@ -593,7 +644,7 @@ def test_profile_use_unknown_errors():
 
 def test_profile_show_by_name():
     config_store.add_profile("prod", server="myreserve", username="chris")
-    token_store.save_token("myreserve.pamdas.org", AUTH, FUTURE, "chris")
+    token_store.save_token("prod", AUTH, FUTURE, "chris")
     result = _run(["profile", "show", "prod"])
     assert result.exit_code == 0
     assert "name:      prod" in result.output
@@ -630,8 +681,20 @@ def test_connection_flags_accepted_after_subcommand(monkeypatch):
         return FakeLoginClient()
 
     monkeypatch.setattr(cli_mod, "make_client", fake_make_client)
+    config_store.add_profile("dev", server="ignored-host")
     result = _run(
-        ["auth", "login", "--server", "sandbox", "--username", "chrisd", "--password", "pw"]
+        [
+            "auth",
+            "login",
+            "--server",
+            "sandbox",
+            "--username",
+            "chrisd",
+            "--password",
+            "pw",
+            "--profile",
+            "dev",
+        ]
     )
     assert result.exit_code == 0
     assert captured == {"server": "sandbox", "username": "chrisd", "password": "pw"}
@@ -640,7 +703,7 @@ def test_connection_flags_accepted_after_subcommand(monkeypatch):
 def test_trailing_flags_override_globals(monkeypatch):
     config_store.add_profile("sandbox", server="sandbox")
     config_store.add_profile("prod", server="myreserve")
-    token_store.save_token("myreserve.pamdas.org", AUTH, FUTURE, "ops")
+    token_store.save_token("prod", AUTH, FUTURE, "ops")
     fake = FakeER()
     seen = {}
 
