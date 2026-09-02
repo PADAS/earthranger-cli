@@ -107,3 +107,23 @@ def test_profile_lock_is_exclusive(tmp_path, monkeypatch):
     with open(lock_path) as other:
         fcntl.flock(other, fcntl.LOCK_EX | fcntl.LOCK_NB)
         fcntl.flock(other, fcntl.LOCK_UN)
+
+
+def test_load_token_rejects_record_for_other_profile_or_legacy(tmp_path, monkeypatch):
+    # H3/r-suppressed token_store:35 — a legacy host-keyed record (no profile
+    # marker) or a record saved for a different profile is never adopted
+    monkeypatch.setenv("ER_EVENTS_CONFIG_DIR", str(tmp_path))
+    path = token_store.token_file("dev")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    legacy = {
+        "access_token": "tok",
+        "refresh_token": "r",
+        "expires_at": "2099-01-01T00:00:00+00:00",
+        "username": "chris",
+    }
+    path.write_text(json.dumps(legacy))
+    assert token_store.load_token("dev") is None
+    path.write_text(json.dumps({**legacy, "profile": "prod"}))
+    assert token_store.load_token("dev") is None
+    path.write_text(json.dumps({**legacy, "profile": "dev"}))
+    assert token_store.load_token("dev") is not None

@@ -991,3 +991,58 @@ def test_profile_set_username_clears_unverifiable_session(monkeypatch):
     result = _run(["profile", "set", "username", "someone"])
     assert result.exit_code == 0
     assert not path.exists()
+
+
+# --- Copilot round 3 -------------------------------------------------------
+
+
+def test_profile_add_invalid_name_is_clean_error():
+    # H1/r3915330064 — unsafe names must fail as a ConfigError, not a traceback
+    result = _run(["profile", "add", "../evil", "--server", "x", "--username", "u"])
+    assert result.exit_code == 1
+    assert "error:" in result.output + result.stderr
+
+
+def test_auth_login_aborts_if_profile_changed_mid_login(monkeypatch):
+    # H2/r3915329961 — a profile repointed during the network login must not
+    # adopt the token minted for the old server
+    config_store.add_profile("dev", server="sandbox", username="chris")
+    monkeypatch.setenv("ER_PROFILE", "dev")
+
+    class RacingLoginClient(FakeLoginClient):
+        def login(self):
+            # simulate a concurrent 'er profile set server' winning the race
+            config_store.set_profile_property("dev", "server", "other")
+            return super().login()
+
+    monkeypatch.setattr(cli_mod, "make_client", lambda **kw: RacingLoginClient())
+    result = _run(["auth", "login", "--username", "chris", "--password", "pw"])
+    assert result.exit_code == 1
+    assert "changed during login" in result.output + result.stderr
+    assert token_store.load_token("dev") is None
+
+
+def test_profile_add_rereads_identity_under_lock(monkeypatch):
+    # H4/r-suppressed cli:440 — the invalidation decision must use the profile
+    # as it stands once the lock is held, not a pre-lock snapshot
+    config_store.add_profile("dev", server="sandbox", username="chris")
+    token_store.save_token("dev", AUTH, FUTURE, "chris")
+    real_lock = token_store.profile_lock
+
+    from contextlib import contextmanager
+
+    @contextmanager
+    def racing_lock(name):
+        with real_lock(name):
+            # another process repointed and re-logged-in just before we
+            # acquired the lock
+            config_store.set_profile_property("dev", "server", "other")
+            token_store.save_token("dev", {**AUTH, "access_token": "theirs"}, FUTURE, "eve")
+            yield
+
+    monkeypatch.setattr(cli_mod.token_store, "profile_lock", racing_lock)
+    # identical to the *stale* snapshot — must still invalidate, because the
+    # post-lock profile ("other"/"eve") differs from what we're writing
+    result = _run(["profile", "add", "dev", "--server", "sandbox", "--username", "chris"])
+    assert result.exit_code == 0
+    assert token_store.load_token("dev") is None

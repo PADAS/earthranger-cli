@@ -46,7 +46,12 @@ def profile_lock(profile: str):
     mutation — save, delete, and the profile edits that invalidate a session —
     so a check-then-write (e.g. the rotation compare-and-swap) can't interleave
     with a concurrent logout, login, or profile change."""
-    target = token_file(profile)  # validates the name
+    try:
+        target = token_file(profile)
+    except ValueError as e:
+        # unsafe names surface as the normal configuration error, matching
+        # the validation config_store applies at creation time
+        raise ConfigError(str(e)) from e
     target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     lock_path = target.parent / (target.name + ".lock")
     with open(lock_path, "w") as f:
@@ -65,6 +70,9 @@ def save_token(profile: str, auth: dict, expires_at: datetime, username: str) ->
         "token_type": auth.get("token_type") or "Bearer",
         "expires_at": expires_at.isoformat(),
         "username": username,
+        # scope marker: binds the record to this profile, so a legacy
+        # host-keyed cache file (or a copied record) is never adopted
+        "profile": profile,
     }
     write_private(path, json.dumps(payload, indent=2))
 
@@ -82,6 +90,8 @@ def load_token(profile: str) -> dict | None:
         return None  # corrupt cache == miss; caller falls back to other auth
     if not _is_valid_token_data(data):
         return None
+    if data.get("profile") != profile:
+        return None  # legacy host-keyed record or another profile's — never adopt
     return data
 
 

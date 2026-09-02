@@ -335,6 +335,15 @@ def auth_login(ctx):
         click.echo(f"error: login failed for {username!r} at {host}")
         sys.exit(1)
     with token_store.profile_lock(name):
+        # the token was minted for the profile as it stood before the network
+        # round-trip; if a concurrent command repointed it since, this session
+        # belongs to the old identity and must not be cached
+        if config_store.get_profile(name) != profile:
+            click.echo(
+                f"error: profile {name!r} changed during login — session not cached; "
+                "re-run 'er auth login'."
+            )
+            sys.exit(1)
         token_store.save_token(name, client.auth, client.auth_expires, username)
         if profile.get("username") != username:
             # the profile's identity follows whoever actually logged in
@@ -436,8 +445,8 @@ def profile_group():
 @_api_errors
 def profile_add(name, p_server, p_username):
     """Add (or overwrite) a profile."""
-    existing = config_store.get_profile(name)
     with token_store.profile_lock(name):
+        existing = config_store.get_profile(name)
         if existing is not None:
             # identity is decided from the profiles alone: an existing token
             # file that merely fails to parse right now must still be cleared
