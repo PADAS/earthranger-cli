@@ -144,3 +144,14 @@ def test_profile_lock_oserror_is_config_error(tmp_path, monkeypatch):
             pass
     finally:
         tokens.chmod(0o700)
+
+
+def test_token_file_rejects_traversal_shaped_names(tmp_path, monkeypatch):
+    # r3916762242 — '../tokens/dev' normalizes back into the tokens dir and
+    # aliases 'dev'; only a single path component is a valid profile name
+    import pytest
+
+    monkeypatch.setenv("ER_EVENTS_CONFIG_DIR", str(tmp_path))
+    for bad in ("../tokens/dev", "a/b", ".", "..", ""):
+        with pytest.raises(ValueError):
+            token_store.token_file(bad)

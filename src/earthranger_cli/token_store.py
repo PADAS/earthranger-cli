@@ -31,10 +31,15 @@ def server_host(server: str) -> str:
 
 
 def token_file(profile: str) -> Path:
+    # Only a single path component is a valid name: a resolve()-based
+    # containment check alone would accept traversal-shaped names that
+    # normalize back into the tokens dir ("../tokens/dev" aliases "dev") and
+    # let them act on another profile's session. (Names are also validated
+    # at creation time.)
+    if not profile or profile in (".", "..") or Path(profile).name != profile:
+        raise ValueError(f"invalid profile name: {profile!r}")
     tokens = tokens_dir()
     path = tokens / f"{profile}.json"
-    # A name with a path separator or ".." must not escape the tokens dir
-    # (profile names are also validated at creation time).
     if path.resolve().parent != tokens.resolve():
         raise ValueError(f"invalid profile name: {profile!r}")
     return path

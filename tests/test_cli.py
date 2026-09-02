@@ -1157,3 +1157,14 @@ def test_auth_status_reports_one_coherent_identity(monkeypatch):
     assert result.exit_code == 0
     assert "other.pamdas.org" in result.output  # the session's actual host
     assert "as eve" in result.output
+
+
+def test_profile_add_traversal_name_cannot_touch_other_sessions():
+    # r3916762242 — 'profile add ../tokens/dev' must not acquire dev's lock or
+    # delete dev's session on its way to the name-validation error
+    config_store.add_profile("dev", server="sandbox", username="chris")
+    token_store.save_token("dev", AUTH, FUTURE, "chris")
+    result = _run(["profile", "add", "../tokens/dev", "--server", "x", "--username", "u"])
+    assert result.exit_code == 1
+    assert "error:" in result.output + result.stderr
+    assert token_store.load_token("dev") is not None  # untouched
