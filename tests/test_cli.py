@@ -1279,3 +1279,55 @@ def test_auth_login_token_still_requires_matching_server(monkeypatch):
     result = _run(["auth", "login", "--token", "tok-1", "--server", "other"])
     assert result.exit_code == 2
     assert "differs from profile 'dev'" in result.output
+
+
+def _store_static(name="dev", token="tok-1", username="chris"):
+    token_store.save_token(
+        name, {"access_token": token}, token_store.STATIC_EXPIRES, username, static=True
+    )
+
+
+def test_connect_uses_stored_static_token_without_refresh_or_rotation(monkeypatch):
+    config_store.add_profile("dev", server="sandbox", username="chris")
+    monkeypatch.setenv("ER_PROFILE", "dev")
+    _store_static()
+    fake = FakeER()
+    monkeypatch.setattr(cli_mod, "make_token_client", lambda **kw: fake)
+    monkeypatch.setattr(
+        cli_mod, "make_client", lambda **kw: pytest.fail("password client must not be built")
+    )
+    result = _run(["events", "list", "categories"])
+    assert result.exit_code == 0
+    assert fake.auth == {"access_token": "tok-1", "refresh_token": "", "token_type": "Bearer"}
+    assert fake.auth_expires.year == 2099
+    # nothing rotated, so the record on disk is byte-for-byte what we stored
+    data = token_store.load_token("dev")
+    assert data["access_token"] == "tok-1" and token_store.is_static(data)
+
+
+def test_status_show_and_list_report_static_token(monkeypatch):
+    config_store.add_profile("dev", server="sandbox", username="chris")
+    monkeypatch.setenv("ER_PROFILE", "dev")
+    _store_static()
+
+    result = _run(["auth", "status"])
+    assert result.exit_code == 0
+    assert (
+        result.output.strip() == "dev (sandbox.pamdas.org): static token as chris (never refreshes)"
+    )
+
+    result = _run(["profile", "show"])
+    assert "auth:      static token as chris (never refreshes)" in result.output
+
+    result = _run(["profile", "list"])
+    assert result.output.rstrip().endswith("static token")
+
+
+def test_profile_set_username_to_other_user_clears_static_token(monkeypatch):
+    config_store.add_profile("dev", server="sandbox", username="chris")
+    monkeypatch.setenv("ER_PROFILE", "dev")
+    _store_static()
+    result = _run(["profile", "set", "username", "alice"])
+    assert result.exit_code == 0
+    assert "Cleared cached session for profile 'dev'" in result.output
+    assert token_store.load_token("dev") is None

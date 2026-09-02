@@ -153,8 +153,9 @@ def _connect_with_cached_token(ctx, name: str, profile: dict, server: str, cache
         # so a dead session fails here with a clear message instead of mid-command.
         client.auth_headers()
     except ERClientException as e:
+        kind = "static token" if token_store.is_static(cached) else "cached session"
         raise ERClientException(
-            f"cached session for profile {name!r} expired or invalid — run 'er auth login'"
+            f"{kind} for profile {name!r} expired or invalid — run 'er auth login'"
         ) from e
     profile_snapshot = dict(profile)
 
@@ -458,12 +459,7 @@ def auth_status(ctx):
     profile, data = _profile_session_snapshot(name)
     profile = profile or {}
     host = token_store.server_host(profile.get("server") or "")
-    if not data:
-        click.echo(f"{name} ({host}): not authenticated")
-        return
-    state = "expired" if token_store.is_expired(data) else "valid"
-    as_user = f" as {data['username']}" if data.get("username") else ""
-    click.echo(f"{name} ({host}): {state}{as_user} (access token expires {data['expires_at']})")
+    click.echo(f"{name} ({host}): {_auth_detail(data)}")
 
 
 @events_group.command("pull")
@@ -501,7 +497,19 @@ def pull_cmd(ctx, category_value, output, skip_unsupported):
 def _auth_state(data: dict | None) -> str:
     if not data:
         return "not authenticated"
+    if token_store.is_static(data):
+        return "static token"
     return "expired" if token_store.is_expired(data) else "valid"
+
+
+def _auth_detail(data: dict | None) -> str:
+    """Long form for `auth status` / `profile show`: state, owner, expiry."""
+    if not data:
+        return "not authenticated"
+    as_user = f" as {data['username']}" if data.get("username") else ""
+    if token_store.is_static(data):
+        return f"static token{as_user} (never refreshes)"
+    return f"{_auth_state(data)}{as_user} (access token expires {data['expires_at']})"
 
 
 @main.group("profile")
@@ -654,17 +662,11 @@ def profile_show(ctx, name):
         raise config_store.ConfigError(f"no profile named {name!r}")
     server = profile["server"]
     host = token_store.server_host(server)
-    if not data:
-        auth = "not authenticated"
-    else:
-        state = "expired" if token_store.is_expired(data) else "valid"
-        as_user = f" as {data['username']}" if data.get("username") else ""
-        auth = f"{state}{as_user} (access token expires {data['expires_at']})"
     click.echo(f"name:      {name}")
     click.echo(f"server:    {server}")
     click.echo(f"host:      {host}")
     click.echo(f"username:  {profile.get('username') or '-'}")
-    click.echo(f"auth:      {auth}")
+    click.echo(f"auth:      {_auth_detail(data)}")
 
 
 @main.group("choices")
