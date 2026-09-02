@@ -15,7 +15,7 @@ from . import client as er
 from . import config_store, token_store
 from .apply import ApplyError, apply_spec, extract_choice_fields, normalize_v2_schema
 from .choices import choice_sort_key
-from .client import make_client, make_token_client
+from .client import make_client, make_token_client, normalize_server
 from .dsl import SpecError, load_spec
 from .events import FieldArgError, build_event, load_events_file, parse_field_args, post_events
 from .pull import PullError, pull_category, render_spec_yaml
@@ -104,11 +104,13 @@ def _connect(ctx):
     profile = config_store.get_profile(name) if name else None
     if not password and profile is not None:
         cached = token_store.load_token(name)
-        # The session is bound to the profile's host: a --server/ER_SERVER
-        # override must never receive the profile's token. Likewise an
-        # explicit --username that isn't the session's owner.
-        host_matches = token_store.server_host(server) == token_store.server_host(profile["server"])
-        if cached and host_matches and (not username or cached.get("username") == username):
+        # The session is bound to the profile's server: a --server/ER_SERVER
+        # override must never receive the profile's token — compared as full
+        # normalized URLs, so an http:// downgrade or a different base path on
+        # the same host also misses. Likewise an explicit --username that
+        # isn't the session's owner.
+        server_matches = normalize_server(server) == normalize_server(profile["server"])
+        if cached and server_matches and (not username or cached.get("username") == username):
             return _connect_with_cached_token(ctx, name, profile, server, cached)
     if not username:
         raise click.UsageError("Missing username: pass --username or set ER_USERNAME.")
@@ -134,14 +136,16 @@ def _connect_with_cached_token(ctx, name: str, profile: dict, server: str, cache
         auth = getattr(client, "auth", None) or {}
         if not auth.get("access_token") or auth["access_token"] == cached["access_token"]:
             return
-        # compare-and-swap: another process may have logged out, re-logged-in,
-        # or repointed the profile mid-command — never resurrect that session
-        current = token_store.load_token(name)
-        if not current or current.get("access_token") != cached["access_token"]:
-            return
-        if config_store.get_profile(name) != profile_snapshot:
-            return
-        token_store.save_token(name, auth, client.auth_expires, cached.get("username") or "")
+        # compare-and-swap under the profile lock: another process may have
+        # logged out, re-logged-in, or repointed the profile mid-command —
+        # never resurrect that session
+        with token_store.profile_lock(name):
+            current = token_store.load_token(name)
+            if not current or current.get("access_token") != cached["access_token"]:
+                return
+            if config_store.get_profile(name) != profile_snapshot:
+                return
+            token_store.save_token(name, auth, client.auth_expires, cached.get("username") or "")
 
     ctx.call_on_close(_persist_rotation)
     return client
@@ -314,10 +318,10 @@ def auth_login(ctx):
     name = _require_selected_profile(ctx)
     server, username = _resolve_connection(ctx)
     profile = config_store.get_profile(name) or {}
-    if token_store.server_host(server) != token_store.server_host(profile.get("server") or ""):
+    if normalize_server(server) != normalize_server(profile.get("server") or ""):
         raise click.UsageError(
-            f"server {token_store.server_host(server)!r} differs from profile {name!r} "
-            f"({token_store.server_host(profile.get('server') or '')}); update it first "
+            f"server {normalize_server(server)!r} differs from profile {name!r} "
+            f"({normalize_server(profile.get('server') or '')}); update it first "
             "with 'er profile set server ...'."
         )
     password = ctx.obj["password"]
@@ -330,11 +334,12 @@ def auth_login(ctx):
     if not client.login():
         click.echo(f"error: login failed for {username!r} at {host}")
         sys.exit(1)
-    token_store.save_token(name, client.auth, client.auth_expires, username)
-    if profile.get("username") != username:
-        # the profile's identity follows whoever actually logged in
-        config_store.set_profile_property(name, "username", username)
-        click.echo(f"Profile {name!r} username set to {username!r}.")
+    with token_store.profile_lock(name):
+        token_store.save_token(name, client.auth, client.auth_expires, username)
+        if profile.get("username") != username:
+            # the profile's identity follows whoever actually logged in
+            config_store.set_profile_property(name, "username", username)
+            click.echo(f"Profile {name!r} username set to {username!r}.")
     click.echo(f"Authenticated. Session cached on profile {name!r} ({host}).")
 
 
@@ -357,7 +362,9 @@ def _require_selected_profile(ctx) -> str:
 def auth_logout(ctx):
     """Delete the selected profile's cached session."""
     name = _require_selected_profile(ctx)
-    click.echo("Logged out." if token_store.delete_token(name) else "No cached session.")
+    with token_store.profile_lock(name):
+        removed = token_store.delete_token(name)
+    click.echo("Logged out." if removed else "No cached session.")
 
 
 @auth_group.command("status")
@@ -430,20 +437,21 @@ def profile_group():
 def profile_add(name, p_server, p_username):
     """Add (or overwrite) a profile."""
     existing = config_store.get_profile(name)
-    if existing is not None and token_store.load_token(name):
-        same_identity = (
-            token_store.server_host(existing.get("server") or "")
-            == (token_store.server_host(p_server))
-            and existing.get("username") == p_username
-        )
-        if not same_identity:
-            token_store.delete_token(name)
-            click.echo(
-                f"Cleared cached session for profile {name!r} (identity changed); "
-                "run 'er auth login'.",
-                err=True,
+    with token_store.profile_lock(name):
+        if existing is not None:
+            # identity is decided from the profiles alone: an existing token
+            # file that merely fails to parse right now must still be cleared
+            same_identity = (
+                normalize_server(existing.get("server") or "") == (normalize_server(p_server))
+                and existing.get("username") == p_username
             )
-    config_store.add_profile(name, server=p_server, username=p_username)
+            if not same_identity and token_store.delete_token(name):
+                click.echo(
+                    f"Cleared cached session for profile {name!r} (identity changed); "
+                    "run 'er auth login'.",
+                    err=True,
+                )
+        config_store.add_profile(name, server=p_server, username=p_username)
     # confirmation to stderr; stdout stays eval-able so the shell wrapper can
     # auto-switch this shell to the new profile (same pattern as profile use)
     click.echo(f"Added profile {name!r} ({token_store.server_host(p_server)}).", err=True)
@@ -475,8 +483,9 @@ def profile_remove(name):
     """Delete a profile and its cached session."""
     if config_store.get_profile(name) is None:
         raise config_store.ConfigError(f"no profile named {name!r}")
-    token_store.delete_token(name)  # raises on real failure, before removal
-    config_store.remove_profile(name)
+    with token_store.profile_lock(name):
+        token_store.delete_token(name)  # raises on real failure, before removal
+        config_store.remove_profile(name)
     click.echo(f"Removed profile {name!r}.")
 
 
@@ -522,19 +531,21 @@ def profile_set(ctx, key, value):
         raise click.UsageError(
             "no profile selected — select one with 'er profile use' or pass --profile."
         )
-    cached = token_store.load_token(name)
     # the session is bound to the profile's identity: changing the server, or
-    # the username to someone other than the session's owner, invalidates it.
-    # Delete BEFORE committing the change so a failed cleanup never leaves a
-    # stale token attached to the new identity.
-    invalidates = cached and (
-        key == "server" or (key == "username" and cached.get("username") != value)
-    )
-    if invalidates:
-        token_store.delete_token(name)  # raises on real failure
-    config_store.set_profile_property(name, key, value)
+    # the username to someone other than the session's owner, invalidates it —
+    # including when the cached owner can't be verified (unreadable token
+    # file). Delete BEFORE committing the change, under the profile lock, so a
+    # failed cleanup never leaves a stale token attached to the new identity.
+    with token_store.profile_lock(name):
+        if key == "server":
+            invalidates = True
+        else:
+            cached = token_store.load_token(name)
+            invalidates = key == "username" and (cached is None or cached.get("username") != value)
+        removed = token_store.delete_token(name) if invalidates else False
+        config_store.set_profile_property(name, key, value)
     click.echo(f"Set {key} for profile {name!r}.")
-    if invalidates:
+    if removed:
         click.echo(f"Cleared cached session for profile {name!r}; run 'er auth login'.")
 
 

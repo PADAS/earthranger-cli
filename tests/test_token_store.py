@@ -89,3 +89,21 @@ def test_is_expired():
     stale = {"expires_at": (datetime.now(UTC) - timedelta(hours=1)).isoformat()}
     assert token_store.is_expired(fresh) is False
     assert token_store.is_expired(stale) is True
+
+
+def test_profile_lock_is_exclusive(tmp_path, monkeypatch):
+    # G2+G5/r3910752062 — session mutations serialize on a per-profile flock
+    import fcntl
+
+    import pytest
+
+    monkeypatch.setenv("ER_EVENTS_CONFIG_DIR", str(tmp_path))
+    with token_store.profile_lock("dev"):
+        lock_path = token_store.token_file("dev").parent / "dev.json.lock"
+        assert lock_path.exists()
+        with open(lock_path) as other, pytest.raises(BlockingIOError):
+            fcntl.flock(other, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    # released on exit
+    with open(lock_path) as other:
+        fcntl.flock(other, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        fcntl.flock(other, fcntl.LOCK_UN)

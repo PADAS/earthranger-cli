@@ -919,3 +919,75 @@ def test_delete_failures_are_loud(monkeypatch):
     result = _run(["profile", "remove", "dev"])
     assert result.exit_code == 1
     assert config_store.get_profile("dev") is not None  # removal not finalized
+
+
+# --- Copilot round 2 -------------------------------------------------------
+
+
+def test_http_override_of_https_profile_bypasses_cache(monkeypatch):
+    # G1/r3910752034 — same netloc, downgraded scheme: token must stay home
+    config_store.add_profile("dev", server="https://x.example.com", username="chris")
+    monkeypatch.setenv("ER_PROFILE", "dev")
+    token_store.save_token("dev", AUTH, FUTURE, "chris")
+    captured = {}
+
+    def fake_make_client(*, server, username, password):
+        captured.update(server=server, password=password)
+        return FakeER()
+
+    monkeypatch.setattr(cli_mod, "make_client", fake_make_client)
+    result = _run(
+        ["--server", "http://x.example.com", "events", "list", "categories"],
+        input="pw\n",
+    )
+    assert result.exit_code == 0
+    assert captured == {"server": "http://x.example.com", "password": "pw"}
+
+
+def test_auth_login_rejects_scheme_mismatch(monkeypatch):
+    # G1/r3910752034 — login must not mint a session via a downgraded scheme
+    config_store.add_profile("dev", server="https://x.example.com", username="chris")
+    monkeypatch.setenv("ER_PROFILE", "dev")
+    result = _run(["auth", "login", "--server", "http://x.example.com", "--password", "pw"])
+    assert result.exit_code != 0
+    out = result.output + result.stderr
+    assert "differs from profile" in out
+    assert token_store.load_token("dev") is None
+
+
+def test_profile_add_overwrite_clears_unreadable_session():
+    # G3/r3910752085 — invalidation decided from the profiles, not from
+    # whether the old token file currently parses
+    config_store.add_profile("dev", server="sandbox", username="chris")
+    path = token_store.token_file("dev")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("not json{")
+    assert token_store.load_token("dev") is None  # unreadable, but present
+    result = _run(["profile", "add", "dev", "--server", "other", "--username", "chris"])
+    assert result.exit_code == 0
+    assert not path.exists()
+
+
+def test_profile_set_server_clears_unreadable_session(monkeypatch):
+    # G4/r3910752105 — a server change always attempts session deletion
+    config_store.add_profile("dev", server="sandbox", username="chris")
+    monkeypatch.setenv("ER_PROFILE", "dev")
+    path = token_store.token_file("dev")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("not json{")
+    result = _run(["profile", "set", "server", "other"])
+    assert result.exit_code == 0
+    assert not path.exists()
+    assert config_store.get_profile("dev")["server"] == "other"
+
+
+def test_profile_set_username_clears_unverifiable_session(monkeypatch):
+    # G4/r3910752105 — cached owner can't be verified -> clear it
+    config_store.add_profile("dev", server="sandbox", username="chris")
+    monkeypatch.setenv("ER_PROFILE", "dev")
+    path = token_store.token_file("dev")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("not json{")
+    result = _run(["profile", "set", "username", "someone"])
+    assert result.exit_code == 0
+    assert not path.exists()

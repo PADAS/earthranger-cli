@@ -11,7 +11,9 @@ Passwords are never stored here.
 
 from __future__ import annotations
 
+import fcntl
 import json
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import urlparse
@@ -36,6 +38,23 @@ def token_file(profile: str) -> Path:
     if path.resolve().parent != tokens.resolve():
         raise ValueError(f"invalid profile name: {profile!r}")
     return path
+
+
+@contextmanager
+def profile_lock(profile: str):
+    """Exclusive per-profile advisory lock (flock) held across every session
+    mutation — save, delete, and the profile edits that invalidate a session —
+    so a check-then-write (e.g. the rotation compare-and-swap) can't interleave
+    with a concurrent logout, login, or profile change."""
+    target = token_file(profile)  # validates the name
+    target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    lock_path = target.parent / (target.name + ".lock")
+    with open(lock_path, "w") as f:
+        fcntl.flock(f, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(f, fcntl.LOCK_UN)
 
 
 def save_token(profile: str, auth: dict, expires_at: datetime, username: str) -> None:
