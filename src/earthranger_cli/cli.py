@@ -393,7 +393,10 @@ def profile_group():
 def profile_add(name, p_server, p_username):
     """Add (or overwrite) a profile."""
     config_store.add_profile(name, server=p_server, username=p_username)
-    click.echo(f"Added profile {name!r} ({token_store.server_host(p_server)}).")
+    # confirmation to stderr; stdout stays eval-able so the shell wrapper can
+    # auto-switch this shell to the new profile (same pattern as profile use)
+    click.echo(f"Added profile {name!r} ({token_store.server_host(p_server)}).", err=True)
+    click.echo(f"export ER_PROFILE={name}")
 
 
 @profile_group.command("list")
@@ -451,6 +454,23 @@ def profile_use(name):
     if config_store.get_profile(name) is None:
         raise config_store.ConfigError(f"no profile named {name!r}")
     click.echo(f"export ER_PROFILE={name}")
+
+
+@profile_group.command("set")
+@click.argument("key")
+@click.argument("value")
+@connection_options
+@click.pass_context
+@_api_errors
+def profile_set(ctx, key, value):
+    """Set a property (server, username) on the selected profile."""
+    name = ctx.obj.get("profile")
+    if not name:
+        raise click.UsageError(
+            "no profile selected — select one with 'er profile use' or pass --profile."
+        )
+    config_store.set_profile_property(name, key, value)
+    click.echo(f"Set {key} for profile {name!r}.")
 
 
 @profile_group.command("show")

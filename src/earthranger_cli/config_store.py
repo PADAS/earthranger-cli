@@ -88,6 +88,21 @@ def list_profiles() -> dict:
     return _load()["profiles"]
 
 
+PROFILE_KEYS = ("server", "username")
+
+
+def set_profile_property(name: str, key: str, value: str) -> None:
+    if key not in PROFILE_KEYS:
+        raise ConfigError(f"unknown profile property {key!r} (settable: {', '.join(PROFILE_KEYS)})")
+    if not isinstance(value, str) or not value:
+        raise ConfigError(f"{key}: a non-empty value is required")
+    cfg = _load()
+    if name not in cfg["profiles"]:
+        raise ConfigError(f"no profile named {name!r}")
+    cfg["profiles"][name][key] = value
+    _save(cfg)
+
+
 def remove_profile(name: str) -> bool:
     cfg = _load()
     if name not in cfg["profiles"]:
