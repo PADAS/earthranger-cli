@@ -17,7 +17,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from .client import normalize_server
-from .config_store import config_dir, write_private
+from .config_store import ConfigError, config_dir, write_private
 
 
 def tokens_dir() -> Path:
@@ -71,12 +71,19 @@ def is_expired(data: dict) -> bool:
 
 
 def delete_token(profile: str) -> bool:
-    """Delete the cached token; True iff a file was actually removed."""
+    """Delete the cached session; True iff a file was actually removed.
+
+    A missing file (the common case) or an unsafe name is False; a real
+    filesystem failure raises ConfigError so callers never report a session
+    as cleared while its token file survives.
+    """
     try:
         token_file(profile).unlink()
         return True
-    except (OSError, ValueError):
+    except (FileNotFoundError, ValueError):
         return False
+    except OSError as e:
+        raise ConfigError(f"could not delete cached session for profile {profile!r}: {e}") from e
 
 
 def apply_to_client(client, data: dict) -> None:

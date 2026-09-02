@@ -590,19 +590,20 @@ def test_profile_flag_selects_profile(monkeypatch):
 
 
 def test_explicit_server_flag_overrides_profile_server(monkeypatch):
-    # a selected profile still supplies the session; --server rewires the host
+    # --server rewires the host; the profile's session stays home (see
+    # test_server_override_bypasses_cached_session), so the override
+    # authenticates with a password against the override host
     config_store.add_profile("dev", server="sandbox", username="x")
     monkeypatch.setenv("ER_PROFILE", "dev")
     token_store.save_token("dev", AUTH, FUTURE, "x")
-    fake = FakeER()
     seen = {}
 
-    def fake_token_client(*, server):
-        seen["server"] = server
-        return fake
+    def fake_make_client(*, server, username, password):
+        seen.update(server=server, username=username, password=password)
+        return FakeER()
 
-    monkeypatch.setattr(cli_mod, "make_token_client", fake_token_client)
-    result = _run(["--server", "other", "events", "list", "categories"])
+    monkeypatch.setattr(cli_mod, "make_client", fake_make_client)
+    result = _run(["--server", "other", "--password", "pw", "events", "list", "categories"])
     assert result.exit_code == 0
     assert seen["server"] == "other"
 
@@ -681,7 +682,7 @@ def test_connection_flags_accepted_after_subcommand(monkeypatch):
         return FakeLoginClient()
 
     monkeypatch.setattr(cli_mod, "make_client", fake_make_client)
-    config_store.add_profile("dev", server="ignored-host")
+    config_store.add_profile("dev", server="sandbox")
     result = _run(
         [
             "auth",
@@ -820,3 +821,101 @@ def test_profile_set_errors(monkeypatch):
     result = _run(["profile", "set", "username", "me"])
     assert result.exit_code == 1
     assert "no profile named 'zzz'" in result.output
+
+
+def test_server_override_bypasses_cached_session(monkeypatch):
+    # F4/r-suppressed cli:110 — never send a profile's token to another host
+    config_store.add_profile("dev", server="sandbox", username="chris")
+    monkeypatch.setenv("ER_PROFILE", "dev")
+    token_store.save_token("dev", AUTH, FUTURE, "chris")
+    captured = {}
+
+    def fake_make_client(*, server, username, password):
+        captured.update(server=server, password=password)
+        return FakeER()
+
+    monkeypatch.setattr(cli_mod, "make_client", fake_make_client)
+    result = _run(["--server", "other", "events", "list", "categories"], input="pw\n")
+    assert result.exit_code == 0
+    assert captured == {"server": "other", "password": "pw"}  # password path
+
+
+def test_auth_login_rejects_server_mismatch(monkeypatch):
+    # F5/r-suppressed cli:315
+    config_store.add_profile("dev", server="sandbox", username="chris")
+    monkeypatch.setenv("ER_PROFILE", "dev")
+    result = _run(["auth", "login", "--server", "other", "--password", "pw"])
+    assert result.exit_code != 0
+    out = result.output + result.stderr
+    assert "differs from profile" in out and "er profile set server" in out
+    assert token_store.load_token("dev") is None
+
+
+def test_profile_add_overwrite_invalidates_session():
+    # F2/r3910689341
+    config_store.add_profile("dev", server="sandbox", username="chris")
+    token_store.save_token("dev", AUTH, FUTURE, "chris")
+    result = _run(["profile", "add", "dev", "--server", "other", "--username", "chris"])
+    assert result.exit_code == 0
+    assert token_store.load_token("dev") is None
+    assert "Cleared cached session" in result.stderr
+
+    # identical re-add keeps the session
+    config_store.add_profile("dev2", server="sandbox", username="chris")
+    token_store.save_token("dev2", AUTH, FUTURE, "chris")
+    result = _run(["profile", "add", "dev2", "--server", "sandbox", "--username", "chris"])
+    assert result.exit_code == 0
+    assert token_store.load_token("dev2") is not None
+
+
+def test_auth_status_labels_profile_server_not_override(monkeypatch):
+    # F3/r3910689367
+    config_store.add_profile("dev", server="sandbox", username="chris")
+    monkeypatch.setenv("ER_PROFILE", "dev")
+    token_store.save_token("dev", AUTH, FUTURE, "chris")
+    result = _run(["--server", "other", "auth", "status"])
+    assert "dev (sandbox.pamdas.org): valid" in result.output
+    assert "other" not in result.output
+
+
+def test_rotation_not_persisted_if_session_replaced(monkeypatch):
+    # F1/r3910689280 — compare-and-swap against the original cache
+    config_store.add_profile("dev", server="sandbox", username="chris")
+    monkeypatch.setenv("ER_PROFILE", "dev")
+    token_store.save_token("dev", AUTH, PAST, "chris")
+    fake = FakeER()
+
+    def rotating_auth_headers():
+        # another process invalidates the session mid-command
+        token_store.delete_token("dev")
+        fake.auth = {"access_token": "acc-2", "refresh_token": "r2", "token_type": "Bearer"}
+        fake.auth_expires = FUTURE
+        return {}
+
+    fake.auth_headers = rotating_auth_headers
+    monkeypatch.setattr(cli_mod, "make_token_client", lambda **kw: fake)
+    result = _run(["events", "list", "categories"])
+    assert result.exit_code == 0
+    assert token_store.load_token("dev") is None  # not resurrected
+
+
+def test_delete_failures_are_loud(monkeypatch):
+    # F6+F7/r-suppressed cli:448,500
+    import pathlib
+
+    config_store.add_profile("dev", server="sandbox", username="chris")
+    token_store.save_token("dev", AUTH, FUTURE, "chris")
+
+    def failing_unlink(self):
+        raise PermissionError("read-only fs")
+
+    monkeypatch.setattr(pathlib.Path, "unlink", failing_unlink)
+    monkeypatch.setenv("ER_PROFILE", "dev")
+    result = _run(["profile", "set", "server", "other"])
+    assert result.exit_code == 1
+    assert "could not delete cached session" in result.output
+    assert config_store.get_profile("dev")["server"] == "sandbox"  # not committed
+
+    result = _run(["profile", "remove", "dev"])
+    assert result.exit_code == 1
+    assert config_store.get_profile("dev") is not None  # removal not finalized
