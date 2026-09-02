@@ -39,6 +39,20 @@ def make_token_client(*, server: str) -> ERClient:
     )
 
 
+def make_static_token_client(*, server: str, token: str) -> ERClient:
+    """Client authenticated with a pre-issued bearer token (--token / ER_TOKEN).
+
+    erclient's `token=` kwarg preloads `auth` and sets `auth_expires` to 2099,
+    so auth_headers() never attempts a refresh or password login; an invalid
+    token surfaces as the API's 401 on the first request.
+    """
+    return ERClient(
+        service_root=normalize_server(server),
+        token=token,
+        client_id=DEFAULT_CLIENT_ID,
+    )
+
+
 def get_choices(client, field_name: str) -> list[dict]:
     """All Choice records for (model=activity.event, field=field_name), inactive included.
 

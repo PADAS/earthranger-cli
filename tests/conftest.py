@@ -18,10 +18,15 @@ class FakeER:
         self.calls = []  # (method, ...) tuples, appended for every call
         self.auth = None  # token dict, set by token_store.apply_to_client
         self.auth_expires = None
+        self.me = {"username": "chris", "id": "user-1"}
 
     def auth_headers(self):
         self.calls.append(("auth_headers",))
         return {"Authorization": "Bearer fake"}
+
+    def get_me(self):
+        self.calls.append(("get_me",))
+        return self.me
 
     # --- categories ---
     def get_event_categories(self, include_inactive=False):
