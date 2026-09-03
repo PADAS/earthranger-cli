@@ -15,7 +15,13 @@ from . import client as er
 from . import config_store, token_store
 from .apply import ApplyError, apply_spec, extract_choice_fields, normalize_v2_schema
 from .choices import choice_sort_key
-from .client import make_client, make_static_token_client, make_token_client, normalize_server
+from .client import (
+    ServerError,
+    make_client,
+    make_static_token_client,
+    make_token_client,
+    normalize_server,
+)
 from .dsl import SpecError, load_spec
 from .events import FieldArgError, build_event, load_events_file, parse_field_args, post_events
 from .pull import PullError, pull_category, render_spec_yaml
@@ -34,6 +40,7 @@ def _api_errors(f):
         except (
             ApplyError,
             PullError,
+            ServerError,
             config_store.ConfigError,
             ERClientException,
             requests.exceptions.RequestException,
@@ -96,7 +103,11 @@ def connection_options(f):
         click.option("--token", "token_", help="Pre-issued OAuth bearer token."),
         click.option("--password", "password_", help="EarthRanger password."),
         click.option("--username", "username_", help="EarthRanger username."),
-        click.option("--server", "server_", help="ER site name or full https:// URL."),
+        click.option(
+            "--server",
+            "server_",
+            help="ER site name (sandbox), hostname (sandbox.pamdas.org), or http(s):// URL.",
+        ),
     ):
         wrapper = opt(wrapper)
     return wrapper
@@ -217,7 +228,11 @@ def _connect_with_cached_token(ctx, name: str, profile: dict, server: str, cache
 
 
 @click.group()
-@click.option("--server", envvar="ER_SERVER", help="ER site name (myreserve) or full https:// URL.")
+@click.option(
+    "--server",
+    envvar="ER_SERVER",
+    help="ER site name (myreserve), hostname (myreserve.pamdas.org), or http(s):// URL.",
+)
 @click.option("--username", envvar="ER_USERNAME", help="EarthRanger username.")
 @click.option(
     "--password", envvar="ER_PASSWORD", help="EarthRanger password (prompted if omitted)."
@@ -563,11 +578,17 @@ def profile_group():
 
 @profile_group.command("add")
 @click.argument("name")
-@click.option("--server", "p_server", required=True, help="ER site name or full https:// URL.")
+@click.option(
+    "--server",
+    "p_server",
+    required=True,
+    help="ER site name (sandbox), hostname (sandbox.pamdas.org), or http(s):// URL.",
+)
 @click.option("--username", "p_username", help="Default username for this profile.")
 @_api_errors
 def profile_add(name, p_server, p_username):
     """Add (or overwrite) a profile."""
+    normalize_server(p_server)  # reject junk before anything is written
     with token_store.profile_lock(name):
         existing = config_store.get_profile(name)
         if existing is None:
@@ -578,10 +599,15 @@ def profile_add(name, p_server, p_username):
         if existing is not None:
             # identity is decided from the profiles alone: an existing token
             # file that merely fails to parse right now must still be cleared
-            same_identity = (
-                normalize_server(existing.get("server") or "") == (normalize_server(p_server))
-                and existing.get("username") == p_username
-            )
+            try:
+                same_server = normalize_server(existing.get("server") or "") == normalize_server(
+                    p_server
+                )
+            except ServerError:
+                # a junk/legacy stored server can't be the same identity; the
+                # overwrite is exactly how the user repairs it
+                same_server = False
+            same_identity = same_server and existing.get("username") == p_username
             if not same_identity and token_store.delete_token(name):
                 click.echo(
                     f"Cleared cached session for profile {name!r} (identity changed); "
@@ -675,6 +701,8 @@ def profile_set(ctx, key, value):
     # including when the cached owner can't be verified (unreadable token
     # file). Delete BEFORE committing the change, under the profile lock, so a
     # failed cleanup never leaves a stale token attached to the new identity.
+    if key == "server":
+        normalize_server(value)  # reject junk before the session is cleared
     with token_store.profile_lock(name):
         if key == "server":
             invalidates = True

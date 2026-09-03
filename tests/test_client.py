@@ -4,6 +4,7 @@ import pytest
 from erclient.er_errors import ERClientException
 
 from earthranger_cli.client import (
+    ServerError,
     get_choices,
     make_client,
     make_static_token_client,
@@ -98,3 +99,47 @@ def test_make_static_token_client_preloads_bearer_and_never_refreshes():
     assert client.username is None and client.password is None
     # no network: auth_headers must not try to log in
     assert client.auth_headers()["Authorization"] == "Bearer tok-1"
+
+
+@pytest.mark.parametrize(
+    ("given", "expected"),
+    [
+        ("sandbox", "https://sandbox.pamdas.org"),  # bare site name: shorthand applies
+        ("sandbox.pamdas.org", "https://sandbox.pamdas.org"),  # hostname: no suffix
+        ("SANDBOX.pamdas.org/", "https://sandbox.pamdas.org"),  # host lower-cased: it's an identity
+        ("er.example.org", "https://er.example.org"),  # non-pamdas host
+        ("localhost:8000", "https://localhost:8000"),  # host:port
+        ("http://localhost:8000", "http://localhost:8000"),  # explicit scheme kept
+        ("https://sandbox.pamdas.org/", "https://sandbox.pamdas.org"),
+        ("HTTPS://sandbox.pamdas.org", "https://sandbox.pamdas.org"),  # scheme case-insensitive
+        ("Http://localhost:8000/", "http://localhost:8000"),
+        ("https://er.example.org/api/v1.0/", "https://er.example.org/api/v1.0"),  # path kept
+        ("https://ER.Example.org/Api/V1.0", "https://er.example.org/Api/V1.0"),  # path case kept
+        ("Sandbox", "https://sandbox.pamdas.org"),
+        ("sandbox/api", "https://sandbox.pamdas.org/api"),  # suffix goes on the host, not the path
+        ("https://host?Token=ABC", "https://host?Token=ABC"),  # query kept, not lower-cased
+        ("https://Host/p?Q=1#F", "https://host/p?Q=1#F"),
+        ("https://host", "https://host"),  # explicit scheme: no shorthand
+    ],
+)
+def test_normalize_server_accepts_site_name_hostname_or_url(given, expected):
+    assert normalize_server(given) == expected
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        "",
+        "   ",
+        "/",
+        "ftp://host",
+        "HTTPS://",
+        "https:// ",
+        "sandbox:abc",  # non-numeric port
+        "https://host:99999",  # port out of range
+        "sand box.pamdas.org",  # whitespace in the authority
+    ],
+)
+def test_normalize_server_rejects_blank_and_non_http_schemes(bad):
+    with pytest.raises(ServerError, match="site name, hostname, or http\\(s\\):// URL"):
+        normalize_server(bad)

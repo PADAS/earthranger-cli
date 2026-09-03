@@ -18,7 +18,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import urlparse
 
-from .client import normalize_server
+from .client import ServerError, normalize_server
 from .config_store import ConfigError, config_dir, write_private
 
 # Static (pre-issued) bearer tokens have no refresh token; we give them the
@@ -32,7 +32,13 @@ def tokens_dir() -> Path:
 
 
 def server_host(server: str) -> str:
-    return urlparse(normalize_server(server)).netloc
+    """Host[:port] for display. A stored value that no longer validates (hand
+    edited, or written by an older version) is shown raw rather than crashing
+    `profile list`/`show`; the user repairs it with `profile add`/`set server`."""
+    try:
+        return urlparse(normalize_server(server)).netloc
+    except ServerError:
+        return server
 
 
 def token_file(profile: str) -> Path:

@@ -6,6 +6,8 @@ erclient has no first-class choices methods; we use its generic path methods
 
 from __future__ import annotations
 
+from urllib.parse import urlsplit, urlunsplit
+
 from erclient.client import ERClient
 from erclient.er_errors import ERClientException
 
@@ -14,11 +16,43 @@ CHOICES_PATH = "choices"
 CHOICE_MODEL = "activity.event"
 
 
+class ServerError(ValueError):
+    """A --server value that can't be turned into an http(s) URL."""
+
+
 def normalize_server(server: str) -> str:
-    server = server.strip().rstrip("/")
-    if not server.startswith(("http://", "https://")):
-        server = f"https://{server}.pamdas.org"
-    return server
+    """Accept a bare site name (`sandbox`), a hostname (`sandbox.pamdas.org`,
+    `localhost:8000`), or an http(s) URL, and return an http(s) URL.
+
+    Only a single DNS label gets the `.pamdas.org` shorthand; anything with a
+    dot or a port is already a host, so appending the suffix would mangle it
+    (`sandbox.pamdas.org` -> `sandbox.pamdas.org.pamdas.org`). A URL's path is
+    kept (ERClient strips `/api...` itself), as are any query and fragment; a
+    trailing slash is removed.
+
+    The result is canonical enough to compare for identity (profile <-> flag,
+    cached session <-> server): scheme and host[:port] are lower-cased, the
+    path is left alone.
+    """
+    server = server.strip()
+    if not server:
+        raise ServerError("server is required: a site name, hostname, or http(s):// URL")
+    had_scheme = "://" in server
+    parts = urlsplit(server if had_scheme else f"https://{server}")
+    scheme = parts.scheme.lower()
+    netloc = parts.netloc.lower()
+    invalid = ServerError(
+        f"invalid server {server!r}: use a site name, hostname, or http(s):// URL"
+    )
+    if scheme not in ("http", "https") or not netloc or any(c.isspace() for c in netloc):
+        raise invalid
+    try:
+        parts.port  # noqa: B018 — raises ValueError for a non-numeric or out-of-range port
+    except ValueError:
+        raise invalid from None
+    if not had_scheme and "." not in netloc and ":" not in netloc:
+        netloc = f"{netloc}.pamdas.org"
+    return urlunsplit((scheme, netloc, parts.path.rstrip("/"), parts.query, parts.fragment))
 
 
 def make_client(*, server: str, username: str, password: str) -> ERClient:
