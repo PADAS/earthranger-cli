@@ -99,7 +99,7 @@ def test_api_errors_print_cleanly_and_exit_1(fake):
     fake.get_event_categories = bad_creds
     result = _run(["events", "apply", "spec.yaml"])
     assert result.exit_code == 1
-    assert "error: Invalid credentials given." in result.output
+    assert "error: credentials rejected (Invalid credentials given.)." in result.output
 
 
 def test_network_errors_print_cleanly_and_exit_1(fake):
@@ -1168,3 +1168,270 @@ def test_profile_add_traversal_name_cannot_touch_other_sessions():
     assert result.exit_code == 1
     assert "error:" in result.output + result.stderr
     assert token_store.load_token("dev") is not None  # untouched
+
+
+def test_token_flag_uses_static_client_and_needs_no_username(monkeypatch):
+    captured = {}
+
+    def fake_static(*, server, token):
+        captured.update(server=server, token=token)
+        return FakeER()
+
+    monkeypatch.setattr(cli_mod, "make_static_token_client", fake_static)
+    monkeypatch.setattr(
+        cli_mod, "make_client", lambda **kw: pytest.fail("password client must not be built")
+    )
+    result = _run(["--server", "sandbox", "--token", "tok-1", "events", "list", "categories"])
+    assert result.exit_code == 0
+    assert captured == {"server": "sandbox", "token": "tok-1"}
+
+
+def test_token_env_var_is_honoured_and_accepted_after_subcommand(monkeypatch):
+    captured = {}
+    monkeypatch.setattr(
+        cli_mod,
+        "make_static_token_client",
+        lambda *, server, token: captured.update(server=server, token=token) or FakeER(),
+    )
+    monkeypatch.setenv("ER_TOKEN", "tok-env")
+    result = _run(["events", "list", "categories", "--server", "sandbox"])
+    assert result.exit_code == 0
+    assert captured == {"server": "sandbox", "token": "tok-env"}
+
+    monkeypatch.delenv("ER_TOKEN")
+    result = _run(["events", "list", "categories", "--server", "sandbox", "--token", "tok-late"])
+    assert result.exit_code == 0
+    assert captured["token"] == "tok-late"
+
+
+def test_token_beats_password_and_cached_session(monkeypatch):
+    config_store.add_profile("dev", server="sandbox", username="chris")
+    monkeypatch.setenv("ER_PROFILE", "dev")
+    token_store.save_token("dev", AUTH, FUTURE, "chris")
+    captured = {}
+    monkeypatch.setattr(
+        cli_mod,
+        "make_static_token_client",
+        lambda *, server, token: captured.update(server=server, token=token) or FakeER(),
+    )
+    monkeypatch.setattr(
+        cli_mod, "make_client", lambda **kw: pytest.fail("password client must not be built")
+    )
+    monkeypatch.setattr(
+        cli_mod, "make_token_client", lambda **kw: pytest.fail("cached session must not be used")
+    )
+    result = _run(["--password", "pw", "--token", "tok-1", "events", "list", "categories"])
+    assert result.exit_code == 0
+    assert captured == {"server": "sandbox", "token": "tok-1"}  # server came from the profile
+
+
+def test_token_without_server_is_usage_error(monkeypatch):
+    monkeypatch.delenv("ER_PROFILE", raising=False)
+    result = _run(["--token", "tok-1", "events", "list", "categories"])
+    assert result.exit_code == 2
+    assert "Missing server" in result.output
+
+
+def _static_fake(token="tok-1"):
+    """A FakeER seeded the way erclient seeds a constructor `token=`."""
+    fake = FakeER()
+    fake.auth = {"token_type": "Bearer", "access_token": token}
+    fake.auth_expires = token_store.STATIC_EXPIRES
+    return fake
+
+
+def test_auth_login_with_token_verifies_and_stores_static_record(monkeypatch):
+    config_store.add_profile("dev", server="sandbox")
+    monkeypatch.setenv("ER_PROFILE", "dev")
+    fake = _static_fake()
+    monkeypatch.setattr(cli_mod, "make_static_token_client", lambda **kw: fake)
+    monkeypatch.setattr(
+        cli_mod, "make_client", lambda **kw: pytest.fail("password client must not be built")
+    )
+    result = _run(["auth", "login", "--token", "tok-1"])
+    assert result.exit_code == 0, result.output
+    assert ("get_me",) in fake.calls
+    assert "Authenticated with a static token" in result.output
+    data = token_store.load_token("dev")
+    assert data["access_token"] == "tok-1"
+    assert data["username"] == "chris"
+    assert token_store.is_static(data)
+    assert config_store.get_profile("dev")["username"] == "chris"
+    assert "Profile 'dev' username set to 'chris'." in result.output
+
+
+def test_auth_login_with_bad_token_exits_1_and_caches_nothing(monkeypatch):
+    from erclient.er_errors import ERClientBadCredentials
+
+    config_store.add_profile("dev", server="sandbox", username="chris")
+    monkeypatch.setenv("ER_PROFILE", "dev")
+    fake = _static_fake("bad")
+
+    def failing_get_me():
+        raise ERClientBadCredentials("Invalid token.")
+
+    fake.get_me = failing_get_me
+    monkeypatch.setattr(cli_mod, "make_static_token_client", lambda **kw: fake)
+    result = _run(["auth", "login", "--token", "bad"])
+    assert result.exit_code == 1
+    assert "error: token rejected by sandbox.pamdas.org: Invalid token." in result.output
+    assert token_store.load_token("dev") is None
+
+
+def test_auth_login_token_outage_is_not_reported_as_rejection(monkeypatch):
+    from erclient.er_errors import ERClientException
+
+    config_store.add_profile("dev", server="sandbox", username="chris")
+    monkeypatch.setenv("ER_PROFILE", "dev")
+    fake = _static_fake()
+
+    def failing_get_me():
+        raise ERClientException("Failed to call ER web service after 6 tries. 503")
+
+    fake.get_me = failing_get_me
+    monkeypatch.setattr(cli_mod, "make_static_token_client", lambda **kw: fake)
+    result = _run(["auth", "login", "--token", "tok-1"])
+    assert result.exit_code == 1
+    assert "token rejected" not in result.output
+    assert "error: Failed to call ER web service" in result.output
+    assert token_store.load_token("dev") is None
+
+
+def test_auth_login_token_explicit_username_must_match_owner(monkeypatch):
+    config_store.add_profile("dev", server="sandbox", username="alice")
+    monkeypatch.setenv("ER_PROFILE", "dev")
+    monkeypatch.setattr(cli_mod, "make_static_token_client", lambda **kw: _static_fake())
+    result = _run(["auth", "login", "--token", "tok-1", "--username", "alice"])
+    assert result.exit_code == 2
+    assert (
+        "token belongs to 'chris', not 'alice' (from --username / ER_USERNAME); "
+        "pass --username chris or unset ER_USERNAME."
+    ) in result.output
+    assert token_store.load_token("dev") is None
+    assert config_store.get_profile("dev")["username"] == "alice"
+
+
+def test_auth_login_token_env_username_is_also_an_identity_claim(monkeypatch):
+    # consistent with _connect, which refuses to ride a cached session on a
+    # username that came from ER_USERNAME; the message names the env var
+    config_store.add_profile("dev", server="sandbox")
+    monkeypatch.setenv("ER_PROFILE", "dev")
+    monkeypatch.setenv("ER_USERNAME", "alice")
+    monkeypatch.setattr(cli_mod, "make_static_token_client", lambda **kw: _static_fake())
+    result = _run(["auth", "login", "--token", "tok-1"])
+    assert result.exit_code == 2
+    assert "unset ER_USERNAME" in result.output
+    assert token_store.load_token("dev") is None
+
+
+def test_auth_login_token_updates_profile_default_username_to_owner(monkeypatch):
+    # a profile *default* username is not an explicit identity claim: like
+    # password login, the profile follows whoever the credential belongs to
+    config_store.add_profile("dev", server="sandbox", username="alice")
+    monkeypatch.setenv("ER_PROFILE", "dev")
+    monkeypatch.setattr(cli_mod, "make_static_token_client", lambda **kw: _static_fake())
+    result = _run(["auth", "login", "--token", "tok-1"])
+    assert result.exit_code == 0, result.output
+    assert "Profile 'dev' username set to 'chris'." in result.output
+    assert config_store.get_profile("dev")["username"] == "chris"
+
+
+def test_revoked_static_token_mid_command_names_profile_and_remedy(monkeypatch):
+    from erclient.er_errors import ERClientBadCredentials
+
+    config_store.add_profile("dev", server="sandbox", username="chris")
+    monkeypatch.setenv("ER_PROFILE", "dev")
+    _store_static()
+    fake = FakeER()
+
+    def revoked(include_inactive=False):
+        raise ERClientBadCredentials("Invalid token.")
+
+    fake.get_event_categories = revoked
+    monkeypatch.setattr(cli_mod, "make_token_client", lambda **kw: fake)
+    result = _run(["events", "list", "categories"])
+    assert result.exit_code == 1
+    assert (
+        "error: credentials rejected (Invalid token.) — the credential stored on profile "
+        "'dev' is expired or revoked; run 'er auth login' (or 'er auth login --token')."
+    ) in result.output
+
+
+def test_bad_token_flag_mid_command_points_at_the_flag(monkeypatch):
+    from erclient.er_errors import ERClientBadCredentials
+
+    fake = FakeER()
+
+    def revoked(include_inactive=False):
+        raise ERClientBadCredentials("Invalid token.")
+
+    fake.get_event_categories = revoked
+    monkeypatch.setattr(cli_mod, "make_static_token_client", lambda **kw: fake)
+    result = _run(["--server", "sandbox", "--token", "bad", "events", "list", "categories"])
+    assert result.exit_code == 1
+    assert (
+        "error: credentials rejected (Invalid token.) — check --token / ER_TOKEN." in result.output
+    )
+
+
+def test_auth_login_token_still_requires_matching_server(monkeypatch):
+    config_store.add_profile("dev", server="sandbox", username="chris")
+    monkeypatch.setenv("ER_PROFILE", "dev")
+    monkeypatch.setattr(
+        cli_mod, "make_static_token_client", lambda **kw: pytest.fail("must not reach network")
+    )
+    result = _run(["auth", "login", "--token", "tok-1", "--server", "other"])
+    assert result.exit_code == 2
+    assert "differs from profile 'dev'" in result.output
+
+
+def _store_static(name="dev", token="tok-1", username="chris"):
+    token_store.save_token(
+        name, {"access_token": token}, token_store.STATIC_EXPIRES, username, static=True
+    )
+
+
+def test_connect_uses_stored_static_token_without_refresh_or_rotation(monkeypatch):
+    config_store.add_profile("dev", server="sandbox", username="chris")
+    monkeypatch.setenv("ER_PROFILE", "dev")
+    _store_static()
+    fake = FakeER()
+    monkeypatch.setattr(cli_mod, "make_token_client", lambda **kw: fake)
+    monkeypatch.setattr(
+        cli_mod, "make_client", lambda **kw: pytest.fail("password client must not be built")
+    )
+    result = _run(["events", "list", "categories"])
+    assert result.exit_code == 0
+    assert fake.auth == {"access_token": "tok-1", "refresh_token": "", "token_type": "Bearer"}
+    assert fake.auth_expires.year == 2099
+    # nothing rotated, so the record on disk is byte-for-byte what we stored
+    data = token_store.load_token("dev")
+    assert data["access_token"] == "tok-1" and token_store.is_static(data)
+
+
+def test_status_show_and_list_report_static_token(monkeypatch):
+    config_store.add_profile("dev", server="sandbox", username="chris")
+    monkeypatch.setenv("ER_PROFILE", "dev")
+    _store_static()
+
+    result = _run(["auth", "status"])
+    assert result.exit_code == 0
+    assert (
+        result.output.strip() == "dev (sandbox.pamdas.org): static token as chris (never refreshes)"
+    )
+
+    result = _run(["profile", "show"])
+    assert "auth:      static token as chris (never refreshes)" in result.output
+
+    result = _run(["profile", "list"])
+    assert result.output.rstrip().endswith("static token")
+
+
+def test_profile_set_username_to_other_user_clears_static_token(monkeypatch):
+    config_store.add_profile("dev", server="sandbox", username="chris")
+    monkeypatch.setenv("ER_PROFILE", "dev")
+    _store_static()
+    result = _run(["profile", "set", "username", "alice"])
+    assert result.exit_code == 0
+    assert "Cleared cached session for profile 'dev'" in result.output
+    assert token_store.load_token("dev") is None

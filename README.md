@@ -80,13 +80,33 @@ is bound to the profile's identity: `profile set server`, setting
 logging in with a different `--username` updates the profile to match.
 Profiles pointing at the same server hold independent sessions.
 
-You can always bypass the cache with an explicit password — it takes
-precedence when present:
+You can always bypass the cache with an explicit credential. A pre-issued
+OAuth bearer token wins over everything else and needs no username — this is
+the path for agent sandboxes and CI, where there is no one to type a
+password:
+
+```bash
+export ER_SERVER=myreserve
+export ER_TOKEN='...'              # single-quote it — tokens can contain $, !, & etc.
+er events list categories          # or: er --token '...' events list categories
+```
+
+To keep a token on a profile instead, `er auth login --token '...'` verifies
+it against the server, records its owner, and stores it in place of a
+password session; `er auth status` then reports `static token as <user>
+(never refreshes)` — re-run `auth login --token` when the token expires.
+
+An explicit password is next in precedence:
 
 ```bash
 export ER_USERNAME=me
 export ER_PASSWORD=...              # or --password; omit both to be prompted
 ```
+
+> **Docker:** tokens often contain shell-special characters, so `-e ER_TOKEN=$TOKEN`
+> can corrupt the value. Prefer an env-file (`docker run --env-file er.env ...`
+> with `ER_SERVER=...` and `ER_TOKEN=...` lines) or `export ER_TOKEN='...'` once
+> and forward it by name with a bare `-e ER_TOKEN`.
 
 If the cached session's refresh token has expired, commands fail with
 `error: cached session for profile '<name>' expired or invalid — run
@@ -159,7 +179,7 @@ per profile; old `tokens/<host>.json` files are ignored.)
 | `events list event-types [--category V]` | List event types |
 | `events show event-type V` | Full v2 event-type JSON + its Choice records |
 | `events pull CATEGORY [-o FILE] [--skip-unsupported]` | Reconstruct a DSL spec from the server (reverse of apply) |
-| `auth login/status/logout` | Cache/inspect/clear the selected profile's session |
+| `auth login [--token T]/status/logout` | Cache (password session or static token), inspect, or clear the selected profile's credential |
 | `profile add/use/set/show/list/remove/current` | Named site profiles; `use` selects per shell and `add` auto-switches (via the wrapper); `set` edits the selected profile; `--profile NAME` per command |
 
 ## Spec reference

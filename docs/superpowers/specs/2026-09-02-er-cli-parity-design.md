@@ -92,21 +92,22 @@ can adopt it unchanged:
 ### Bearer-token auth
 
 Add `--token` / `ER_TOKEN` alongside the existing password and cached
-session paths, plus `er profile add NAME --server S --token T` and
-`er profile set token T` so a profile can be token-only.
+session paths, plus a way to store a token on a profile so it can be
+token-only.
 
-**Open question — precedence.** er-cli resolves flags > `--profile` >
-env vars > default profile. This repo resolves explicit password (flag or
-`ER_PASSWORD`) > cached session > interactive prompt. Proposed order:
+**Decided 2026-09-02** (implemented in `docs/superpowers/plans/2026-09-02-token-auth.md`):
 
 1. explicit `--token` / `ER_TOKEN`
 2. explicit `--password` / `ER_PASSWORD`
-3. profile's stored token (token-only profile)
-4. profile's cached session (from `auth login`)
-5. interactive prompt
+3. the selected profile's stored record — a static token from `auth login
+   --token` or a login session from `auth login` (one record per profile)
+4. interactive prompt
 
-Decide before building; note that a stored static token never refreshes,
-so `auth status` should say so.
+`profile add --token` / `profile set token` were dropped: `er auth login
+--token` stores a token on the selected profile after verifying it against
+`/user/me/`, which keeps `profile add` network-free and gives the record an
+owner so the existing username-match rule applies. Static records never
+refresh; `auth status` says so.
 
 Document er-cli's Docker tip: tokens contain shell-special characters, so
 prefer `--env-file` or a bare `-e ER_TOKEN` over `-e ER_TOKEN=$TOKEN`.
@@ -167,8 +168,8 @@ everything new.
 
 - [ ] Uniform JSON output (`--json`, `-o/--output`) on every read command,
       er-cli's exact `{records, meta}` shape.
-- [ ] Bearer-token auth path (`--token`, `ER_TOKEN`, token-only profiles);
-      settle precedence first.
+- [x] Bearer-token auth path (`--token`, `ER_TOKEN`, `auth login --token`);
+      precedence decided — see §Bearer-token auth.
 - [ ] Read-only resource commands per the table above.
 - [ ] Shared pagination helper with `--limit` and envelope unwrapping.
 

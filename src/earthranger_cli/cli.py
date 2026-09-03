@@ -9,13 +9,13 @@ import sys
 
 import click
 import requests.exceptions
-from erclient.er_errors import ERClientException
+from erclient.er_errors import ERClientBadCredentials, ERClientException
 
 from . import client as er
 from . import config_store, token_store
 from .apply import ApplyError, apply_spec, extract_choice_fields, normalize_v2_schema
 from .choices import choice_sort_key
-from .client import make_client, make_token_client, normalize_server
+from .client import make_client, make_static_token_client, make_token_client, normalize_server
 from .dsl import SpecError, load_spec
 from .events import FieldArgError, build_event, load_events_file, parse_field_args, post_events
 from .pull import PullError, pull_category, render_spec_yaml
@@ -28,6 +28,9 @@ def _api_errors(f):
     def wrapper(*args, **kwargs):
         try:
             return f(*args, **kwargs)
+        except ERClientBadCredentials as e:
+            click.echo(f"error: {_bad_credentials_message(e)}")
+            sys.exit(1)
         except (
             ApplyError,
             PullError,
@@ -41,16 +44,46 @@ def _api_errors(f):
     return wrapper
 
 
+def _bad_credentials_message(e: ERClientBadCredentials) -> str:
+    """A 401 mid-command: say which credential the server refused and how to fix it.
+
+    A static token can't be checked up front (erclient treats it as valid
+    until 2099), so this is where a revoked or expired one first shows up.
+    """
+    ctx = click.get_current_context(silent=True)
+    obj = (ctx.obj if ctx is not None else None) or {}
+    if obj.get("token"):
+        return f"credentials rejected ({e}) — check --token / ER_TOKEN."
+    if obj.get("password"):
+        return f"credentials rejected ({e}) — check --username / --password."
+    name = obj.get("profile")
+    if name:
+        return (
+            f"credentials rejected ({e}) — the credential stored on profile {name!r} is "
+            "expired or revoked; run 'er auth login' (or 'er auth login --token')."
+        )
+    return f"credentials rejected ({e})."
+
+
 def connection_options(f):
     """Accept the connection flags on a leaf command too (people naturally type
     them after the subcommand); provided values override the root group's."""
 
-    def wrapper(*args, server_=None, username_=None, password_=None, profile_=None, **kwargs):
+    def wrapper(
+        *args,
+        server_=None,
+        username_=None,
+        password_=None,
+        token_=None,
+        profile_=None,
+        **kwargs,
+    ):
         ctx = click.get_current_context()
         for key, val in (
             ("server", server_),
             ("username", username_),
             ("password", password_),
+            ("token", token_),
             ("profile", profile_),
         ):
             if val:
@@ -60,6 +93,7 @@ def connection_options(f):
     wrapper = functools.update_wrapper(wrapper, f)
     for opt in (
         click.option("--profile", "profile_", help="Named profile to use."),
+        click.option("--token", "token_", help="Pre-issued OAuth bearer token."),
         click.option("--password", "password_", help="EarthRanger password."),
         click.option("--username", "username_", help="EarthRanger username."),
         click.option(
@@ -99,10 +133,16 @@ def _resolve_connection(ctx) -> tuple[str, str | None]:
 def _connect(ctx):
     """Build an authenticated client.
 
-    Precedence: an explicit password (flag or ER_PASSWORD) wins; else a token
-    cached by `er auth login`; else an interactive password prompt.
+    Precedence: an explicit bearer token (--token or ER_TOKEN) wins; else an
+    explicit password (flag or ER_PASSWORD); else the selected profile's
+    stored record (a static token from `auth login --token` or a session
+    cached by `auth login`); else an interactive password prompt.
     """
     server, username = _resolve_connection(ctx)
+    token = ctx.obj.get("token")
+    if token:
+        # the token is the identity: no username, no cache, no refresh
+        return make_static_token_client(server=server, token=token)
     password = ctx.obj["password"]
     name = ctx.obj.get("profile")
     if not password and name:
@@ -136,6 +176,10 @@ def _profile_session_snapshot(name: str) -> tuple[dict | None, dict | None]:
 def _connect_with_cached_token(ctx, name: str, profile: dict, server: str, cached: dict):
     client = make_token_client(server=server)
     token_store.apply_to_client(client, cached)
+    if token_store.is_static(cached):
+        # nothing to refresh or rotate; a revoked static token can only be
+        # learned from the first real request (reported by _api_errors)
+        return client
     try:
         # Eager: refreshes an expired access token now (via the refresh token),
         # so a dead session fails here with a clear message instead of mid-command.
@@ -186,11 +230,22 @@ def _connect_with_cached_token(ctx, name: str, profile: dict, server: str, cache
 @click.option(
     "--password", envvar="ER_PASSWORD", help="EarthRanger password (prompted if omitted)."
 )
+@click.option(
+    "--token",
+    envvar="ER_TOKEN",
+    help="Pre-issued OAuth bearer token (wins over --password and cached sessions).",
+)
 @click.option("--profile", envvar="ER_PROFILE", help="Named profile to use (see 'er profile').")
 @click.pass_context
-def main(ctx, server, username, password, profile):
+def main(ctx, server, username, password, token, profile):
     """EarthRanger site management CLI."""
-    ctx.obj = {"server": server, "username": username, "password": password, "profile": profile}
+    ctx.obj = {
+        "server": server,
+        "username": username,
+        "password": password,
+        "token": token,
+        "profile": profile,
+    }
 
 
 @main.group("events")
@@ -343,7 +398,7 @@ def auth_group():
 @click.pass_context
 @_api_errors
 def auth_login(ctx):
-    """Log in and cache the session on the selected profile (gcloud-style)."""
+    """Log in (password, or --token) and cache the credential on the selected profile."""
     name = _require_selected_profile(ctx)
     server, username = _resolve_connection(ctx)
     profile = config_store.get_profile(name) or {}
@@ -353,16 +408,51 @@ def auth_login(ctx):
             f"({normalize_server(profile.get('server') or '')}); update it first "
             "with 'er profile set server ...'."
         )
-    password = ctx.obj["password"]
-    if not username:
-        raise click.UsageError("Missing username: pass --username or set ER_USERNAME.")
-    if not password:
-        password = click.prompt("Password", hide_input=True)
     host = token_store.server_host(server)
-    client = make_client(server=server, username=username, password=password)
-    if not client.login():
-        click.echo(f"error: login failed for {username!r} at {host}")
-        sys.exit(1)
+    token = ctx.obj.get("token")
+    if token:
+        # a pre-issued bearer token: verify it against /user/me/ so a typo
+        # fails here rather than on the first real command, and learn the
+        # owner so the profile's identity and the username-match rule work
+        client = make_static_token_client(server=server, token=token)
+        try:
+            owner = client.get_me()["username"]
+        except ERClientBadCredentials as e:
+            # only a 401 means the token is bad; outages, 404s and 403s
+            # propagate to _api_errors with their own message
+            click.echo(f"error: token rejected by {host}: {e}")
+            sys.exit(1)
+        except (KeyError, TypeError):
+            click.echo(f"error: unexpected /user/me/ response from {host}; token not stored.")
+            sys.exit(1)
+        explicit = ctx.obj.get("username")
+        if explicit and explicit != owner:
+            # same rule as _connect: a username given via --username or
+            # ER_USERNAME is an identity claim and must not ride on someone
+            # else's credential; a profile default is not a claim (see below)
+            raise click.UsageError(
+                f"token belongs to {owner!r}, not {explicit!r} (from --username / ER_USERNAME); "
+                f"pass --username {owner} or unset ER_USERNAME."
+            )
+        username = owner
+        # erclient seeded these from the token; storing them (rather than a
+        # copy) keeps the record identical to what just passed /user/me/
+        auth = client.auth
+        expires_at = client.auth_expires
+        static = True
+    else:
+        password = ctx.obj["password"]
+        if not username:
+            raise click.UsageError("Missing username: pass --username or set ER_USERNAME.")
+        if not password:
+            password = click.prompt("Password", hide_input=True)
+        client = make_client(server=server, username=username, password=password)
+        if not client.login():
+            click.echo(f"error: login failed for {username!r} at {host}")
+            sys.exit(1)
+        auth = client.auth
+        expires_at = client.auth_expires
+        static = False
     with token_store.profile_lock(name):
         # the token was minted for the profile as it stood before the network
         # round-trip; if a concurrent command repointed it since, this session
@@ -373,12 +463,18 @@ def auth_login(ctx):
                 "re-run 'er auth login'."
             )
             sys.exit(1)
-        token_store.save_token(name, client.auth, client.auth_expires, username)
+        token_store.save_token(name, auth, expires_at, username, static=static)
         if profile.get("username") != username:
             # the profile's identity follows whoever actually logged in
             config_store.set_profile_property(name, "username", username)
             click.echo(f"Profile {name!r} username set to {username!r}.")
-    click.echo(f"Authenticated. Session cached on profile {name!r} ({host}).")
+    if static:
+        click.echo(
+            f"Authenticated with a static token. Stored on profile {name!r} ({host}); "
+            "it will not be refreshed — re-run 'er auth login --token' when it expires."
+        )
+    else:
+        click.echo(f"Authenticated. Session cached on profile {name!r} ({host}).")
 
 
 def _require_selected_profile(ctx) -> str:
@@ -415,12 +511,7 @@ def auth_status(ctx):
     profile, data = _profile_session_snapshot(name)
     profile = profile or {}
     host = token_store.server_host(profile.get("server") or "")
-    if not data:
-        click.echo(f"{name} ({host}): not authenticated")
-        return
-    state = "expired" if token_store.is_expired(data) else "valid"
-    as_user = f" as {data['username']}" if data.get("username") else ""
-    click.echo(f"{name} ({host}): {state}{as_user} (access token expires {data['expires_at']})")
+    click.echo(f"{name} ({host}): {_auth_detail(data)}")
 
 
 @events_group.command("pull")
@@ -458,7 +549,19 @@ def pull_cmd(ctx, category_value, output, skip_unsupported):
 def _auth_state(data: dict | None) -> str:
     if not data:
         return "not authenticated"
+    if token_store.is_static(data):
+        return "static token"
     return "expired" if token_store.is_expired(data) else "valid"
+
+
+def _auth_detail(data: dict | None) -> str:
+    """Long form for `auth status` / `profile show`: state, owner, expiry."""
+    if not data:
+        return "not authenticated"
+    as_user = f" as {data['username']}" if data.get("username") else ""
+    if token_store.is_static(data):
+        return f"static token{as_user} (never refreshes)"
+    return f"{_auth_state(data)}{as_user} (access token expires {data['expires_at']})"
 
 
 @main.group("profile")
@@ -616,17 +719,11 @@ def profile_show(ctx, name):
         raise config_store.ConfigError(f"no profile named {name!r}")
     server = profile["server"]
     host = token_store.server_host(server)
-    if not data:
-        auth = "not authenticated"
-    else:
-        state = "expired" if token_store.is_expired(data) else "valid"
-        as_user = f" as {data['username']}" if data.get("username") else ""
-        auth = f"{state}{as_user} (access token expires {data['expires_at']})"
     click.echo(f"name:      {name}")
     click.echo(f"server:    {server}")
     click.echo(f"host:      {host}")
     click.echo(f"username:  {profile.get('username') or '-'}")
-    click.echo(f"auth:      {auth}")
+    click.echo(f"auth:      {_auth_detail(data)}")
 
 
 @main.group("choices")

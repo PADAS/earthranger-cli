@@ -214,24 +214,7 @@ wheels = [
 ]
 
 [[package]]
-name = "earthranger-client"
-version = "1.16.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "dateparser" },
-    { name = "gpxpy" },
-    { name = "httpx" },
-    { name = "pydantic" },
-    { name = "pytz" },
-    { name = "requests" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/b6/40/de9af422f198511671a3c0dc9b1172d2fa2fe50482d803f4d56bd09b51ef/earthranger_client-1.16.0.tar.gz", hash = "sha256:bc36be3e849c9f4876a84d61fe054a68a69a93e3bf3dc12870b1f4436ff18e77", size = 322495, upload-time = "2026-07-10T23:04:05.501Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/19/6f/a22f99d6feccd4a30771287cccb6a0b6e1cc7b830530f95010f51744c339/earthranger_client-1.16.0-py3-none-any.whl", hash = "sha256:51110cd8a241a4b3872902b84364eec9b3415d3c37a893dd1caa7bff35692ba7", size = 27832, upload-time = "2026-07-10T23:04:04.019Z" },
-]
-
-[[package]]
-name = "er-events-cli"
+name = "earthranger-cli"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
@@ -255,6 +238,23 @@ requires-dist = [
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.4" },
 ]
 provides-extras = ["dev"]
+
+[[package]]
+name = "earthranger-client"
+version = "1.16.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "dateparser" },
+    { name = "gpxpy" },
+    { name = "httpx" },
+    { name = "pydantic" },
+    { name = "pytz" },
+    { name = "requests" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/b6/40/de9af422f198511671a3c0dc9b1172d2fa2fe50482d803f4d56bd09b51ef/earthranger_client-1.16.0.tar.gz", hash = "sha256:bc36be3e849c9f4876a84d61fe054a68a69a93e3bf3dc12870b1f4436ff18e77", size = 322495, upload-time = "2026-07-10T23:04:05.501Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/19/6f/a22f99d6feccd4a30771287cccb6a0b6e1cc7b830530f95010f51744c339/earthranger_client-1.16.0-py3-none-any.whl", hash = "sha256:51110cd8a241a4b3872902b84364eec9b3415d3c37a893dd1caa7bff35692ba7", size = 27832, upload-time = "2026-07-10T23:04:04.019Z" },
+]
 
 [[package]]
 name = "gpxpy"

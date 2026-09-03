@@ -155,3 +155,23 @@ def test_token_file_rejects_traversal_shaped_names(tmp_path, monkeypatch):
     for bad in ("../tokens/dev", "a/b", ".", "..", ""):
         with pytest.raises(ValueError):
             token_store.token_file(bad)
+
+
+def test_save_static_token_flags_record_and_never_expires():
+    token_store.save_token(
+        "dev", {"access_token": "tok-1"}, token_store.STATIC_EXPIRES, "chris", static=True
+    )
+    data = token_store.load_token("dev")
+    assert data["access_token"] == "tok-1"
+    assert data["refresh_token"] == ""
+    assert data["token_type"] == "Bearer"
+    assert data["username"] == "chris"
+    assert token_store.is_static(data) is True
+    assert token_store.is_expired(data) is False
+
+
+def test_login_session_is_not_static():
+    token_store.save_token("dev", AUTH, EXPIRES, "chris")
+    data = token_store.load_token("dev")
+    assert token_store.is_static(data) is False
+    assert "static" not in data

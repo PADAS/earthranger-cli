@@ -6,6 +6,7 @@ from erclient.er_errors import ERClientException
 from earthranger_cli.client import (
     get_choices,
     make_client,
+    make_static_token_client,
     normalize_server,
     patch_choice,
     post_choice,
@@ -87,6 +88,16 @@ def test_get_all_choices_pages_without_field_filter():
         "include_inactive": True,
         "page_size": 200,
     }
+
+
+def test_make_static_token_client_preloads_bearer_and_never_refreshes():
+    client = make_static_token_client(server="myreserve", token="tok-1")
+    assert client.service_root == "https://myreserve.pamdas.org"
+    assert client.auth == {"token_type": "Bearer", "access_token": "tok-1"}
+    assert client.auth_expires.year == 2099
+    assert client.username is None and client.password is None
+    # no network: auth_headers must not try to log in
+    assert client.auth_headers()["Authorization"] == "Bearer tok-1"
 
 
 @pytest.mark.parametrize(
