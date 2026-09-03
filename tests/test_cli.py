@@ -1651,3 +1651,49 @@ def test_profile_list_survives_non_string_stored_server():
     result = _run(["profile", "list"])
     assert result.exit_code == 0, result.output
     assert "['sandbox']" in result.output
+
+
+def test_batch_post_401_reports_what_already_landed(monkeypatch):
+    from erclient.er_errors import ERClientException
+
+    fake = FakeER()
+    seen = []
+
+    def post_event(event):
+        seen.append(event["event_type"])
+        if len(seen) == 2:
+            raise ERClientException("401 from ER. Message: Invalid token.", status_code=401)
+        return event
+
+    fake.post_event = post_event
+    monkeypatch.setattr(cli_mod, "make_static_token_client", lambda **kw: fake)
+    events_yaml = "- {event_type: a}\n- {event_type: b}\n- {event_type: c}\n"
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        with open("events.yaml", "w") as f:
+            f.write(events_yaml)
+        result = runner.invoke(
+            main,
+            ["--server", "sandbox", "--token", "bad", "events", "post", "--file", "events.yaml"],
+            catch_exceptions=False,
+        )
+    assert result.exit_code == 1
+    lines = result.output.splitlines()
+    assert lines[0] == "posted   a"
+    assert lines[1] == "FAILED   b: credentials rejected; 1 more event(s) not attempted"
+    assert lines[2].startswith("error: credentials rejected (")
+    assert lines[2].endswith("— check --token / ER_TOKEN.")
+    assert seen == ["a", "b"]  # c was never attempted
+
+
+def test_apply_wrapped_message_less_error_is_described(fake):
+    from erclient.er_errors import ERClientNotFound
+
+    def not_found(event_type, version="v1.0"):
+        raise ERClientNotFound()
+
+    fake.post_event_type = not_found
+    result = _run(["events", "apply", "spec.yaml"])
+    assert result.exit_code == 1
+    assert ": None" not in result.output
+    assert "NotFound (no details from the server)" in result.output

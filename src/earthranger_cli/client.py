@@ -98,6 +98,15 @@ def make_static_token_client(*, server: str, token: str) -> ERClient:
     )
 
 
+def describe_error(e: ERClientException) -> str:
+    """str(e) for erclient errors, which is literally 'None' for the ones erclient
+    raises without a message (ERClientNotFound)."""
+    msg = str(e)
+    if msg in ("", "None"):
+        return f"{type(e).__name__.removeprefix('ERClient')} (no details from the server)"
+    return msg
+
+
 def get_me(client) -> dict:
     """The authenticated user (/user/me/), as a one-shot probe: no retries, so a
     credential check against a struggling site fails in one round-trip rather

@@ -23,7 +23,14 @@ from .client import (
     normalize_server,
 )
 from .dsl import SpecError, load_spec
-from .events import FieldArgError, build_event, load_events_file, parse_field_args, post_events
+from .events import (
+    FieldArgError,
+    PostAborted,
+    build_event,
+    load_events_file,
+    parse_field_args,
+    post_events,
+)
 from .pull import PullError, pull_category, render_spec_yaml
 
 
@@ -38,7 +45,7 @@ def _api_errors(f):
             if _is_unauthorized(e):
                 click.echo(f"error: {_bad_credentials_message(e)}")
             else:
-                click.echo(f"error: {_describe(e)}")
+                click.echo(f"error: {er.describe_error(e)}")
             sys.exit(1)
         except (
             ApplyError,
@@ -55,15 +62,6 @@ def _api_errors(f):
             sys.exit(1)
 
     return wrapper
-
-
-def _describe(e: ERClientException) -> str:
-    """str(e) for erclient errors, which is literally 'None' for the ones erclient
-    raises without a message (ERClientNotFound)."""
-    msg = str(e)
-    if msg in ("", "None"):
-        return f"{type(e).__name__.removeprefix('ERClient')} (no details from the server)"
-    return msg
 
 
 def _is_unauthorized(e: BaseException | None) -> bool:
@@ -363,15 +361,31 @@ def post_event_cmd(ctx, event_type, fields, location, time_, title, file_):
         click.echo(f"error: {e}")
         sys.exit(1)
     client = _connect(ctx)
+    try:
+        outcomes = post_events(client, events)
+    except PostAborted as aborted:
+        # say what already landed (so it isn't re-posted on retry) before the
+        # credential error itself is reported by _api_errors
+        _report_post_outcomes(events, aborted.outcomes)
+        click.echo(
+            f"FAILED   {aborted.failed['event_type']}: credentials rejected; "
+            f"{aborted.remaining} more event(s) not attempted"
+        )
+        raise aborted.cause
+    if _report_post_outcomes(events, outcomes):
+        sys.exit(1)
+
+
+def _report_post_outcomes(events: list[dict], outcomes: list[str | None]) -> int:
+    """Print one line per attempted event; return the failure count."""
     failures = 0
-    for event, error in zip(events, post_events(client, events)):
+    for event, error in zip(events, outcomes):
         if error is None:
             click.echo(f"posted   {event['event_type']}")
         else:
             failures += 1
             click.echo(f"FAILED   {event['event_type']}: {error}")
-    if failures:
-        sys.exit(1)
+    return failures
 
 
 @events_group.group("list")
