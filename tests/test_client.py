@@ -4,6 +4,7 @@ import pytest
 from erclient.er_errors import ERClientException
 
 from earthranger_cli.client import (
+    ServerError,
     get_choices,
     make_client,
     make_static_token_client,
@@ -119,3 +120,9 @@ def test_make_static_token_client_preloads_bearer_and_never_refreshes():
 )
 def test_normalize_server_accepts_site_name_hostname_or_url(given, expected):
     assert normalize_server(given) == expected
+
+
+@pytest.mark.parametrize("bad", ["", "   ", "/", "ftp://host", "HTTPS://", "https:// "])
+def test_normalize_server_rejects_blank_and_non_http_schemes(bad):
+    with pytest.raises(ServerError, match="site name, hostname, or http\\(s\\):// URL"):
+        normalize_server(bad)

@@ -14,6 +14,10 @@ CHOICES_PATH = "choices"
 CHOICE_MODEL = "activity.event"
 
 
+class ServerError(ValueError):
+    """A --server value that can't be turned into an http(s) URL."""
+
+
 def normalize_server(server: str) -> str:
     """Accept a bare site name (`sandbox`), a hostname (`sandbox.pamdas.org`,
     `localhost:8000`), or an http(s) URL, and return an http(s) URL.
@@ -27,15 +31,25 @@ def normalize_server(server: str) -> str:
     cached session <-> server): scheme and host[:port] are lower-cased, the
     path is left alone.
     """
-    server = server.strip().rstrip("/")
+    server = server.strip()
+    if not server:
+        raise ServerError("server is required: a site name, hostname, or http(s):// URL")
+    invalid = ServerError(
+        f"invalid server {server!r}: use a site name, hostname, or http(s):// URL"
+    )
     scheme, sep, rest = server.partition("://")
-    if sep and scheme.lower() in ("http", "https"):
+    if sep:
         scheme = scheme.lower()
+        if scheme not in ("http", "https"):
+            raise invalid
     else:
         scheme, rest = "https", server
-        if "." not in rest and ":" not in rest:
-            rest = f"{rest}.pamdas.org"
+    rest = rest.strip().rstrip("/")
+    if not sep and rest and "." not in rest and ":" not in rest:
+        rest = f"{rest}.pamdas.org"
     host, slash, path = rest.partition("/")
+    if not host:
+        raise invalid
     return f"{scheme}://{host.lower()}{slash}{path}"
 
 
