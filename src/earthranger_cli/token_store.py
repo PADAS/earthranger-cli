@@ -21,9 +21,10 @@ from urllib.parse import urlparse
 from .client import ServerError, normalize_server
 from .config_store import ConfigError, config_dir, write_private
 
-# Static (pre-issued) bearer tokens have no refresh token; we give them the
-# same nominal expiry erclient assigns to a constructor `token=` so the
-# existing "is it valid?" check never triggers a refresh attempt.
+# Static (pre-issued) bearer tokens have no refresh token. The record carries
+# this nominal expiry so is_expired() reads "valid"; at use time a static
+# record is loaded through make_static_token_client, which never refreshes,
+# so the value is informational and the refresh path can't be reached.
 STATIC_EXPIRES = datetime(2099, 1, 1, tzinfo=UTC)
 
 
@@ -38,7 +39,7 @@ def server_host(server: str) -> str:
     try:
         return urlparse(normalize_server(server)).netloc
     except ServerError:
-        return server
+        return str(server)  # str(): a hand-edited non-string must still format in a column
 
 
 def token_file(profile: str) -> Path:

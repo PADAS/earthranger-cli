@@ -9,7 +9,7 @@ import sys
 
 import click
 import requests.exceptions
-from erclient.er_errors import ERClientBadCredentials, ERClientException
+from erclient.er_errors import ERClientBadCredentials, ERClientException, ERClientNotFound
 
 from . import client as er
 from . import config_store, token_store
@@ -23,7 +23,14 @@ from .client import (
     normalize_server,
 )
 from .dsl import SpecError, load_spec
-from .events import FieldArgError, build_event, load_events_file, parse_field_args, post_events
+from .events import (
+    FieldArgError,
+    PostAborted,
+    build_event,
+    load_events_file,
+    parse_field_args,
+    post_events,
+)
 from .pull import PullError, pull_category, render_spec_yaml
 
 
@@ -34,42 +41,60 @@ def _api_errors(f):
     def wrapper(*args, **kwargs):
         try:
             return f(*args, **kwargs)
-        except ERClientBadCredentials as e:
-            click.echo(f"error: {_bad_credentials_message(e)}")
+        except ERClientException as e:
+            if _is_unauthorized(e):
+                click.echo(f"error: {_bad_credentials_message(e)}")
+            else:
+                click.echo(f"error: {er.describe_error(e)}")
             sys.exit(1)
         except (
             ApplyError,
             PullError,
             ServerError,
             config_store.ConfigError,
-            ERClientException,
             requests.exceptions.RequestException,
         ) as e:
-            click.echo(f"error: {e}")
+            # apply/pull wrap the failing erclient call (`raise ... from e`) to
+            # name what they were doing; a 401 underneath still deserves the
+            # credential remedy
+            remedy = _credential_remedy() if _is_unauthorized(e.__cause__) else ""
+            click.echo(f"error: {e} — {remedy}" if remedy else f"error: {e}")
             sys.exit(1)
 
     return wrapper
 
 
-def _bad_credentials_message(e: ERClientBadCredentials) -> str:
+def _is_unauthorized(e: BaseException | None) -> bool:
+    """A 401 from erclient: the subclass on reads, or (from its write path)
+    a plain ERClientException carrying status_code=401."""
+    return isinstance(e, ERClientBadCredentials) or getattr(e, "status_code", None) == 401
+
+
+def _credential_remedy() -> str:
+    """Which credential this invocation used, and how to fix it; "" if unknown."""
+    ctx = click.get_current_context(silent=True)
+    obj = (ctx.obj if ctx is not None else None) or {}
+    if obj.get("token"):
+        return "check --token / ER_TOKEN."
+    if obj.get("password"):
+        return "check --username / --password."
+    name = obj.get("profile")
+    if name:
+        return (
+            f"the credential stored on profile {name!r} is expired or revoked; "
+            "run 'er auth login' (or 'er auth login --token')."
+        )
+    return ""
+
+
+def _bad_credentials_message(e: ERClientException) -> str:
     """A 401 mid-command: say which credential the server refused and how to fix it.
 
     A static token can't be checked up front (erclient treats it as valid
     until 2099), so this is where a revoked or expired one first shows up.
     """
-    ctx = click.get_current_context(silent=True)
-    obj = (ctx.obj if ctx is not None else None) or {}
-    if obj.get("token"):
-        return f"credentials rejected ({e}) — check --token / ER_TOKEN."
-    if obj.get("password"):
-        return f"credentials rejected ({e}) — check --username / --password."
-    name = obj.get("profile")
-    if name:
-        return (
-            f"credentials rejected ({e}) — the credential stored on profile {name!r} is "
-            "expired or revoked; run 'er auth login' (or 'er auth login --token')."
-        )
-    return f"credentials rejected ({e})."
+    remedy = _credential_remedy()
+    return f"credentials rejected ({e}) — {remedy}" if remedy else f"credentials rejected ({e})."
 
 
 def connection_options(f):
@@ -162,7 +187,7 @@ def _connect(ctx):
         # profile lock so a concurrent repoint+re-login can't pair the new
         # session with the previously resolved server.
         if profile is not None and cached:
-            server_matches = normalize_server(server) == normalize_server(profile["server"])
+            server_matches = _same_server(server, profile.get("server") or "")
             if server_matches and (not username or cached.get("username") == username):
                 return _connect_with_cached_token(ctx, name, profile, server, cached)
     if not username:
@@ -170,6 +195,17 @@ def _connect(ctx):
     if not password:
         password = click.prompt("Password", hide_input=True)
     return make_client(server=server, username=username, password=password)
+
+
+def _same_server(server: str, stored: str) -> bool:
+    """Identity check between a resolved server and a profile's stored one. A
+    stored value that no longer validates (hand edited, or written by an older
+    version) is simply not the same server — never an error here, so the user
+    can still reach the password path or repair the profile."""
+    try:
+        return normalize_server(server) == normalize_server(stored)
+    except ServerError:
+        return False
 
 
 def _profile_session_snapshot(name: str) -> tuple[dict | None, dict | None]:
@@ -181,12 +217,14 @@ def _profile_session_snapshot(name: str) -> tuple[dict | None, dict | None]:
 
 
 def _connect_with_cached_token(ctx, name: str, profile: dict, server: str, cached: dict):
+    if token_store.is_static(cached):
+        # same client as --token: nothing to refresh or rotate, and erclient
+        # can never fall into its refresh/password-login path whatever the
+        # record's expires_at says. A revoked static token surfaces as the
+        # first real request's 401 (reported by _api_errors).
+        return make_static_token_client(server=server, token=cached["access_token"])
     client = make_token_client(server=server)
     token_store.apply_to_client(client, cached)
-    if token_store.is_static(cached):
-        # nothing to refresh or rotate; a revoked static token can only be
-        # learned from the first real request (reported by _api_errors)
-        return client
     try:
         # Eager: refreshes an expired access token now (via the refresh token),
         # so a dead session fails here with a clear message instead of mid-command.
@@ -323,15 +361,31 @@ def post_event_cmd(ctx, event_type, fields, location, time_, title, file_):
         click.echo(f"error: {e}")
         sys.exit(1)
     client = _connect(ctx)
+    try:
+        outcomes = post_events(client, events)
+    except PostAborted as aborted:
+        # say what already landed (so it isn't re-posted on retry) before the
+        # credential error itself is reported by _api_errors
+        _report_post_outcomes(events, aborted.outcomes)
+        click.echo(
+            f"FAILED   {aborted.failed['event_type']}: credentials rejected; "
+            f"{aborted.remaining} more event(s) not attempted"
+        )
+        raise aborted.cause
+    if _report_post_outcomes(events, outcomes):
+        sys.exit(1)
+
+
+def _report_post_outcomes(events: list[dict], outcomes: list[str | None]) -> int:
+    """Print one line per attempted event; return the failure count."""
     failures = 0
-    for event, error in zip(events, post_events(client, events)):
+    for event, error in zip(events, outcomes):
         if error is None:
             click.echo(f"posted   {event['event_type']}")
         else:
             failures += 1
             click.echo(f"FAILED   {event['event_type']}: {error}")
-    if failures:
-        sys.exit(1)
+    return failures
 
 
 @events_group.group("list")
@@ -409,11 +463,15 @@ def auth_login(ctx):
     name = _require_selected_profile(ctx)
     server, username = _resolve_connection(ctx)
     profile = config_store.get_profile(name) or {}
-    if normalize_server(server) != normalize_server(profile.get("server") or ""):
+    stored = profile.get("server") or ""
+    if not _same_server(server, stored):
+        try:
+            stored_desc = normalize_server(stored)
+        except ServerError:
+            stored_desc = f"invalid stored server {stored!r}"
         raise click.UsageError(
             f"server {normalize_server(server)!r} differs from profile {name!r} "
-            f"({normalize_server(profile.get('server') or '')}); update it first "
-            "with 'er profile set server ...'."
+            f"({stored_desc}); update it first with 'er profile set server ...'."
         )
     host = token_store.server_host(server)
     token = ctx.obj.get("token")
@@ -423,13 +481,25 @@ def auth_login(ctx):
         # owner so the profile's identity and the username-match rule work
         client = make_static_token_client(server=server, token=token)
         try:
-            owner = client.get_me()["username"]
+            owner = er.get_me(client)["username"]
+            if not isinstance(owner, str) or not owner:
+                raise ValueError("username missing or empty")
         except ERClientBadCredentials as e:
-            # only a 401 means the token is bad; outages, 404s and 403s
-            # propagate to _api_errors with their own message
+            # only a 401 means the token is bad; outages and 403s propagate
+            # to _api_errors with their own message
             click.echo(f"error: token rejected by {host}: {e}")
             sys.exit(1)
-        except (KeyError, TypeError):
+        except ERClientNotFound:
+            # erclient raises this without a message; say what it means here
+            click.echo(
+                f"error: no EarthRanger API at {host} (404 on /user/me/); check --server. "
+                "Token not stored."
+            )
+            sys.exit(1)
+        except (KeyError, TypeError, ValueError):
+            # ValueError: a 200 with a non-JSON body (proxy or HTML login page),
+            # or a record whose username is null/empty — either way there is
+            # no identity to bind the token to, so nothing is persisted
             click.echo(f"error: unexpected /user/me/ response from {host}; token not stored.")
             sys.exit(1)
         explicit = ctx.obj.get("username")
@@ -442,10 +512,8 @@ def auth_login(ctx):
                 f"pass --username {owner} or unset ER_USERNAME."
             )
         username = owner
-        # erclient seeded these from the token; storing them (rather than a
-        # copy) keeps the record identical to what just passed /user/me/
-        auth = client.auth
-        expires_at = client.auth_expires
+        auth = {"access_token": token, "token_type": "Bearer"}
+        expires_at = token_store.STATIC_EXPIRES  # informational: static records never refresh
         static = True
     else:
         password = ctx.obj["password"]

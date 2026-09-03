@@ -5,6 +5,9 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 import yaml
+from erclient.er_errors import ERClientException
+
+from . import client as er
 
 
 class FieldArgError(ValueError):
@@ -63,13 +66,38 @@ def load_events_file(path: str) -> list[dict]:
     return events
 
 
+class PostAborted(Exception):
+    """A batch stopped early on a rejected credential (401).
+
+    Carries what happened before the stop so the CLI can report which events
+    were already created (and must not be re-posted) before it explains the
+    credential problem: `outcomes` covers the events attempted before the
+    failing one, `failed` is the event the 401 came back for, `remaining`
+    counts the events never attempted, and `cause` is the erclient error.
+    """
+
+    def __init__(self, cause: Exception, outcomes: list[str | None], failed: dict, remaining: int):
+        super().__init__(str(cause))
+        self.cause = cause
+        self.outcomes = outcomes
+        self.failed = failed
+        self.remaining = remaining
+
+
 def post_events(client, events: list[dict]) -> list[str | None]:
-    """Post each event; one entry per event: None on success, error text on failure."""
+    """Post each event; one entry per event: None on success, error text on failure.
+
+    A rejected credential (401) aborts the batch — it would fail every
+    remaining event identically — via PostAborted, which carries the partial
+    outcomes so nothing already created goes unreported.
+    """
     outcomes: list[str | None] = []
-    for event in events:
+    for i, event in enumerate(events):
         try:
             client.post_event(event)
             outcomes.append(None)
-        except Exception as e:  # noqa: BLE001, ERClientException subclasses or transport errors
-            outcomes.append(str(e))
+        except Exception as e:  # ERClientException subclasses or transport errors
+            if getattr(e, "status_code", None) == 401:
+                raise PostAborted(e, outcomes, event, len(events) - i - 1) from e
+            outcomes.append(er.describe_error(e) if isinstance(e, ERClientException) else str(e))
     return outcomes

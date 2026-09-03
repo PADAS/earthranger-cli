@@ -32,7 +32,7 @@ def _write(description: str, fn, *args, **kwargs):
     try:
         return fn(*args, **kwargs)
     except ERClientException as e:
-        raise ApplyError(f"{description}: {e}") from e
+        raise ApplyError(f"{description}: {er.describe_error(e)}") from e
 
 
 @dataclass

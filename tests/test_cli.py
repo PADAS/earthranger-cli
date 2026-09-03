@@ -1250,7 +1250,7 @@ def test_auth_login_with_token_verifies_and_stores_static_record(monkeypatch):
     )
     result = _run(["auth", "login", "--token", "tok-1"])
     assert result.exit_code == 0, result.output
-    assert ("get_me",) in fake.calls
+    assert ("get_me", 0) in fake.calls  # one-shot probe: no erclient retries
     assert "Authenticated with a static token" in result.output
     data = token_store.load_token("dev")
     assert data["access_token"] == "tok-1"
@@ -1267,10 +1267,10 @@ def test_auth_login_with_bad_token_exits_1_and_caches_nothing(monkeypatch):
     monkeypatch.setenv("ER_PROFILE", "dev")
     fake = _static_fake("bad")
 
-    def failing_get_me():
+    def failing_get_me(path, params=None, max_retries=5, **kwargs):
         raise ERClientBadCredentials("Invalid token.")
 
-    fake.get_me = failing_get_me
+    fake._get = failing_get_me
     monkeypatch.setattr(cli_mod, "make_static_token_client", lambda **kw: fake)
     result = _run(["auth", "login", "--token", "bad"])
     assert result.exit_code == 1
@@ -1285,10 +1285,10 @@ def test_auth_login_token_outage_is_not_reported_as_rejection(monkeypatch):
     monkeypatch.setenv("ER_PROFILE", "dev")
     fake = _static_fake()
 
-    def failing_get_me():
+    def failing_get_me(path, params=None, max_retries=5, **kwargs):
         raise ERClientException("Failed to call ER web service after 6 tries. 503")
 
-    fake.get_me = failing_get_me
+    fake._get = failing_get_me
     monkeypatch.setattr(cli_mod, "make_static_token_client", lambda **kw: fake)
     result = _run(["auth", "login", "--token", "tok-1"])
     assert result.exit_code == 1
@@ -1348,7 +1348,7 @@ def test_revoked_static_token_mid_command_names_profile_and_remedy(monkeypatch):
         raise ERClientBadCredentials("Invalid token.")
 
     fake.get_event_categories = revoked
-    monkeypatch.setattr(cli_mod, "make_token_client", lambda **kw: fake)
+    monkeypatch.setattr(cli_mod, "make_static_token_client", lambda **kw: fake)
     result = _run(["events", "list", "categories"])
     assert result.exit_code == 1
     assert (
@@ -1395,15 +1395,23 @@ def test_connect_uses_stored_static_token_without_refresh_or_rotation(monkeypatc
     config_store.add_profile("dev", server="sandbox", username="chris")
     monkeypatch.setenv("ER_PROFILE", "dev")
     _store_static()
-    fake = FakeER()
-    monkeypatch.setattr(cli_mod, "make_token_client", lambda **kw: fake)
+    captured = {}
+    monkeypatch.setattr(
+        cli_mod,
+        "make_static_token_client",
+        lambda *, server, token: captured.update(server=server, token=token) or FakeER(),
+    )
+    monkeypatch.setattr(
+        cli_mod,
+        "make_token_client",
+        lambda **kw: pytest.fail("refreshable client must not be built"),
+    )
     monkeypatch.setattr(
         cli_mod, "make_client", lambda **kw: pytest.fail("password client must not be built")
     )
     result = _run(["events", "list", "categories"])
     assert result.exit_code == 0
-    assert fake.auth == {"access_token": "tok-1", "refresh_token": "", "token_type": "Bearer"}
-    assert fake.auth_expires.year == 2099
+    assert captured == {"server": "sandbox", "token": "tok-1"}
     # nothing rotated, so the record on disk is byte-for-byte what we stored
     data = token_store.load_token("dev")
     assert data["access_token"] == "tok-1" and token_store.is_static(data)
@@ -1474,3 +1482,231 @@ def test_profile_list_and_show_survive_junk_stored_server():
     result = _run(["profile", "show", "dev"])
     assert result.exit_code == 0, result.output
     assert "host:      ftp://junk" in result.output
+
+
+def test_connect_junk_stored_server_falls_through_to_password_path(monkeypatch):
+    # a stored server that no longer validates is "not the same server", not an error
+    config_store.add_profile("dev", server="sand box", username="chris")
+    monkeypatch.setenv("ER_PROFILE", "dev")
+    token_store.save_token("dev", AUTH, FUTURE, "chris")
+    captured = {}
+
+    def fake_make_client(*, server, username, password):
+        captured.update(server=server, username=username, password=password)
+        return FakeER()
+
+    monkeypatch.setattr(cli_mod, "make_client", fake_make_client)
+    result = _run(["--server", "sandbox", "events", "list", "categories"], input="pw\n")
+    assert result.exit_code == 0, result.output
+    assert captured == {"server": "sandbox", "username": "chris", "password": "pw"}
+
+
+def test_auth_login_names_invalid_stored_server(monkeypatch):
+    config_store.add_profile("dev", server="sand box", username="chris")
+    monkeypatch.setenv("ER_PROFILE", "dev")
+    result = _run(["auth", "login", "--server", "sandbox", "--password", "pw"])
+    assert result.exit_code == 2
+    assert "(invalid stored server 'sand box'); update it first with 'er profile set server" in (
+        result.output
+    )
+
+
+def test_auth_login_token_non_json_response_is_clean(monkeypatch):
+    config_store.add_profile("dev", server="sandbox", username="chris")
+    monkeypatch.setenv("ER_PROFILE", "dev")
+    fake = _static_fake()
+
+    def html_get(path, params=None, max_retries=5, **kwargs):
+        raise ValueError("Expecting value: line 1 column 1 (char 0)")  # json.JSONDecodeError
+
+    fake._get = html_get
+    monkeypatch.setattr(cli_mod, "make_static_token_client", lambda **kw: fake)
+    result = _run(["auth", "login", "--token", "tok-1"])
+    assert result.exit_code == 1
+    assert "error: unexpected /user/me/ response from sandbox.pamdas.org; token not stored." in (
+        result.output
+    )
+    assert token_store.load_token("dev") is None
+
+
+def test_auth_login_token_404_names_the_server(monkeypatch):
+    from erclient.er_errors import ERClientNotFound
+
+    config_store.add_profile("dev", server="sandbox", username="chris")
+    monkeypatch.setenv("ER_PROFILE", "dev")
+    fake = _static_fake()
+
+    def not_found(path, params=None, max_retries=5, **kwargs):
+        raise ERClientNotFound()
+
+    fake._get = not_found
+    monkeypatch.setattr(cli_mod, "make_static_token_client", lambda **kw: fake)
+    result = _run(["auth", "login", "--token", "tok-1"])
+    assert result.exit_code == 1
+    assert "error: no EarthRanger API at sandbox.pamdas.org (404 on /user/me/)" in result.output
+    assert token_store.load_token("dev") is None
+
+
+def test_message_less_erclient_errors_are_not_printed_as_none(fake):
+    from erclient.er_errors import ERClientNotFound
+
+    def not_found(include_inactive=False):
+        raise ERClientNotFound()
+
+    fake.get_event_categories = not_found
+    result = _run(["events", "list", "categories"])
+    assert result.exit_code == 1
+    assert result.output.strip() == "error: NotFound (no details from the server)"
+
+
+def test_bad_token_on_events_post_gets_the_credential_hint(monkeypatch):
+    from erclient.er_errors import ERClientException
+
+    fake = FakeER()
+
+    def unauthorized(event):
+        raise ERClientException("401 from ER. Message: Invalid token.", status_code=401)
+
+    fake.post_event = unauthorized
+    monkeypatch.setattr(cli_mod, "make_static_token_client", lambda **kw: fake)
+    result = _run(
+        [
+            "--server",
+            "sandbox",
+            "--token",
+            "bad",
+            "events",
+            "post",
+            "--event-type",
+            "x",
+            "--field",
+            "a=1",
+        ]
+    )
+    assert result.exit_code == 1
+    assert "credentials rejected" in result.output
+    assert "check --token / ER_TOKEN" in result.output
+
+
+@pytest.mark.parametrize("me", [{"username": None}, {"username": ""}, {"username": 7}, {}])
+def test_auth_login_token_requires_a_usable_owner(monkeypatch, me):
+    config_store.add_profile("dev", server="sandbox", username="chris")
+    monkeypatch.setenv("ER_PROFILE", "dev")
+    fake = _static_fake()
+    fake.me = me
+    monkeypatch.setattr(cli_mod, "make_static_token_client", lambda **kw: fake)
+    result = _run(["auth", "login", "--token", "tok-1"])
+    assert result.exit_code == 1
+    assert "unexpected /user/me/ response from sandbox.pamdas.org; token not stored." in (
+        result.output
+    )
+    assert token_store.load_token("dev") is None
+    assert config_store.get_profile("dev")["username"] == "chris"
+
+
+def test_connect_non_string_stored_server_falls_through(monkeypatch):
+    # config.json edited by hand: "server": 42
+    config_store.add_profile("dev", server="sandbox", username="chris")
+    import json
+
+    path = config_store.config_file()
+    cfg = json.loads(path.read_text())
+    cfg["profiles"]["dev"]["server"] = 42
+    path.write_text(json.dumps(cfg))
+    monkeypatch.setenv("ER_PROFILE", "dev")
+    token_store.save_token("dev", AUTH, FUTURE, "chris")
+    captured = {}
+
+    def fake_make_client(*, server, username, password):
+        captured.update(server=server, password=password)
+        return FakeER()
+
+    monkeypatch.setattr(cli_mod, "make_client", fake_make_client)
+    result = _run(["--server", "sandbox", "events", "list", "categories"], input="pw\n")
+    assert result.exit_code == 0, result.output
+    assert captured == {"server": "sandbox", "password": "pw"}
+
+
+def test_apply_401_keeps_the_credential_hint(fake):
+    from erclient.er_errors import ERClientBadCredentials
+
+    def unauthorized(event_type, version="v1.0"):
+        raise ERClientBadCredentials("Invalid token.")
+
+    fake.post_event_type = unauthorized
+    result = _run(["--server", "sandbox", "--token", "bad", "events", "apply", "spec.yaml"])
+    assert result.exit_code == 1
+    assert "Invalid token." in result.output  # apply's own description of the failed write
+    assert "— check --token / ER_TOKEN." in result.output
+
+
+def test_profile_list_survives_non_string_stored_server():
+    import json
+
+    config_store.add_profile("dev", server="sandbox")
+    path = config_store.config_file()
+    cfg = json.loads(path.read_text())
+    cfg["profiles"]["dev"]["server"] = ["sandbox"]
+    path.write_text(json.dumps(cfg))
+    result = _run(["profile", "list"])
+    assert result.exit_code == 0, result.output
+    assert "['sandbox']" in result.output
+
+
+def test_batch_post_401_reports_what_already_landed(monkeypatch):
+    from erclient.er_errors import ERClientException
+
+    fake = FakeER()
+    seen = []
+
+    def post_event(event):
+        seen.append(event["event_type"])
+        if len(seen) == 2:
+            raise ERClientException("401 from ER. Message: Invalid token.", status_code=401)
+        return event
+
+    fake.post_event = post_event
+    monkeypatch.setattr(cli_mod, "make_static_token_client", lambda **kw: fake)
+    events_yaml = "- {event_type: a}\n- {event_type: b}\n- {event_type: c}\n"
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        with open("events.yaml", "w") as f:
+            f.write(events_yaml)
+        result = runner.invoke(
+            main,
+            ["--server", "sandbox", "--token", "bad", "events", "post", "--file", "events.yaml"],
+            catch_exceptions=False,
+        )
+    assert result.exit_code == 1
+    lines = result.output.splitlines()
+    assert lines[0] == "posted   a"
+    assert lines[1] == "FAILED   b: credentials rejected; 1 more event(s) not attempted"
+    assert lines[2].startswith("error: credentials rejected (")
+    assert lines[2].endswith("— check --token / ER_TOKEN.")
+    assert seen == ["a", "b"]  # c was never attempted
+
+
+def test_apply_wrapped_message_less_error_is_described(fake):
+    from erclient.er_errors import ERClientNotFound
+
+    def not_found(event_type, version="v1.0"):
+        raise ERClientNotFound()
+
+    fake.post_event_type = not_found
+    result = _run(["events", "apply", "spec.yaml"])
+    assert result.exit_code == 1
+    assert ": None" not in result.output
+    assert "NotFound (no details from the server)" in result.output
+
+
+def test_post_message_less_error_is_described(fake):
+    from erclient.er_errors import ERClientNotFound
+
+    def not_found(event):
+        raise ERClientNotFound()
+
+    fake.post_event = not_found
+    result = _run(["events", "post", "--event-type", "x", "--field", "a=1"])
+    assert result.exit_code == 1
+    assert "FAILED   x: NotFound (no details from the server)" in result.output
+    assert ": None" not in result.output
