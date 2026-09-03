@@ -56,6 +56,9 @@ class FakeER:
 
     # --- generic path methods (choices) ---
     def _get(self, path, params=None, max_retries=5, **kwargs):
+        if path == "user/me":
+            self.calls.append(("get_me", max_retries))
+            return self.me
         self.calls.append(("_get", path, params))
         field = (params or {}).get("field")
         if field is None:

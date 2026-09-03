@@ -6,6 +6,7 @@ from erclient.er_errors import ERClientException
 from earthranger_cli.client import (
     ServerError,
     get_choices,
+    get_me,
     make_client,
     make_static_token_client,
     normalize_server,
@@ -138,8 +139,18 @@ def test_normalize_server_accepts_site_name_hostname_or_url(given, expected):
         "sandbox:abc",  # non-numeric port
         "https://host:99999",  # port out of range
         "sand box.pamdas.org",  # whitespace in the authority
+        "sandbox\ttab",  # urlsplit would silently drop the tab (bpo-43882)
+        "sand\nbox.pamdas.org",
+        "https://host\r.pamdas.org",
     ],
 )
 def test_normalize_server_rejects_blank_and_non_http_schemes(bad):
     with pytest.raises(ServerError, match="site name, hostname, or http\\(s\\):// URL"):
         normalize_server(bad)
+
+
+def test_get_me_is_a_one_shot_probe():
+    client = Mock()
+    client._get.return_value = {"username": "chris"}
+    assert get_me(client) == {"username": "chris"}
+    client._get.assert_called_once_with("user/me", max_retries=0)

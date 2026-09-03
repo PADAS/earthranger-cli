@@ -37,14 +37,19 @@ def normalize_server(server: str) -> str:
     server = server.strip()
     if not server:
         raise ServerError("server is required: a site name, hostname, or http(s):// URL")
+    invalid = ServerError(
+        f"invalid server {server!r}: use a site name, hostname, or http(s):// URL"
+    )
+    if any(c.isspace() for c in server):
+        # checked on the raw input: urlsplit silently drops embedded
+        # tab/CR/LF (bpo-43882), which would turn 'sandbox\ttab' into a
+        # different host instead of an error
+        raise invalid
     had_scheme = "://" in server
     parts = urlsplit(server if had_scheme else f"https://{server}")
     scheme = parts.scheme.lower()
     netloc = parts.netloc.lower()
-    invalid = ServerError(
-        f"invalid server {server!r}: use a site name, hostname, or http(s):// URL"
-    )
-    if scheme not in ("http", "https") or not netloc or any(c.isspace() for c in netloc):
+    if scheme not in ("http", "https") or not netloc:
         raise invalid
     try:
         parts.port  # noqa: B018 — raises ValueError for a non-numeric or out-of-range port
@@ -85,6 +90,13 @@ def make_static_token_client(*, server: str, token: str) -> ERClient:
         token=token,
         client_id=DEFAULT_CLIENT_ID,
     )
+
+
+def get_me(client) -> dict:
+    """The authenticated user (/user/me/), as a one-shot probe: no retries, so a
+    credential check against a struggling site fails in one round-trip rather
+    than erclient's default five attempts with 5 s sleeps."""
+    return client._get("user/me", max_retries=0)
 
 
 def get_choices(client, field_name: str) -> list[dict]:

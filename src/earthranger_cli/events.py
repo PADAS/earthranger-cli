@@ -64,12 +64,19 @@ def load_events_file(path: str) -> list[dict]:
 
 
 def post_events(client, events: list[dict]) -> list[str | None]:
-    """Post each event; one entry per event: None on success, error text on failure."""
+    """Post each event; one entry per event: None on success, error text on failure.
+
+    A rejected credential (401) is raised instead of recorded: it will fail
+    every remaining event identically, and the CLI's error handler knows how
+    to say which credential to fix.
+    """
     outcomes: list[str | None] = []
     for event in events:
         try:
             client.post_event(event)
             outcomes.append(None)
-        except Exception as e:  # noqa: BLE001, ERClientException subclasses or transport errors
+        except Exception as e:  # ERClientException subclasses or transport errors
+            if getattr(e, "status_code", None) == 401:
+                raise
             outcomes.append(str(e))
     return outcomes
