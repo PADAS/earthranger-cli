@@ -16,15 +16,18 @@ CHOICE_MODEL = "activity.event"
 
 def normalize_server(server: str) -> str:
     """Accept a bare site name (`sandbox`), a hostname (`sandbox.pamdas.org`,
-    `localhost:8000`), or a full URL, and return `scheme://host[:port]`.
+    `localhost:8000`), or an http(s) URL, and return an http(s) URL.
 
     Only a single DNS label gets the `.pamdas.org` shorthand; anything with a
     dot or a port is already a host, so appending the suffix would mangle it
-    (`sandbox.pamdas.org` -> `sandbox.pamdas.org.pamdas.org`).
+    (`sandbox.pamdas.org` -> `sandbox.pamdas.org.pamdas.org`). A URL is kept
+    as given (any path included; ERClient strips `/api...` itself) with the
+    scheme lower-cased and a trailing slash removed.
     """
     server = server.strip().rstrip("/")
-    if server.startswith(("http://", "https://")):
-        return server
+    scheme, sep, rest = server.partition("://")
+    if sep and scheme.lower() in ("http", "https"):
+        return f"{scheme.lower()}://{rest}"
     if "." in server or ":" in server:
         return f"https://{server}"
     return f"https://{server}.pamdas.org"

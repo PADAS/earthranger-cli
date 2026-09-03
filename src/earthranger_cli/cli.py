@@ -65,7 +65,7 @@ def connection_options(f):
         click.option(
             "--server",
             "server_",
-            help="ER site name (sandbox), hostname (sandbox.pamdas.org), or https:// URL.",
+            help="ER site name (sandbox), hostname (sandbox.pamdas.org), or http(s):// URL.",
         ),
     ):
         wrapper = opt(wrapper)
@@ -180,7 +180,7 @@ def _connect_with_cached_token(ctx, name: str, profile: dict, server: str, cache
 @click.option(
     "--server",
     envvar="ER_SERVER",
-    help="ER site name (myreserve), hostname (myreserve.pamdas.org), or https:// URL.",
+    help="ER site name (myreserve), hostname (myreserve.pamdas.org), or http(s):// URL.",
 )
 @click.option("--username", envvar="ER_USERNAME", help="EarthRanger username.")
 @click.option(
@@ -472,7 +472,7 @@ def profile_group():
     "--server",
     "p_server",
     required=True,
-    help="ER site name (sandbox), hostname (sandbox.pamdas.org), or https:// URL.",
+    help="ER site name (sandbox), hostname (sandbox.pamdas.org), or http(s):// URL.",
 )
 @click.option("--username", "p_username", help="Default username for this profile.")
 @_api_errors

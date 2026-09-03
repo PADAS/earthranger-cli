@@ -99,6 +99,9 @@ def test_get_all_choices_pages_without_field_filter():
         ("localhost:8000", "https://localhost:8000"),  # host:port
         ("http://localhost:8000", "http://localhost:8000"),  # explicit scheme kept
         ("https://sandbox.pamdas.org/", "https://sandbox.pamdas.org"),
+        ("HTTPS://sandbox.pamdas.org", "https://sandbox.pamdas.org"),  # scheme case-insensitive
+        ("Http://localhost:8000/", "http://localhost:8000"),
+        ("https://er.example.org/api/v1.0/", "https://er.example.org/api/v1.0"),  # path kept
     ],
 )
 def test_normalize_server_accepts_site_name_hostname_or_url(given, expected):
