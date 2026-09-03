@@ -105,7 +105,7 @@ def test_make_static_token_client_preloads_bearer_and_never_refreshes():
     [
         ("sandbox", "https://sandbox.pamdas.org"),  # bare site name: shorthand applies
         ("sandbox.pamdas.org", "https://sandbox.pamdas.org"),  # hostname: no suffix
-        ("SANDBOX.pamdas.org/", "https://SANDBOX.pamdas.org"),
+        ("SANDBOX.pamdas.org/", "https://sandbox.pamdas.org"),  # host lower-cased: it's an identity
         ("er.example.org", "https://er.example.org"),  # non-pamdas host
         ("localhost:8000", "https://localhost:8000"),  # host:port
         ("http://localhost:8000", "http://localhost:8000"),  # explicit scheme kept
@@ -113,6 +113,8 @@ def test_make_static_token_client_preloads_bearer_and_never_refreshes():
         ("HTTPS://sandbox.pamdas.org", "https://sandbox.pamdas.org"),  # scheme case-insensitive
         ("Http://localhost:8000/", "http://localhost:8000"),
         ("https://er.example.org/api/v1.0/", "https://er.example.org/api/v1.0"),  # path kept
+        ("https://ER.Example.org/Api/V1.0", "https://er.example.org/Api/V1.0"),  # path case kept
+        ("Sandbox", "https://sandbox.pamdas.org"),
     ],
 )
 def test_normalize_server_accepts_site_name_hostname_or_url(given, expected):

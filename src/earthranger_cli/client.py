@@ -20,17 +20,23 @@ def normalize_server(server: str) -> str:
 
     Only a single DNS label gets the `.pamdas.org` shorthand; anything with a
     dot or a port is already a host, so appending the suffix would mangle it
-    (`sandbox.pamdas.org` -> `sandbox.pamdas.org.pamdas.org`). A URL is kept
-    as given (any path included; ERClient strips `/api...` itself) with the
-    scheme lower-cased and a trailing slash removed.
+    (`sandbox.pamdas.org` -> `sandbox.pamdas.org.pamdas.org`). A URL's path is
+    kept (ERClient strips `/api...` itself); a trailing slash is removed.
+
+    The result is canonical enough to compare for identity (profile <-> flag,
+    cached session <-> server): scheme and host[:port] are lower-cased, the
+    path is left alone.
     """
     server = server.strip().rstrip("/")
     scheme, sep, rest = server.partition("://")
     if sep and scheme.lower() in ("http", "https"):
-        return f"{scheme.lower()}://{rest}"
-    if "." in server or ":" in server:
-        return f"https://{server}"
-    return f"https://{server}.pamdas.org"
+        scheme = scheme.lower()
+    else:
+        scheme, rest = "https", server
+        if "." not in rest and ":" not in rest:
+            rest = f"{rest}.pamdas.org"
+    host, slash, path = rest.partition("/")
+    return f"{scheme}://{host.lower()}{slash}{path}"
 
 
 def make_client(*, server: str, username: str, password: str) -> ERClient:
