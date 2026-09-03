@@ -457,6 +457,8 @@ def auth_login(ctx):
         client = make_static_token_client(server=server, token=token)
         try:
             owner = er.get_me(client)["username"]
+            if not isinstance(owner, str) or not owner:
+                raise ValueError("username missing or empty")
         except ERClientBadCredentials as e:
             # only a 401 means the token is bad; outages and 403s propagate
             # to _api_errors with their own message
@@ -470,7 +472,9 @@ def auth_login(ctx):
             )
             sys.exit(1)
         except (KeyError, TypeError, ValueError):
-            # ValueError: a 200 with a non-JSON body (proxy or HTML login page)
+            # ValueError: a 200 with a non-JSON body (proxy or HTML login page),
+            # or a record whose username is null/empty — either way there is
+            # no identity to bind the token to, so nothing is persisted
             click.echo(f"error: unexpected /user/me/ response from {host}; token not stored.")
             sys.exit(1)
         explicit = ctx.obj.get("username")

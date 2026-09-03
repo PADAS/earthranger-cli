@@ -154,3 +154,9 @@ def test_get_me_is_a_one_shot_probe():
     client._get.return_value = {"username": "chris"}
     assert get_me(client) == {"username": "chris"}
     client._get.assert_called_once_with("user/me", max_retries=0)
+
+
+@pytest.mark.parametrize("bad", [None, 42, ["sandbox"], {"server": "sandbox"}])
+def test_normalize_server_rejects_non_strings_as_server_error(bad):
+    with pytest.raises(ServerError, match="invalid server"):
+        normalize_server(bad)

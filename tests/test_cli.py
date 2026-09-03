@@ -1586,3 +1586,42 @@ def test_bad_token_on_events_post_gets_the_credential_hint(monkeypatch):
     assert result.exit_code == 1
     assert "credentials rejected" in result.output
     assert "check --token / ER_TOKEN" in result.output
+
+
+@pytest.mark.parametrize("me", [{"username": None}, {"username": ""}, {"username": 7}, {}])
+def test_auth_login_token_requires_a_usable_owner(monkeypatch, me):
+    config_store.add_profile("dev", server="sandbox", username="chris")
+    monkeypatch.setenv("ER_PROFILE", "dev")
+    fake = _static_fake()
+    fake.me = me
+    monkeypatch.setattr(cli_mod, "make_static_token_client", lambda **kw: fake)
+    result = _run(["auth", "login", "--token", "tok-1"])
+    assert result.exit_code == 1
+    assert "unexpected /user/me/ response from sandbox.pamdas.org; token not stored." in (
+        result.output
+    )
+    assert token_store.load_token("dev") is None
+    assert config_store.get_profile("dev")["username"] == "chris"
+
+
+def test_connect_non_string_stored_server_falls_through(monkeypatch):
+    # config.json edited by hand: "server": 42
+    config_store.add_profile("dev", server="sandbox", username="chris")
+    import json
+
+    path = config_store.config_file()
+    cfg = json.loads(path.read_text())
+    cfg["profiles"]["dev"]["server"] = 42
+    path.write_text(json.dumps(cfg))
+    monkeypatch.setenv("ER_PROFILE", "dev")
+    token_store.save_token("dev", AUTH, FUTURE, "chris")
+    captured = {}
+
+    def fake_make_client(*, server, username, password):
+        captured.update(server=server, password=password)
+        return FakeER()
+
+    monkeypatch.setattr(cli_mod, "make_client", fake_make_client)
+    result = _run(["--server", "sandbox", "events", "list", "categories"], input="pw\n")
+    assert result.exit_code == 0, result.output
+    assert captured == {"server": "sandbox", "password": "pw"}

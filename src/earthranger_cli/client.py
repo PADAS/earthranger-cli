@@ -34,6 +34,12 @@ def normalize_server(server: str) -> str:
     cached session <-> server): scheme and host[:port] are lower-cased, the
     path is left alone.
     """
+    if not isinstance(server, str):
+        # hand-edited config.json can hold anything; keep it on the ServerError
+        # path that _same_server / _api_errors already tolerate
+        raise ServerError(
+            f"invalid server {server!r}: use a site name, hostname, or http(s):// URL"
+        )
     server = server.strip()
     if not server:
         raise ServerError("server is required: a site name, hostname, or http(s):// URL")
