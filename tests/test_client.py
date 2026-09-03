@@ -87,3 +87,19 @@ def test_get_all_choices_pages_without_field_filter():
         "include_inactive": True,
         "page_size": 200,
     }
+
+
+@pytest.mark.parametrize(
+    ("given", "expected"),
+    [
+        ("sandbox", "https://sandbox.pamdas.org"),  # bare site name: shorthand applies
+        ("sandbox.pamdas.org", "https://sandbox.pamdas.org"),  # hostname: no suffix
+        ("SANDBOX.pamdas.org/", "https://SANDBOX.pamdas.org"),
+        ("er.example.org", "https://er.example.org"),  # non-pamdas host
+        ("localhost:8000", "https://localhost:8000"),  # host:port
+        ("http://localhost:8000", "http://localhost:8000"),  # explicit scheme kept
+        ("https://sandbox.pamdas.org/", "https://sandbox.pamdas.org"),
+    ],
+)
+def test_normalize_server_accepts_site_name_hostname_or_url(given, expected):
+    assert normalize_server(given) == expected

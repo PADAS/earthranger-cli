@@ -62,7 +62,11 @@ def connection_options(f):
         click.option("--profile", "profile_", help="Named profile to use."),
         click.option("--password", "password_", help="EarthRanger password."),
         click.option("--username", "username_", help="EarthRanger username."),
-        click.option("--server", "server_", help="ER site name or full https:// URL."),
+        click.option(
+            "--server",
+            "server_",
+            help="ER site name (sandbox), hostname (sandbox.pamdas.org), or https:// URL.",
+        ),
     ):
         wrapper = opt(wrapper)
     return wrapper
@@ -173,7 +177,11 @@ def _connect_with_cached_token(ctx, name: str, profile: dict, server: str, cache
 
 
 @click.group()
-@click.option("--server", envvar="ER_SERVER", help="ER site name (myreserve) or full https:// URL.")
+@click.option(
+    "--server",
+    envvar="ER_SERVER",
+    help="ER site name (myreserve), hostname (myreserve.pamdas.org), or https:// URL.",
+)
 @click.option("--username", envvar="ER_USERNAME", help="EarthRanger username.")
 @click.option(
     "--password", envvar="ER_PASSWORD", help="EarthRanger password (prompted if omitted)."
@@ -460,7 +468,12 @@ def profile_group():
 
 @profile_group.command("add")
 @click.argument("name")
-@click.option("--server", "p_server", required=True, help="ER site name or full https:// URL.")
+@click.option(
+    "--server",
+    "p_server",
+    required=True,
+    help="ER site name (sandbox), hostname (sandbox.pamdas.org), or https:// URL.",
+)
 @click.option("--username", "p_username", help="Default username for this profile.")
 @_api_errors
 def profile_add(name, p_server, p_username):

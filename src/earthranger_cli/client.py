@@ -15,10 +15,19 @@ CHOICE_MODEL = "activity.event"
 
 
 def normalize_server(server: str) -> str:
+    """Accept a bare site name (`sandbox`), a hostname (`sandbox.pamdas.org`,
+    `localhost:8000`), or a full URL, and return `scheme://host[:port]`.
+
+    Only a single DNS label gets the `.pamdas.org` shorthand; anything with a
+    dot or a port is already a host, so appending the suffix would mangle it
+    (`sandbox.pamdas.org` -> `sandbox.pamdas.org.pamdas.org`).
+    """
     server = server.strip().rstrip("/")
-    if not server.startswith(("http://", "https://")):
-        server = f"https://{server}.pamdas.org"
-    return server
+    if server.startswith(("http://", "https://")):
+        return server
+    if "." in server or ":" in server:
+        return f"https://{server}"
+    return f"https://{server}.pamdas.org"
 
 
 def make_client(*, server: str, username: str, password: str) -> ERClient:
