@@ -1697,3 +1697,16 @@ def test_apply_wrapped_message_less_error_is_described(fake):
     assert result.exit_code == 1
     assert ": None" not in result.output
     assert "NotFound (no details from the server)" in result.output
+
+
+def test_post_message_less_error_is_described(fake):
+    from erclient.er_errors import ERClientNotFound
+
+    def not_found(event):
+        raise ERClientNotFound()
+
+    fake.post_event = not_found
+    result = _run(["events", "post", "--event-type", "x", "--field", "a=1"])
+    assert result.exit_code == 1
+    assert "FAILED   x: NotFound (no details from the server)" in result.output
+    assert ": None" not in result.output

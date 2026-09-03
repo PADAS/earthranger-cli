@@ -5,6 +5,9 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 import yaml
+from erclient.er_errors import ERClientException
+
+from . import client as er
 
 
 class FieldArgError(ValueError):
@@ -96,5 +99,5 @@ def post_events(client, events: list[dict]) -> list[str | None]:
         except Exception as e:  # ERClientException subclasses or transport errors
             if getattr(e, "status_code", None) == 401:
                 raise PostAborted(e, outcomes, event, len(events) - i - 1) from e
-            outcomes.append(str(e))
+            outcomes.append(er.describe_error(e) if isinstance(e, ERClientException) else str(e))
     return outcomes
