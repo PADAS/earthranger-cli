@@ -126,7 +126,20 @@ def test_normalize_server_accepts_site_name_hostname_or_url(given, expected):
     assert normalize_server(given) == expected
 
 
-@pytest.mark.parametrize("bad", ["", "   ", "/", "ftp://host", "HTTPS://", "https:// "])
+@pytest.mark.parametrize(
+    "bad",
+    [
+        "",
+        "   ",
+        "/",
+        "ftp://host",
+        "HTTPS://",
+        "https:// ",
+        "sandbox:abc",  # non-numeric port
+        "https://host:99999",  # port out of range
+        "sand box.pamdas.org",  # whitespace in the authority
+    ],
+)
 def test_normalize_server_rejects_blank_and_non_http_schemes(bad):
     with pytest.raises(ServerError, match="site name, hostname, or http\\(s\\):// URL"):
         normalize_server(bad)

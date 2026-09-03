@@ -41,10 +41,15 @@ def normalize_server(server: str) -> str:
     parts = urlsplit(server if had_scheme else f"https://{server}")
     scheme = parts.scheme.lower()
     netloc = parts.netloc.lower()
-    if scheme not in ("http", "https") or not netloc:
-        raise ServerError(
-            f"invalid server {server!r}: use a site name, hostname, or http(s):// URL"
-        )
+    invalid = ServerError(
+        f"invalid server {server!r}: use a site name, hostname, or http(s):// URL"
+    )
+    if scheme not in ("http", "https") or not netloc or any(c.isspace() for c in netloc):
+        raise invalid
+    try:
+        parts.port  # noqa: B018 — raises ValueError for a non-numeric or out-of-range port
+    except ValueError:
+        raise invalid from None
     if not had_scheme and "." not in netloc and ":" not in netloc:
         netloc = f"{netloc}.pamdas.org"
     return urlunsplit((scheme, netloc, parts.path.rstrip("/"), parts.query, parts.fragment))
