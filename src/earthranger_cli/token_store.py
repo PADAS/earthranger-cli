@@ -39,7 +39,7 @@ def server_host(server: str) -> str:
     try:
         return urlparse(normalize_server(server)).netloc
     except ServerError:
-        return server
+        return str(server)  # str(): a hand-edited non-string must still format in a column
 
 
 def token_file(profile: str) -> Path:

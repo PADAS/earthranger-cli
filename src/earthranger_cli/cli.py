@@ -34,13 +34,8 @@ def _api_errors(f):
     def wrapper(*args, **kwargs):
         try:
             return f(*args, **kwargs)
-        except ERClientBadCredentials as e:
-            click.echo(f"error: {_bad_credentials_message(e)}")
-            sys.exit(1)
         except ERClientException as e:
-            # erclient's write path (POST/PATCH) reports a 401 as a plain
-            # ERClientException with status_code set, not the subclass
-            if getattr(e, "status_code", None) == 401:
+            if _is_unauthorized(e):
                 click.echo(f"error: {_bad_credentials_message(e)}")
             else:
                 click.echo(f"error: {_describe(e)}")
@@ -52,7 +47,11 @@ def _api_errors(f):
             config_store.ConfigError,
             requests.exceptions.RequestException,
         ) as e:
-            click.echo(f"error: {e}")
+            # apply/pull wrap the failing erclient call (`raise ... from e`) to
+            # name what they were doing; a 401 underneath still deserves the
+            # credential remedy
+            remedy = _credential_remedy() if _is_unauthorized(e.__cause__) else ""
+            click.echo(f"error: {e} — {remedy}" if remedy else f"error: {e}")
             sys.exit(1)
 
     return wrapper
@@ -67,25 +66,37 @@ def _describe(e: ERClientException) -> str:
     return msg
 
 
+def _is_unauthorized(e: BaseException | None) -> bool:
+    """A 401 from erclient: the subclass on reads, or (from its write path)
+    a plain ERClientException carrying status_code=401."""
+    return isinstance(e, ERClientBadCredentials) or getattr(e, "status_code", None) == 401
+
+
+def _credential_remedy() -> str:
+    """Which credential this invocation used, and how to fix it; "" if unknown."""
+    ctx = click.get_current_context(silent=True)
+    obj = (ctx.obj if ctx is not None else None) or {}
+    if obj.get("token"):
+        return "check --token / ER_TOKEN."
+    if obj.get("password"):
+        return "check --username / --password."
+    name = obj.get("profile")
+    if name:
+        return (
+            f"the credential stored on profile {name!r} is expired or revoked; "
+            "run 'er auth login' (or 'er auth login --token')."
+        )
+    return ""
+
+
 def _bad_credentials_message(e: ERClientException) -> str:
     """A 401 mid-command: say which credential the server refused and how to fix it.
 
     A static token can't be checked up front (erclient treats it as valid
     until 2099), so this is where a revoked or expired one first shows up.
     """
-    ctx = click.get_current_context(silent=True)
-    obj = (ctx.obj if ctx is not None else None) or {}
-    if obj.get("token"):
-        return f"credentials rejected ({e}) — check --token / ER_TOKEN."
-    if obj.get("password"):
-        return f"credentials rejected ({e}) — check --username / --password."
-    name = obj.get("profile")
-    if name:
-        return (
-            f"credentials rejected ({e}) — the credential stored on profile {name!r} is "
-            "expired or revoked; run 'er auth login' (or 'er auth login --token')."
-        )
-    return f"credentials rejected ({e})."
+    remedy = _credential_remedy()
+    return f"credentials rejected ({e}) — {remedy}" if remedy else f"credentials rejected ({e})."
 
 
 def connection_options(f):

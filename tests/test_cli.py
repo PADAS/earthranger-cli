@@ -1625,3 +1625,29 @@ def test_connect_non_string_stored_server_falls_through(monkeypatch):
     result = _run(["--server", "sandbox", "events", "list", "categories"], input="pw\n")
     assert result.exit_code == 0, result.output
     assert captured == {"server": "sandbox", "password": "pw"}
+
+
+def test_apply_401_keeps_the_credential_hint(fake):
+    from erclient.er_errors import ERClientBadCredentials
+
+    def unauthorized(event_type, version="v1.0"):
+        raise ERClientBadCredentials("Invalid token.")
+
+    fake.post_event_type = unauthorized
+    result = _run(["--server", "sandbox", "--token", "bad", "events", "apply", "spec.yaml"])
+    assert result.exit_code == 1
+    assert "Invalid token." in result.output  # apply's own description of the failed write
+    assert "— check --token / ER_TOKEN." in result.output
+
+
+def test_profile_list_survives_non_string_stored_server():
+    import json
+
+    config_store.add_profile("dev", server="sandbox")
+    path = config_store.config_file()
+    cfg = json.loads(path.read_text())
+    cfg["profiles"]["dev"]["server"] = ["sandbox"]
+    path.write_text(json.dumps(cfg))
+    result = _run(["profile", "list"])
+    assert result.exit_code == 0, result.output
+    assert "['sandbox']" in result.output
