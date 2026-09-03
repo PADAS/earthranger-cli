@@ -10,6 +10,8 @@ shared Choice records, then idempotently creates what's missing and
 patches what changed. Nothing is ever deleted — removal means
 `is_active: false`.
 
+<img width="1190" height="582" alt="er-cli-demo" src="https://github.com/user-attachments/assets/8ec645fb-80ce-4206-8dc0-f6509bb36aa8" />
+
 ## Install
 
 ```bash
