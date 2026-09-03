@@ -599,10 +599,15 @@ def profile_add(name, p_server, p_username):
         if existing is not None:
             # identity is decided from the profiles alone: an existing token
             # file that merely fails to parse right now must still be cleared
-            same_identity = (
-                normalize_server(existing.get("server") or "") == (normalize_server(p_server))
-                and existing.get("username") == p_username
-            )
+            try:
+                same_server = normalize_server(existing.get("server") or "") == normalize_server(
+                    p_server
+                )
+            except ServerError:
+                # a junk/legacy stored server can't be the same identity; the
+                # overwrite is exactly how the user repairs it
+                same_server = False
+            same_identity = same_server and existing.get("username") == p_username
             if not same_identity and token_store.delete_token(name):
                 click.echo(
                     f"Cleared cached session for profile {name!r} (identity changed); "

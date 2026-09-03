@@ -1453,3 +1453,24 @@ def test_profile_set_server_rejects_bad_value_and_keeps_session(monkeypatch):
     assert "error: invalid server 'ftp://host'" in result.output
     assert config_store.get_profile("dev")["server"] == "sandbox"
     assert token_store.load_token("dev") is not None
+
+
+def test_profile_add_overwrites_profile_with_junk_stored_server():
+    # written by hand or by an older version: normalize_server() rejects it now
+    config_store.add_profile("dev", server="ftp://junk", username="chris")
+    token_store.save_token("dev", AUTH, FUTURE, "chris")
+    result = _run(["profile", "add", "dev", "--server", "sandbox", "--username", "chris"])
+    assert result.exit_code == 0, result.output
+    assert config_store.get_profile("dev")["server"] == "sandbox"
+    assert token_store.load_token("dev") is None  # identity changed: session cleared
+    assert "Cleared cached session for profile 'dev'" in result.output
+
+
+def test_profile_list_and_show_survive_junk_stored_server():
+    config_store.add_profile("dev", server="ftp://junk")
+    result = _run(["profile", "list"])
+    assert result.exit_code == 0, result.output
+    assert "ftp://junk" in result.output
+    result = _run(["profile", "show", "dev"])
+    assert result.exit_code == 0, result.output
+    assert "host:      ftp://junk" in result.output
