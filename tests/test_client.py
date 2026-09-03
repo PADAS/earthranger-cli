@@ -116,6 +116,10 @@ def test_make_static_token_client_preloads_bearer_and_never_refreshes():
         ("https://er.example.org/api/v1.0/", "https://er.example.org/api/v1.0"),  # path kept
         ("https://ER.Example.org/Api/V1.0", "https://er.example.org/Api/V1.0"),  # path case kept
         ("Sandbox", "https://sandbox.pamdas.org"),
+        ("sandbox/api", "https://sandbox.pamdas.org/api"),  # suffix goes on the host, not the path
+        ("https://host?Token=ABC", "https://host?Token=ABC"),  # query kept, not lower-cased
+        ("https://Host/p?Q=1#F", "https://host/p?Q=1#F"),
+        ("https://host", "https://host"),  # explicit scheme: no shorthand
     ],
 )
 def test_normalize_server_accepts_site_name_hostname_or_url(given, expected):

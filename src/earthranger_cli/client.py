@@ -6,6 +6,8 @@ erclient has no first-class choices methods; we use its generic path methods
 
 from __future__ import annotations
 
+from urllib.parse import urlsplit, urlunsplit
+
 from erclient.client import ERClient
 from erclient.er_errors import ERClientException
 
@@ -25,7 +27,8 @@ def normalize_server(server: str) -> str:
     Only a single DNS label gets the `.pamdas.org` shorthand; anything with a
     dot or a port is already a host, so appending the suffix would mangle it
     (`sandbox.pamdas.org` -> `sandbox.pamdas.org.pamdas.org`). A URL's path is
-    kept (ERClient strips `/api...` itself); a trailing slash is removed.
+    kept (ERClient strips `/api...` itself), as are any query and fragment; a
+    trailing slash is removed.
 
     The result is canonical enough to compare for identity (profile <-> flag,
     cached session <-> server): scheme and host[:port] are lower-cased, the
@@ -34,23 +37,17 @@ def normalize_server(server: str) -> str:
     server = server.strip()
     if not server:
         raise ServerError("server is required: a site name, hostname, or http(s):// URL")
-    invalid = ServerError(
-        f"invalid server {server!r}: use a site name, hostname, or http(s):// URL"
-    )
-    scheme, sep, rest = server.partition("://")
-    if sep:
-        scheme = scheme.lower()
-        if scheme not in ("http", "https"):
-            raise invalid
-    else:
-        scheme, rest = "https", server
-    rest = rest.strip().rstrip("/")
-    if not sep and rest and "." not in rest and ":" not in rest:
-        rest = f"{rest}.pamdas.org"
-    host, slash, path = rest.partition("/")
-    if not host:
-        raise invalid
-    return f"{scheme}://{host.lower()}{slash}{path}"
+    had_scheme = "://" in server
+    parts = urlsplit(server if had_scheme else f"https://{server}")
+    scheme = parts.scheme.lower()
+    netloc = parts.netloc.lower()
+    if scheme not in ("http", "https") or not netloc:
+        raise ServerError(
+            f"invalid server {server!r}: use a site name, hostname, or http(s):// URL"
+        )
+    if not had_scheme and "." not in netloc and ":" not in netloc:
+        netloc = f"{netloc}.pamdas.org"
+    return urlunsplit((scheme, netloc, parts.path.rstrip("/"), parts.query, parts.fragment))
 
 
 def make_client(*, server: str, username: str, password: str) -> ERClient:
