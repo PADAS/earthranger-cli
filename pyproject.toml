@@ -1,6 +1,6 @@
 [project]
 name = "earthranger-cli"
-version = "0.1.0"
+dynamic = ["version"]
 description = "CLI for creating and editing EarthRanger event categories, choices, and v2 event types, and posting events."
 requires-python = ">=3.11"
 license = "Apache-2.0"
@@ -34,6 +34,9 @@ dev = ["pytest>=8.0", "ruff>=0.4"]
 
 [project.scripts]
 er = "earthranger_cli.cli:main"
+
+[tool.hatch.version]
+path = "src/earthranger_cli/__init__.py"
 
 [build-system]
 requires = ["hatchling"]
