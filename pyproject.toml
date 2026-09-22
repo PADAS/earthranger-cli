@@ -3,11 +3,31 @@ name = "earthranger-cli"
 version = "0.1.0"
 description = "CLI for creating and editing EarthRanger event categories, choices, and v2 event types, and posting events."
 requires-python = ">=3.11"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+readme = "README.md"
+authors = [{ name = "Chris Doehring", email = "chrisdo@allenai.org" }]
+keywords = ["earthranger", "cli", "conservation"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Utilities",
+]
 dependencies = [
     "earthranger-client>=1.16.0",
     "click>=8.1",
     "pyyaml>=6.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/PADAS/earthranger-cli"
+Repository = "https://github.com/PADAS/earthranger-cli"
+Issues = "https://github.com/PADAS/earthranger-cli/issues"
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "ruff>=0.4"]

@@ -1,0 +1,108 @@
+category:
+  value: olmoearth
+  display: OlmoEarth
+event_types:
+- value: olmoearth_detection
+  readonly: true
+  display: OlmoEarth Detection
+  default_state: active
+  geometry_type: polygon
+  ordernum: 9
+  fields:
+  - key: olmoearth_link
+    label: OlmoEarth Link
+    type: url
+    description: Visit in OlmoEarth
+  - key: oe_start_time
+    label: OlmoEarth Start Time
+    type: datetime
+  - key: oe_end_time
+    label: OlmoEarth End Time
+    type: datetime
+  - key: oe_prediction_result_id
+    label: OlmoEarth Prediction Result ID
+    type: string
+  - key: oe_prediction_result_file_id
+    label: OlmoEarth Prediction Result File ID
+    type: string
+  - key: oe_created_at
+    label: OlmoEarth Prediction Created At
+    type: datetime
+  - key: class_id
+    label: OlmoEarth Class ID
+    type: number
+  - key: change_outcome
+    label: OlmoEarth Change Outcome
+    type: string
+  - key: area_sq_km
+    label: Area (km^2)
+    type: number
+- value: olmoearth_deforestation
+  readonly: true
+  display: OlmoEarth Deforestation
+  icon_id: deforestation_rep
+  default_state: active
+  geometry_type: polygon
+  ordernum: 9
+  fields:
+  - key: olmoearth_link
+    label: OlmoEarth Link
+    type: url
+    description: Visit in OlmoEarth
+  - key: confidence
+    label: Confidence
+    type: number
+    min: 0.0
+    max: 1.0
+    description: This is a measure of OlmoEarth's confidence the detection is accurate.
+  - key: oe_start_time
+    label: OlmoEarth Start Time
+    type: datetime
+  - key: oe_end_time
+    label: OlmoEarth End Time
+    type: datetime
+  - key: oe_prediction_result_id
+    label: OlmoEarth Prediction Result ID
+    type: string
+  - key: oe_prediction_result_file_id
+    label: OlmoEarth Prediction Result File ID
+    type: string
+  - key: oe_created_at
+    label: OlmoEarth Prediction Created At
+    type: datetime
+  - key: class_id
+    label: OlmoEarth Class ID
+    type: number
+  - key: change_outcome
+    label: OlmoEarth Change Outcome
+    type: string
+  - key: area_sq_km
+    label: Area (km^2)
+    type: number
+- value: olmoearth_mining
+  readonly: true
+  display: OlmoEarth Mining Detection
+  icon_id: mining_rep
+  default_state: active
+  geometry_type: polygon
+  ordernum: 9
+  fields:
+  - key: olmoearth_link
+    label: OlmoEarth Link
+    type: url
+    description: Visit in OlmoEarth
+  - key: confidence
+    label: Confidence
+    type: number
+    min: 0.0
+    max: 1.0
+    description: This is a measure of OlmoEarth's confidence the detection is accurate.
+  - key: oe_start_time
+    label: OlmoEarth Start Time
+    type: datetime
+  - key: oe_end_time
+    label: OlmoEarth End Time
+    type: datetime
+  - key: oe_prediction_result_id
+    label: OlmoEarth Prediction Result Id
+    type: datetime

@@ -1,0 +1,780 @@
+category:
+  value: monitoring
+  display: Monitoring
+choices:
+  hwcrep_cropdamaged:
+  - banana
+  - beans
+  - cassava
+  - cotton
+  - maize
+  - mango
+  - peas
+  - potato
+  - rice
+  - sorghum
+  - tobacco
+  - other
+  - none
+  hwcrep_propertydamagetype:
+  - fence
+  - value: foodstorage
+    display: Food Storage
+  - house
+  - value: otherstructure
+    display: Other Structure
+  - garage_collapse
+  yesno:
+  - 'yes'
+  - 'no'
+  hwcrep_species:
+  - value: baboon
+    display: Baboon
+    icon: baboon_rep
+  - buffalo
+  - elephant
+  - hyena
+  - lion
+  - leopard
+  - warthog
+  hwcrep_livestocktypes:
+  - chicken
+  - cow
+  - dog
+  - duck
+  - goat
+  - pig
+  - sheep
+  - other
+event_types:
+- value: fire_extent
+  display: Fire Extent
+  default_state: active
+  auto_resolve: true
+  resolve_time: 48
+  ordernum: 0.5
+  sections:
+  - label: ''
+    fields:
+    - key: Bush_Fire_Title
+      label: Bush Fire Title
+      type: string
+    - key: Cause
+      label: Cause
+      type: select
+      choices_field: fire_cause
+      options:
+      - natural
+      - value: manmade
+        display: Man Made
+  - label: Arson Incident
+    condition:
+      field: Cause
+      operator: is_exactly
+      value: manmade
+    fields:
+    - key: Investigator
+      label: 'Investigator '
+      type: string
+    - key: Incident_Report
+      label: Incident Report
+      type: textarea
+  - label: ''
+    fields:
+    - key: Demo1
+      label: Demo1
+      type: collection
+      item_name: demo
+      button_text: button1
+      fields:
+      - key: Text_1
+        label: Text 1
+        type: string
+      - key: Text_2
+        label: Text 2
+        type: string
+  required:
+  - Investigator
+- value: crop_damage
+  display: Crop Damage
+  icon_id: land_clearance_rep
+  default_state: active
+  geometry_type: polygon
+  ordernum: 9
+  layout:
+    label: ''
+    columns: 2
+  fields:
+  - key: hwcrep_cropdamaged
+    label: Type of Crop Damage
+    type: select
+    choices_field: hwcrep_cropdamaged
+  - key: hwcrep_propertydamagetype
+    label: Property Damage
+    type: select
+    choices_field: hwcrep_propertydamagetype
+  - key: hwcrep_propertydamage
+    label: Property Damage
+    type: select
+    choices_field: yesno
+    column: right
+- value: datetypes
+  display: Demo Date Types
+  icon_id: datetypes
+  default_state: active
+  ordernum: 11
+  layout:
+    label: ''
+    columns: 1
+  fields:
+  - key: format_through_definition
+    label: Format through definition
+    type: datetime
+  - key: format_through_properties
+    label: Format through properties
+    type: datetime
+- value: ebird
+  display: eBird
+  icon_id: ebird_rep
+  default_priority: green
+  default_state: active
+  readonly: true
+  ordernum: 12
+  sections:
+  - label: ''
+    fields:
+    - key: common_name
+      label: Common Name
+      type: string
+    - key: scientific_name
+      label: Scientific Name
+      type: string
+    - key: species_code
+      label: Species Code
+      type: string
+    - key: location_name
+      label: Location
+      type: string
+    - key: quantity
+      label: Quantity
+      type: number
+    - key: reviewed
+      label: Reviewed
+      type: string
+    - key: submission_id
+      label: Submission Id
+      type: string
+    - key: attribution
+      label: Attribution
+      type: string
+    - key: valid
+      label: Valid
+      type: string
+  - label: ''
+    active: false
+    fields:
+    - key: location_id
+      label: Location ID
+      active: false
+      type: string
+    - key: location_private
+      label: Location Private
+      active: false
+      type: number
+- value: fire_rep
+  display: Fire
+  icon_id: fire_rep
+  default_priority: red
+  default_state: active
+  ordernum: 15
+  layout:
+    label: ''
+    columns: 2
+  fields:
+  - key: firerep_status
+    label: Status
+    type: select
+    choices_field: firerep_status
+    options:
+    - active
+    - inactive
+  - key: firerep_direction
+    label: Direction Fire is Moving
+    type: select
+    choices_field: firerep_direction
+    options:
+    - north
+    - northeast
+    - east
+    - southeast
+    - south
+    - southwest
+    - west
+    - northwest
+  - key: firerep_cause
+    label: Cause
+    type: select
+    choices_field: firerep_cause
+    options:
+    - accident
+    - arson
+    - value: controlburn
+      display: Control Burn
+    - value: firebreak
+      display: Fire Break
+    - lightning
+    - other
+    column: right
+  required:
+  - firerep_status
+  - firerep_direction
+- value: gear_sighting
+  display: Gear Sighting
+  icon_id: fishing_rep
+  default_priority: green
+  default_state: active
+  ordernum: 19
+  layout:
+    label: ''
+    columns: 1
+  fields:
+  - key: gear_type
+    label: Gear Type
+    type: string
+  - key: description
+    label: Description
+    type: string
+- value: hwc_coexist
+  display: Human Wildlife Coexistance
+  icon_id: human_wildlife_conflict_rep
+  default_state: active
+  geometry_type: polygon
+  ordernum: 23
+  layout:
+    label: ''
+    columns: 2
+  fields:
+  - key: hwcrep_species
+    label: Species
+    type: select
+    choices_field: hwcrep_species
+  - key: hwcrep_livestocktypes
+    label: Type of livestock injured/killed
+    type: select
+    choices_field: hwcrep_livestocktypes
+  - key: hwcrep_humaninjury
+    label: Human Injury
+    type: select
+    choices_field: yesno
+  - key: hwcrep_propertydamage
+    label: Property Damage
+    type: select
+    choices_field: yesno
+  - key: hwcrep_cropdamaged
+    label: Type of Crop Damage
+    type: select
+    choices_field: hwcrep_cropdamaged
+    column: right
+  - key: hwcrep_livestockInjuredKilled
+    label: Number of livestock injured/killed
+    type: number
+    min: 0
+    column: right
+  - key: hwcrep_humandeath
+    label: Human Death
+    type: select
+    choices_field: yesno
+    column: right
+  - key: hwcrep_propertydamagetype
+    label: Property Damage
+    type: select
+    choices_field: hwcrep_propertydamagetype
+    column: right
+  required:
+  - hwcrep_species
+- value: hwc_rep
+  display: Human Wildlife Contact
+  icon_id: hwc_rep
+  default_priority: red
+  default_state: active
+  ordernum: 24
+  layout:
+    label: ''
+    columns: 2
+  fields:
+  - key: hwcrep_species
+    label: Species
+    type: select
+    choices_field: hwcrep_species
+  - key: hwcrep_livestocktypes
+    label: Type of livestock injured/killed
+    type: select
+    choices_field: hwcrep_livestocktypes
+  - key: hwcrep_humaninjury
+    label: Human Injury
+    type: select
+    choices_field: yesno
+  - key: hwcrep_propertydamage
+    label: Property Damage
+    type: select
+    choices_field: yesno
+  - key: hwcrep_cropdamaged
+    label: Type of Crop Damage
+    type: select
+    choices_field: hwcrep_cropdamaged
+    column: right
+  - key: hwcrep_livestockInjuredKilled
+    label: Number of livestock injured/killed
+    type: number
+    min: 0
+    column: right
+  - key: hwcrep_humandeath
+    label: Human Death
+    type: select
+    choices_field: yesno
+    column: right
+  - key: hwcrep_propertydamagetype
+    label: Property Damage
+    type: select
+    choices_field: hwcrep_propertydamagetype
+    column: right
+  required:
+  - hwcrep_species
+- value: hydrophone_detection
+  display: Hydrophone Detection
+  icon_id: acoustic_sensor_rep
+  default_state: active
+  readonly: true
+  ordernum: 25
+  layout:
+    label: ''
+    columns: 2
+  fields:
+  - key: what_detected
+    label: Detected
+    type: string
+  - key: est_distance
+    label: Est. Distance (km)
+    type: number
+  - key: certainty
+    label: Certainty
+    type: number
+    column: right
+  - key: est_bearing
+    label: Est. Bearing
+    type: number
+    column: right
+- value: inaturalist
+  display: iNaturalist
+  icon_id: inaturalist_rep
+  default_priority: green
+  default_state: active
+  readonly: true
+  ordernum: 29
+  sections:
+  - label: ''
+    fields:
+    - key: captive
+      label: Captive
+      type: string
+    - key: inat_id
+      label: iNat Observation Id
+      type: number
+    - key: inat_url
+      label: iNaturalist URL
+      type: string
+    - key: location_obscured
+      label: Location Obscured
+      type: string
+    - key: place_guess
+      label: Place Guess
+      type: string
+    - key: quality_grade
+      label: Quality Grade
+      type: string
+    - key: taxon_common_name
+      label: Taxon Common Name
+      type: string
+    - key: taxon_name
+      label: Taxon Name
+      type: string
+    - key: taxon_conservation_status
+      label: Taxon Conservation Status
+      type: string
+    - key: taxon_rank
+      label: Taxon Rank
+      type: string
+    - key: taxon_wikipedia_url
+      label: Taxon Wikipedia Url
+      type: string
+    - key: updated_at
+      label: Updated At
+      type: string
+    - key: user_name
+      label: User Name
+      type: string
+  - label: ''
+    active: false
+    fields:
+    - key: created_at
+      label: Created At
+      active: false
+      type: string
+    - key: species_guess
+      label: Species Guess
+      active: false
+      type: string
+    - key: user_id
+      label: User Id
+      active: false
+      type: number
+    - key: place_ids
+      label: Place Ids
+      active: false
+      type: string
+    - key: taxon_id
+      label: Taxon Id
+      active: false
+      type: number
+    - key: taxon_ancestors
+      label: Taxon Ancestors
+      active: false
+      type: string
+- value: injured_animal_rep
+  display: Injured Animal
+  icon_id: injured_animal_rep
+  default_priority: red
+  default_state: active
+  ordernum: 31
+  layout:
+    label: ''
+    columns: 2
+  fields:
+  - key: injuredanimalrep_keyspecies
+    label: Species
+    type: select
+    choices_field: injuredanimalrep_keyspecies
+    options:
+    - elephant
+    - giraffe
+    - leopard
+    - lion
+    - rhino
+    - other
+    - impala
+  - key: injuredanimalrep_injurytype
+    label: Type of Injury
+    type: select
+    choices_field: injuredanimalrep_injurytype
+    options:
+    - snare
+    - shot
+    - natural
+    - other
+  - key: injuredanimalrep_injurycause
+    label: Cause of Injury
+    type: select
+    choices_field: injuredanimalrep_injurycause
+    options:
+    - natural
+    - human
+    column: right
+  - key: injuredanimalrep_actiontaken
+    label: Action Taken
+    type: select
+    choices_field: injuredanimalrep_actiontaken
+    options:
+    - destroyed
+    - treated
+    - none
+    column: right
+  required:
+  - injuredanimalrep_keyspecies
+  - injuredanimalrep_injurytype
+  - injuredanimalrep_actiontaken
+- value: invasive_species_rep
+  display: Invasive Species
+  icon_id: invasive_species_rep
+  default_priority: green
+  default_state: active
+  geometry_type: polygon
+  ordernum: 32
+  sections:
+  - label: ''
+    columns: 2
+    fields:
+    - key: invasivespeciesrep_species
+      label: Species
+      type: select
+      choices_field: invasivespeciesrep_species
+      options:
+      - cactus
+      - chromoleana
+      - eucalyptus
+      - gum
+      - lantana
+      - opuntia
+      - parthenium
+      - pistia
+      - tithonia
+      - wattle
+      - other
+    - key: invasivespecies_urgency
+      label: Urgency
+      type: select
+      choices_field: invsv_spcs_rp_invsvspcs_urgncy
+      options:
+      - <
+      - '>'
+      - '='
+      - unknown
+      - other
+      - value: test
+        display: test
+    - key: invasivespeciesrep_phenologicalstate
+      label: Phenological State
+      type: select
+      choices_field: invsv_spcs_rp_invsvspcsrp_phnlgclstt
+      options:
+      - vegetative
+      - flowering
+      - value: seedingfruiting
+        display: Seeding/Fruiting
+      - value: Im inactive
+        display: Im inactive
+      column: right
+  - label: ''
+    fields:
+    - key: invasivespecies_chemical
+      label: Chemical
+      type: textarea
+  - label: ''
+    columns: 2
+    fields:
+    - key: invasivespecies_amount
+      label: Chemical Used (L)
+      type: number
+  required:
+  - invasivespeciesrep_species
+- value: key_marine_species_sighting
+  display: Key Marine Species Sighting
+  icon_id: shark_sighting
+  default_priority: green
+  default_state: active
+  ordernum: 33
+  layout:
+    label: ''
+    columns: 2
+  fields:
+  - key: marinesighting_species
+    label: Species
+    type: select
+    choices_field: marinesighting_species
+    options:
+    - Dugong
+    - value: Shark-Basking
+      display: Shark - Basking
+    - value: Shark-Brown_Shyshark
+      display: Shark - Brown Shyshark
+    - value: Shark-Daggernose
+      display: Shark - Daggernose
+    - value: Shark-Dusky
+      display: Shark - Dusky
+    - value: Shark-Ganges
+      display: Shark - Ganges
+    - value: Shark-Northern_River
+      display: Shark - Northern River
+    - value: Shark-Pondicherry
+      display: Shark - Pondicherry
+    - value: Shark-Porbeagle
+      display: Shark - Porbeagle
+    - value: Shark-Sand_Tiger
+      display: Shark - Sand Tiger
+    - value: Shark-Sawback_Angel
+      display: Shark - Sawback Angel
+    - value: Shark-Scalloped_Hammerhead
+      display: Shark - Scalloped Hammerhead
+    - value: Shark-Smoothback_Angel
+      display: Shark - Smoothback Angel
+    - value: Shark-Striped_Smooth-hound
+      display: Shark - Striped Smooth-hound
+    - value: Shark-Whale
+      display: Shark - Whale
+    - value: Shark-White
+      display: Shark - White
+    - value: Turtle-Green_Sea
+      display: Turtle - Green Sea
+    - value: Turtle-Leatherback
+      display: Turtle - Leatherback
+    - dolphin
+  - key: marinesighting_activity
+    label: Activity
+    type: select
+    choices_field: marinesighting_activity
+    options:
+    - breeding
+    - feeding
+    - travelling
+  - key: marinesighting_numberanimals
+    label: Count
+    type: number
+    min: 0
+    column: right
+  - key: marinesighting_bearing
+    label: Bearing
+    type: number
+    min: 0
+    max: 360
+    column: right
+  required:
+  - marinesighting_species
+  - marinesighting_numberanimals
+- value: oil_slick
+  display: Oil Slick
+  icon_id: water_rep
+  default_priority: green
+  default_state: active
+  ordernum: 41
+  layout:
+    label: ''
+    columns: 1
+  fields:
+  - key: smell
+    label: Smell
+    type: string
+  - key: estimated_size
+    label: Estimated Size
+    type: number
+  - key: color
+    label: Color
+    type: string
+  - key: source
+    label: Source
+    type: string
+- value: patrol_start
+  display: Patrol Start
+  icon_id: patrol_start
+  default_state: active
+  ordernum: 42
+  layout:
+    label: ''
+    columns: 1
+  fields:
+  - key: team_members
+    label: Patrol Team
+    type: select
+    choices_field: patrol_team
+    options:
+    - value: Marco
+      display: Marco Smith
+    - value: gaby
+      display: Gaby Ledesma
+- value: pollution
+  display: Pollution
+  icon_id: illegal_dumping_rep
+  default_priority: green
+  default_state: active
+  ordernum: 45
+  layout:
+    label: ''
+    columns: 1
+  fields:
+  - key: description
+    label: Description
+    type: string
+  - key: estimated_size
+    label: Estimated Size
+    type: string
+  - key: color
+    label: Color
+    type: string
+- value: rainfall_rep
+  display: Rainfall
+  icon_id: rainfall_rep
+  default_priority: green
+  default_state: active
+  ordernum: 48
+  layout:
+    label: ''
+    columns: 2
+  fields:
+  - key: rainfallrep_location
+    label: Location
+    type: string
+  - key: rainfallrep_rainfall
+    label: Rainfall (mm)
+    type: number
+    min: 0
+    column: right
+  required:
+  - rainfallrep_location
+  - rainfallrep_rainfall
+- value: wildlife_sighting_rep
+  display: Wildlife Sighting
+  icon_id: wildlife_sighting_rep
+  default_priority: green
+  default_state: active
+  ordernum: 73
+  layout:
+    label: ''
+    columns: 2
+  fields:
+  - key: wildlifesightingrep_species
+    label: Species
+    type: select
+    choices_field: wldlf_sghtng_rp_wldlfsghtngrp_spcs
+    options:
+    - ant
+    - buffalo
+    - cheetah
+    - chimpanzee
+    - crocodile
+    - eland
+    - elephant
+    - giraffe
+    - gorilla
+    - hippo
+    - hyena
+    - kob
+    - kudu
+    - lechwe
+    - leopard
+    - lion
+    - value: redriverhog
+      display: Red River Hog
+    - rhino
+    - sable
+    - shoebill
+    - topi
+    - tsessebe
+    - warthog
+    - waterbuck
+    - wildebeest
+    - value: wilddog
+      display: Wild Dog
+    - zebra
+    - other
+  - key: wildlifesightingrep_collared
+    label: Are Animals Collared
+    type: select
+    choices_field: yesno
+  - key: wildlifesightingrep_numberanimals
+    label: Count
+    type: number
+    min: 0
+    column: right
+  required:
+  - wildlifesightingrep_species
+  - wildlifesightingrep_numberanimals
+- value: camera
+  display: Camera Trap
+  default_priority: amber
+  default_state: active
+  ordernum: 135
+  layout:
+    label: ''
+    columns: 1
+  fields:
+  - key: placeholder
+    label: Placeholder
+    type: string
