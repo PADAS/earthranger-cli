@@ -14,9 +14,49 @@ patches what changed. Nothing is ever deleted — removal means
 
 ## Install
 
+`earthranger-cli` is published on [PyPI](https://pypi.org/project/earthranger-cli/)
+and requires Python 3.11 or newer. It provides one command, `er`.
+
+The recommended install is as an isolated tool, so `er` lands on your
+`PATH` without touching any project's virtualenv:
+
 ```bash
-uv pip install -e .
+uv tool install earthranger-cli    # or: pipx install earthranger-cli
+er --help
 ```
+
+To upgrade later: `uv tool upgrade earthranger-cli` (or `pipx upgrade earthranger-cli`).
+
+A plain `pip install earthranger-cli` into whatever environment you have
+active also works. To try it once without installing anything:
+
+```bash
+uvx --from earthranger-cli er --help
+```
+
+### From source (development)
+
+Clone the repo and install it in editable mode with the dev extras
+(`pytest`, `ruff`); changes to the source take effect immediately:
+
+```bash
+git clone https://github.com/PADAS/earthranger-cli.git
+cd earthranger-cli
+uv sync --extra dev          # creates .venv with the package installed editable
+uv run er --help             # or: source .venv/bin/activate && er --help
+uv run pytest -q
+```
+
+If you'd rather install editable into an environment you already manage:
+
+```bash
+uv pip install -e ".[dev]"
+```
+
+Releases are cut by pushing a `vX.Y.Z` tag that matches `__version__` in
+`src/earthranger_cli/__init__.py`; the `release` GitHub Actions workflow
+runs the tests, builds with `uv build`, and publishes to PyPI via Trusted
+Publishing.
 
 ## Authenticate
 
