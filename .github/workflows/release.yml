@@ -1,0 +1,107 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+# `id-token: write` is required for PyPI Trusted Publishing (OIDC).
+# `contents: write` is required for the GitHub Release upload step.
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  build-and-publish:
+    # Pinned (not `ubuntu-latest`) so a future GitHub runner refresh can't
+    # silently change the OS/packages under a release pipeline.
+    runs-on: ubuntu-24.04
+    # Pin to a named environment so the PyPI Trusted Publisher config can
+    # be scoped to `pypi` and PRs from forks cannot trigger a release.
+    environment:
+      name: pypi
+      url: https://pypi.org/p/earthranger-cli
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up uv (with a pinned Python)
+        # `python-version` on setup-uv installs the requested CPython AND makes
+        # it the interpreter every subsequent `uv sync` / `uv run` resolves to,
+        # so the release build/tests are reproducible regardless of what
+        # interpreter happens to be first on the runner's PATH.
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+          python-version: "3.11"
+
+      - name: Install dependencies
+        # Dev tools (pytest, ruff) live in the `dev` optional-dependency extra.
+        run: uv sync --extra dev
+
+      - name: Run tests
+        # Gate the release on the test suite passing against the tagged
+        # commit. Without this, a broken tag would still ship to PyPI.
+        run: uv run pytest -q
+
+      - name: Verify tag is a strict release and matches __version__
+        # 1. The trigger glob `v*.*.*` would happily match pre-release tags
+        #    like `v1.2.3-rc1` — the last `*` is greedy. Reject anything
+        #    that isn't strictly vX.Y.Z so a stray pre-release tag can't
+        #    accidentally publish to production PyPI.
+        # 2. Parse __version__ directly from the source file (matching how
+        #    hatchling reads it) instead of importing the package.
+        run: |
+          tag_version="${GITHUB_REF_NAME#v}"
+          if [[ ! "$tag_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Tag '$GITHUB_REF_NAME' is not a strict vX.Y.Z release tag; pre-release/build tags are not allowed by this workflow."
+            exit 1
+          fi
+          pkg_version=$(awk -F'["'"'"']' '/^__version__[[:space:]]*=/ {print $2; exit}' src/earthranger_cli/__init__.py)
+          if [ -z "$pkg_version" ]; then
+            echo "::error::Could not parse __version__ from src/earthranger_cli/__init__.py"
+            exit 1
+          fi
+          if [ "$tag_version" != "$pkg_version" ]; then
+            echo "::error::Tag ($tag_version) and __version__ ($pkg_version) differ"
+            exit 1
+          fi
+          echo "Tag and package both at $pkg_version"
+
+      - name: Build wheel and sdist
+        run: uv build
+
+      - name: Show built artifacts
+        run: ls -la dist/
+
+      - name: Publish to PyPI
+        # Trusted Publisher (OIDC) — no API token. Requires a one-time
+        # config on pypi.org: pypi.org/manage/account/publishing/ →
+        # add a pending trusted publisher for `earthranger-cli` pointing at
+        # PADAS/earthranger-cli, workflow `release.yml`, environment `pypi`.
+        # skip-existing makes a re-run of the workflow (e.g. after a
+        # transient failure later in the job) safe — PyPI rejects
+        # re-uploading the same version, and without this flag the action
+        # would surface that rejection as a hard error.
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          skip-existing: true
+
+      - name: Create or update GitHub Release
+        # Idempotent: on a re-run, the release for this tag already exists;
+        # `gh release create` would fail. Detect that case and upload (with
+        # --clobber to overwrite) instead of trying to recreate.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            echo "Release $GITHUB_REF_NAME already exists; uploading artifacts to it."
+            gh release upload "$GITHUB_REF_NAME" dist/* --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" \
+              --title "$GITHUB_REF_NAME" \
+              --generate-notes \
+              dist/*
+          fi
