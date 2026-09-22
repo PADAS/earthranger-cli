@@ -6,7 +6,7 @@ requires-python = ">=3.11"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
 readme = "README.md"
-authors = [{ name = "Chris Doehring", email = "chrisdo@allenai.org" }]
+authors = [{ name = "Chris Doehring", email = "chrisdo@earthranger.com" }]
 keywords = ["earthranger", "cli", "conservation"]
 classifiers = [
     "Development Status :: 3 - Alpha",
