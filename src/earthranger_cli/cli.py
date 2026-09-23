@@ -31,6 +31,7 @@ from .events import (
     parse_field_args,
     post_events,
 )
+from .output import emit
 from .pull import PullError, pull_category, render_spec_yaml
 
 
@@ -393,14 +394,29 @@ def list_group():
     """List objects on the server."""
 
 
+def json_output_options(f):
+    """Opt-in agent output for the older read commands: --json switches to the
+    {records, meta} contract; -o implies --json and writes the document to a file."""
+    f = click.option(
+        "-o", "--output", type=click.Path(dir_okay=False), help="Write JSON here (implies --json)."
+    )(f)
+    f = click.option("--json", "json_", is_flag=True, help="Emit {records, meta} JSON.")(f)
+    return f
+
+
 @list_group.command("categories")
 @connection_options
+@json_output_options
 @click.pass_context
 @_api_errors
-def list_categories(ctx):
+def list_categories(ctx, json_, output):
     """List event categories (inactive included)."""
     client = _connect(ctx)
-    for c in client.get_event_categories(include_inactive=True):
+    categories = list(client.get_event_categories(include_inactive=True))
+    if json_ or output:
+        emit(categories, {"total": len(categories), "pages": 1}, output)
+        return
+    for c in categories:
         active = "" if c.get("is_active", True) else "  (inactive)"
         click.echo(f"{c.get('value'):<40} {c.get('display')}{active}")
 
@@ -413,17 +429,25 @@ def _category_value_of(event_type: dict):
 @list_group.command("event-types")
 @connection_options
 @click.option("--category", help="Filter by category value.")
+@json_output_options
 @click.pass_context
 @_api_errors
-def list_event_types(ctx, category):
+def list_event_types(ctx, category, json_, output):
     """List event types (inactive included)."""
     client = _connect(ctx)
-    for t in client.get_event_types(include_inactive=True, version="v2.0"):
-        cat_value = _category_value_of(t)
-        if category and cat_value != category:
-            continue
+    types = [
+        t
+        for t in client.get_event_types(include_inactive=True, version="v2.0")
+        if not category or _category_value_of(t) == category
+    ]
+    if json_ or output:
+        emit(types, {"total": len(types), "pages": 1}, output)
+        return
+    for t in types:
         active = "" if t.get("is_active", True) else "  (inactive)"
-        click.echo(f"{t.get('value'):<40} {t.get('display'):<40} {cat_value}{active}")
+        click.echo(
+            f"{t.get('value'):<40} {t.get('display'):<40} {_category_value_of(t)}{active}"
+        )
 
 
 @events_group.group("show")
@@ -434,9 +458,10 @@ def show_group():
 @show_group.command("event-type")
 @connection_options
 @click.argument("value")
+@json_output_options
 @click.pass_context
 @_api_errors
-def show_event_type(ctx, value):
+def show_event_type(ctx, value, json_, output):
     """Print the full v2 event type JSON plus its referenced Choice records."""
     client = _connect(ctx)
     types = client.get_event_types(include_inactive=True, include_schema=True, version="v2.0")
@@ -446,7 +471,11 @@ def show_event_type(ctx, value):
         sys.exit(1)
     fields = extract_choice_fields(normalize_v2_schema(et.get("schema") or {}))
     choices = {f: er.get_choices(client, f) for f in fields}
-    click.echo(json.dumps({"event_type": et, "choices": choices}, indent=2))
+    doc = {"event_type": et, "choices": choices}
+    if json_ or output:
+        emit([doc], {"total": 1, "pages": 1}, output)
+        return
+    click.echo(json.dumps(doc, indent=2))
 
 
 @main.group("auth")
