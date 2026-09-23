@@ -19,8 +19,7 @@ class FakeER:
         self.auth = None  # token dict, set by token_store.apply_to_client
         self.auth_expires = None
         self.me = {"username": "chris", "id": "user-1"}
-        # path (or absolute next-URL) -> canned response, or a list of responses
-        # consumed in order (so a path requested twice can page)
+        # path (or absolute next-URL) -> the literal response body erclient._get would return
         self.responses: dict = {}
 
     def auth_headers(self):
@@ -67,15 +66,7 @@ class FakeER:
             return self.me
         if path in self.responses:
             self.calls.append(("_get", path, params, base_url, max_retries))
-            canned = self.responses[path]
-            # A singleton list is one queued page envelope to unwrap (used to
-            # script a first page whose `next` is followed via a separate,
-            # absolute-URL key). Any other list — including [] — is the
-            # literal raw response body (e.g. a bare-array endpoint like
-            # /regions), returned whole rather than consumed item by item.
-            if isinstance(canned, list) and len(canned) == 1:
-                return canned.pop(0)
-            return canned
+            return self.responses[path]
         self.calls.append(("_get", path, params))
         field = (params or {}).get("field")
         if field is None:

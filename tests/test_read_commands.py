@@ -44,9 +44,9 @@ def test_help_shows_the_endpoint():
 
 
 def test_list_paginates_and_emits_records_meta(fake):
-    fake.responses["subjects"] = [
-        {"count": 3, "next": "https://fake/api/v1.0/subjects/?page=2", "results": [{"id": "a"}, {"id": "b"}]}
-    ]
+    fake.responses["subjects"] = {
+        "count": 3, "next": "https://fake/api/v1.0/subjects/?page=2", "results": [{"id": "a"}, {"id": "b"}]
+    }
     fake.responses["https://fake/api/v1.0/subjects/?page=2"] = {
         "count": 3, "next": None, "results": [{"id": "c"}]
     }
