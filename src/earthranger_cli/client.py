@@ -11,6 +11,8 @@ from urllib.parse import urlsplit, urlunsplit
 from erclient.client import ERClient
 from erclient.er_errors import ERClientException
 
+from .read import follow_pages
+
 DEFAULT_CLIENT_ID = "das_web_client"
 CHOICES_PATH = "choices"
 CHOICE_MODEL = "activity.event"
@@ -149,20 +151,9 @@ def get_all_choices(client) -> list[dict]:
 
 
 def _collect_pages(client, page) -> list[dict]:
-    results: list[dict] = []
-    while True:
-        if isinstance(page, dict) and "results" in page:
-            results.extend(page["results"])
-            next_url = page.get("next")
-            if not next_url:
-                break
-            page = client._get(next_url, max_retries=0)
-        elif isinstance(page, list):
-            results.extend(page)
-            break
-        else:
-            break
-    return results
+    """All records reachable from `page` (the first response) by following `next`."""
+    records, _pages, _count = follow_pages(client, page)
+    return records
 
 
 def post_choice(client, payload: dict) -> dict:
