@@ -96,3 +96,13 @@ def test_fetch_meta_omits_count_reported_when_unknown():
     client._get.return_value = {"results": [{"id": "a"}], "next": None}  # no "count"
     _, meta = fetch(client, "choices", paginate=True)
     assert meta == {"total": 1, "pages": 1}
+
+
+def test_fetch_caps_default_page_size_at_limit():
+    client = Mock()
+    client._get.return_value = {"count": 0, "next": None, "results": []}
+    fetch(client, "subjects", paginate=True, limit=5)
+    assert client._get.call_args.kwargs["params"] == {"page_size": 5}
+    client._get.reset_mock()
+    fetch(client, "subjects", {"page_size": 50}, paginate=True, limit=5)
+    assert client._get.call_args.kwargs["params"] == {"page_size": 50}

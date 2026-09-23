@@ -1,4 +1,3 @@
-# src/earthranger_cli/read_commands.py
 """Read-only `er <resource> <action>` commands, declared as data.
 
 Each ReadCommand row names an ER GET endpoint and the query params it takes;
@@ -14,6 +13,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from urllib.parse import quote
 
 import click
 
@@ -131,7 +131,7 @@ COMMANDS: tuple[ReadCommand, ...] = (
         "activity/events",
         "Search activity events.",
         flags=(
-            Flag("event_type", "Event type id(s), comma-separated (ids, not values — see P1)."),
+            Flag("event_type", "Event type id(s), comma-separated (ids, not friendly values)."),
             Flag("event_category", "Event category value."),
             Flag("state", "new | active | resolved (comma-separated allowed)."),
             Flag("updated_since", "ISO-8601; events updated after this time."),
@@ -228,7 +228,7 @@ def _make_command(spec: ReadCommand, deps: Deps) -> click.Command:
         client = deps.connect(ctx)
         path = spec.path
         if spec.arg:
-            path = path.replace("{id}", kwargs.pop(spec.arg))
+            path = path.replace("{id}", quote(kwargs.pop(spec.arg), safe=""))
         params: dict = {}
         for flag in spec.flags:
             value = kwargs.get(flag.param)

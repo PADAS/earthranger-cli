@@ -19,6 +19,7 @@ def test_emit_file_writes_json_and_one_stderr_line(tmp_path, capsys):
     assert out == ""
     assert err == f"Done. 2 record(s) written to {target} (3 page(s)).\n"
     assert json.loads(target.read_text())["meta"]["pages"] == 3
+    assert target.read_text().endswith("\n")
 
 
 def test_emit_serializes_non_json_values_with_str(capsys):

@@ -127,7 +127,7 @@ command is a thin wrapper:
 | `patrols search` / `get ID` | `get_patrols(**kw)` / `_get("activity/patrols/{id}")` |
 | `sources search` / `get ID` | `get_sources()` / `get_source_by_id(id)` |
 | `subject-groups list` / `get ID` | `get_subjectgroups(...)` / `_get("subjectgroup/{id}")` |
-| `subject-sources search --subject_id` | `get_subjectsources(subject_id)` |
+| `subject-sources search --subjects --sources` | `_get("subjectsources", params=...)` (er-cli's `v1.0_subjectsources_list`; the erclient helper `get_subjectsources(subject_id)` hits a different path) |
 | `fences list` | `_get("spatialfeaturegroup")` |
 | `featuresets get ID` | `_get("featureset/{id}")` |
 | `regions list` | `_get("regions")` |
@@ -182,8 +182,9 @@ everything new.
 - [ ] Event-type name → id resolution on `events search --event_type`
       (values, display names, UUIDs, comma-mixed); reuse in `events post`.
 - [ ] Retries with backoff on 429/5xx/network for reads.
-- [ ] `--version` flag; show `[GET /api/v1.0/...]` in each read command's
-      `--help`.
+- [ ] `--version` flag.
+- [x] Show `[GET /api/v1.0/...]` in each read command's `--help`. (2026-09-23,
+      shipped with the read surface)
 - [ ] Command-naming aliases per the Naming section.
 
 ### P2 — consolidation

@@ -67,13 +67,14 @@ def fetch(
     """GET `path` (relative to the API root) and return (records, meta).
 
     `params` entries whose value is None are dropped. When `paginate` is
-    true, `page_size` defaults to DEFAULT_PAGE_SIZE and `next` links are
-    followed (see follow_pages). `version` selects a non-default API root
-    (e.g. "v2.0" for subject tracks) via erclient's `_api_root`.
+    true, `page_size` defaults to DEFAULT_PAGE_SIZE, capped at `limit` when
+    one is given, and `next` links are followed (see follow_pages).
+    `version` selects a non-default API root (e.g. "v2.0" for subject
+    tracks) via erclient's `_api_root`.
     """
     params = {k: v for k, v in (params or {}).items() if v is not None}
     if paginate and "page_size" not in params:
-        params["page_size"] = DEFAULT_PAGE_SIZE
+        params["page_size"] = min(limit, DEFAULT_PAGE_SIZE) if limit else DEFAULT_PAGE_SIZE
     base_url = client._api_root(version) if version else None
     page = client._get(path, base_url=base_url, params=params, max_retries=0)
     if paginate:

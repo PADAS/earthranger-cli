@@ -1,4 +1,3 @@
-# tests/test_read_commands.py
 import json
 
 import pytest
@@ -34,6 +33,7 @@ def test_every_command_is_registered_with_output_option():
         assert ("limit" in names) == (spec.kind == "list"), (spec.group, spec.name)
         assert ("page_size" in names) == (spec.kind == "list"), (spec.group, spec.name)
         assert cmd.help and spec.help in cmd.help
+        assert ("{id}" in spec.path) == (spec.arg is not None), (spec.group, spec.name)
 
 
 def test_help_shows_the_endpoint():
@@ -144,3 +144,10 @@ def test_connection_flags_accepted_after_subcommand(fake):
     fake.responses["regions"] = []
     result = _run(["regions", "list", "--server", "sandbox", "--token", "t"])
     assert result.exit_code == 0, result.output
+
+
+def test_get_positional_is_percent_encoded(fake):
+    fake.responses["source/abc%2Fdef"] = {"id": "abc/def"}
+    result = _run(["sources", "get", "abc/def"])
+    assert result.exit_code == 0, result.output
+    assert _gets(fake)[0][1] == "source/abc%2Fdef"
