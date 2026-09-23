@@ -221,7 +221,7 @@ per profile; old `tokens/<host>.json` files are ignored.)
 | `events list event-types [--category V]` | List event types |
 | `events show event-type V` | Full v2 event-type JSON + its Choice records |
 | `events pull CATEGORY [-o FILE] [--skip-unsupported]` | Reconstruct a DSL spec from the server (reverse of apply) |
-| `events search [--event-type ID ...] [--limit N] [-o F]` | Search events; JSON `{records, meta}` output |
+| `events search [--event-type ID[,ID...]] [--limit N] [-o F]` | Search events; JSON `{records, meta}` output |
 | `events get EVENT_ID [-o F]` | One event as a one-record `{records, meta}` document |
 | `events list categories\|event-types [--json] [-o F]`, `events show event-type V [--json] [-o F]` | Same as above, opt-in `{records, meta}` output |
 | `status show`, `auth whoami` | Server status; the authenticated user |

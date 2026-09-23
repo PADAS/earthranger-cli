@@ -174,6 +174,7 @@ COMMANDS: tuple[ReadCommand, ...] = (
             Flag("include_hidden", "Include groups that are not visible.", "bool"),
             Flag("flat", "Flatten nested groups into one list.", "bool"),
             Flag("group_name", "Filter by group name."),
+            _PAGE_SIZE,
         ),
     ),
     ReadCommand(
@@ -195,13 +196,13 @@ COMMANDS: tuple[ReadCommand, ...] = (
         "list",
         "spatialfeaturegroup",
         "List spatial feature groups (geofences).",
-        flags=(Flag("sort_by", "Sort field."),),
+        flags=(Flag("sort_by", "Sort field."), _PAGE_SIZE),
     ),
     ReadCommand(
         "featuresets", "get", "featureset/{id}", "Retrieve a featureset (GeoJSON boundaries).", "get",
         arg="featureset_id",
     ),
-    ReadCommand("regions", "list", "regions", "List operational regions."),
+    ReadCommand("regions", "list", "regions", "List operational regions.", flags=(_PAGE_SIZE,)),
 )
 
 _TYPES = {"str": str, "int": int, "float": float}

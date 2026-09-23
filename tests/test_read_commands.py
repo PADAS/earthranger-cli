@@ -32,6 +32,7 @@ def test_every_command_is_registered_with_output_option():
         names = {p.name for p in cmd.params}
         assert "output" in names, (spec.group, spec.name)
         assert ("limit" in names) == (spec.kind == "list"), (spec.group, spec.name)
+        assert ("page_size" in names) == (spec.kind == "list"), (spec.group, spec.name)
         assert cmd.help and spec.help in cmd.help
 
 
