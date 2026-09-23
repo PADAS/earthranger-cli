@@ -19,6 +19,8 @@ class FakeER:
         self.auth = None  # token dict, set by token_store.apply_to_client
         self.auth_expires = None
         self.me = {"username": "chris", "id": "user-1"}
+        # path (or absolute next-URL) -> the literal response body erclient._get would return
+        self.responses: dict = {}
 
     def auth_headers(self):
         self.calls.append(("auth_headers",))
@@ -54,11 +56,17 @@ class FakeER:
         self.calls.append(("patch_event_type", event_type, version))
         return event_type
 
+    def _api_root(self, version):
+        return f"https://fake.pamdas.org/api/{version}"
+
     # --- generic path methods (choices) ---
-    def _get(self, path, params=None, max_retries=5, **kwargs):
+    def _get(self, path, base_url=None, params=None, max_retries=5, **kwargs):
         if path == "user/me":
             self.calls.append(("get_me", max_retries))
             return self.me
+        if path in self.responses:
+            self.calls.append(("_get", path, params, base_url, max_retries))
+            return self.responses[path]
         self.calls.append(("_get", path, params))
         field = (params or {}).get("field")
         if field is None:
