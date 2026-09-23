@@ -221,8 +221,50 @@ per profile; old `tokens/<host>.json` files are ignored.)
 | `events list event-types [--category V]` | List event types |
 | `events show event-type V` | Full v2 event-type JSON + its Choice records |
 | `events pull CATEGORY [-o FILE] [--skip-unsupported]` | Reconstruct a DSL spec from the server (reverse of apply) |
+| `events search [--event-type ID ...] [--limit N] [-o F]` | Search events; JSON `{records, meta}` output |
+| `events get EVENT_ID [-o F]` | One event as a one-record `{records, meta}` document |
+| `events list categories\|event-types [--json] [-o F]`, `events show event-type V [--json] [-o F]` | Same as above, opt-in `{records, meta}` output |
+| `status show`, `auth whoami` | Server status; the authenticated user |
+| `subjects search\|get`, `tracks get SUBJECT_ID`, `observations search` | Read subjects, tracks (v2 GeoJSON), raw observations |
+| `patrols search\|get`, `sources search\|get`, `subject-groups list\|get`, `subject-sources search` | Read patrols, sources, groups, collar↔subject assignments |
+| `fences list`, `featuresets get ID`, `regions list` | Read geofence groups, GeoJSON boundaries, operational regions |
 | `auth login [--token T]/status/logout` | Cache (password session or static token), inspect, or clear the selected profile's credential |
 | `profile add/use/set/show/list/remove/current` | Named site profiles; `use` selects per shell and `add` auto-switches (via the wrapper); `set` edits the selected profile; `--profile NAME` per command |
+
+## Reading data (agent-friendly JSON)
+
+Every read command above emits one JSON document in the same shape as
+tusker's `er-cli` and the Skylight CLI, so agent skills can "write to
+`-o PATH`, then read the file" identically across tools:
+
+```json
+{"records": [...], "meta": {"total": 12, "pages": 1, "count_reported": 12}}
+```
+
+- `records` is always a flat list — one element for `get` commands and for
+  GeoJSON FeatureCollections.
+- List commands auto-paginate (following ER's `next` link, 100 per page by
+  default; `--page-size` overrides). `--limit N` caps the total and stops
+  requesting pages once it is reached. `meta.pages` reports how many pages
+  were fetched; `meta.count_reported` is ER's own total when it sends one.
+- `-o PATH` writes the document (creating parent directories) and prints a
+  single `Done. N record(s) written to PATH (P page(s)).` line to stderr;
+  stdout stays empty. Without `-o`, the document is pretty-printed to stdout.
+- Flags are the ER query parameters, spelled either `--updated-since` or
+  er-cli style `--updated_since`. Run `er <resource> <action> --help` to see
+  the endpoint each command calls, e.g. `[GET /api/v1.0/subjects]`.
+- The pre-existing `events list ...` and `events show event-type` keep their
+  human output by default; pass `--json` (or `-o`) for the contract above.
+
+Typical skill one-liner:
+
+```bash
+er events search --event-type <uuid> --updated-since 2026-09-01T00:00:00Z -o /tmp/ev.json
+```
+
+`--event-type` takes event-type **ids** for now; resolving friendly values
+like `geofence_break` to ids is on the backlog (see
+`docs/superpowers/specs/2026-09-02-er-cli-parity-design.md`).
 
 ## Spec reference
 

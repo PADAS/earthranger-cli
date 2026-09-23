@@ -1,8 +1,7 @@
 # er-cli parity — absorbing the agent-facing read surface
 
 Date: 2026-09-02
-Status: Draft — captured from a comparison session; not yet approved for
-implementation. Revisit before starting any P0 item.
+Status: P0 implemented 2026-09-23; P1/P2 open.
 
 ## Overview
 
@@ -166,12 +165,15 @@ everything new.
 
 ### P0 — the agent contract
 
-- [ ] Uniform JSON output (`--json`, `-o/--output`) on every read command,
-      er-cli's exact `{records, meta}` shape.
+- [x] Uniform JSON output (`--json`, `-o/--output`) on every read command,
+      er-cli's exact `{records, meta}` shape. (2026-09-23,
+      `docs/superpowers/plans/2026-09-23-read-surface.md`)
 - [x] Bearer-token auth path (`--token`, `ER_TOKEN`, `auth login --token`);
       precedence decided — see §Bearer-token auth.
-- [ ] Read-only resource commands per the table above.
-- [ ] Shared pagination helper with `--limit` and envelope unwrapping.
+- [x] Read-only resource commands per the table above — hand-written flags;
+      spec-derived flags remain the P1 decision. (2026-09-23)
+- [x] Shared pagination helper with `--limit` and envelope unwrapping
+      (`read.fetch` / `read.follow_pages`; choices use it too). (2026-09-23)
 
 ### P1 — robustness and ergonomics
 
