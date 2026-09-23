@@ -853,3 +853,18 @@ def choices_show(ctx, field_name):
         active = "" if r.get("is_active", True) else "  (inactive)"
         icon = f"  icon={r['icon']}" if r.get("icon") else ""
         click.echo(f"{r.get('value'):<40} {r.get('display')}{icon}{active}")
+
+
+# --- read-only resource commands (er-cli parity) ---------------------------
+# Registered last so every group they extend (events, auth) already exists.
+# `_connect` is looked up at call time so tests can monkeypatch it.
+from . import read_commands as _read_commands
+
+_read_commands.register(
+    main,
+    _read_commands.Deps(
+        connect=lambda ctx: _connect(ctx),
+        connection_options=connection_options,
+        api_errors=_api_errors,
+    ),
+)
