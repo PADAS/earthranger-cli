@@ -25,7 +25,10 @@ from .read import fetch
 class Flag:
     param: str  # ER query parameter name, e.g. "updated_since"
     help: str
-    kind: str = "str"  # "str" | "int" | "float" | "bool"
+    kind: str = "str"  # "str" | "int" | "float" | "bool" | "list"
+    # "list": a comma-separated value split into repeated query parameters
+    # (?state=a&state=b), which is how DRF's getlist() expects multi-values;
+    # a single "a,b" string would be matched literally and return nothing.
 
 
 @dataclass(frozen=True)
@@ -90,7 +93,9 @@ COMMANDS: tuple[ReadCommand, ...] = (
             _PAGE_SIZE,
         ),
     ),
-    ReadCommand("subjects", "get", "subject/{id}", "Retrieve one subject.", "get", arg="subject_id"),
+    ReadCommand(
+        "subjects", "get", "subject/{id}", "Retrieve one subject.", "get", arg="subject_id"
+    ),
     ReadCommand(
         "tracks",
         "get",
@@ -102,7 +107,7 @@ COMMANDS: tuple[ReadCommand, ...] = (
             Flag("until", "ISO-8601 end."),
             Flag("show_excluded", "Include points ER excluded as outliers.", "bool"),
             Flag("max_speed_kmh", "Drop segments faster than this.", "float"),
-            Flag("max_gap_minutes", "Break the track at gaps longer than this.", "float"),
+            Flag("max_gap_minutes", "Break the track at gaps longer than this.", "int"),
         ),
         version="v2.0",
         arg="subject_id",
@@ -131,9 +136,13 @@ COMMANDS: tuple[ReadCommand, ...] = (
         "activity/events",
         "Search activity events.",
         flags=(
-            Flag("event_type", "Event type id(s), comma-separated (ids, not friendly values)."),
+            Flag(
+                "event_type",
+                "Event type id(s), comma-separated (ids, not friendly values).",
+                "list",
+            ),
             Flag("event_category", "Event category value."),
-            Flag("state", "new | active | resolved (comma-separated allowed)."),
+            Flag("state", "new | active | resolved (comma-separated allowed).", "list"),
             Flag("updated_since", "ISO-8601; events updated after this time."),
             Flag("filter", "ER events JSON filter."),
             Flag("bbox", "Bounding box: west,south,east,north."),
@@ -148,7 +157,9 @@ COMMANDS: tuple[ReadCommand, ...] = (
             _PAGE_SIZE,
         ),
     ),
-    ReadCommand("events", "get", "activity/event/{id}", "Retrieve one event.", "get", arg="event_id"),
+    ReadCommand(
+        "events", "get", "activity/event/{id}", "Retrieve one event.", "get", arg="event_id"
+    ),
     ReadCommand(
         "patrols",
         "search",
@@ -161,8 +172,12 @@ COMMANDS: tuple[ReadCommand, ...] = (
             _PAGE_SIZE,
         ),
     ),
-    ReadCommand("patrols", "get", "activity/patrols/{id}", "Retrieve one patrol.", "get", arg="patrol_id"),
-    ReadCommand("sources", "search", "sources", "Search collar / device sources.", flags=(_PAGE_SIZE,)),
+    ReadCommand(
+        "patrols", "get", "activity/patrols/{id}", "Retrieve one patrol.", "get", arg="patrol_id"
+    ),
+    ReadCommand(
+        "sources", "search", "sources", "Search collar / device sources.", flags=(_PAGE_SIZE,)
+    ),
     ReadCommand("sources", "get", "source/{id}", "Retrieve one source.", "get", arg="source_id"),
     ReadCommand(
         "subject-groups",
@@ -178,7 +193,12 @@ COMMANDS: tuple[ReadCommand, ...] = (
         ),
     ),
     ReadCommand(
-        "subject-groups", "get", "subjectgroup/{id}", "Retrieve one subject group.", "get", arg="group_id"
+        "subject-groups",
+        "get",
+        "subjectgroup/{id}",
+        "Retrieve one subject group.",
+        "get",
+        arg="group_id",
     ),
     ReadCommand(
         "subject-sources",
@@ -199,7 +219,11 @@ COMMANDS: tuple[ReadCommand, ...] = (
         flags=(Flag("sort_by", "Sort field."), _PAGE_SIZE),
     ),
     ReadCommand(
-        "featuresets", "get", "featureset/{id}", "Retrieve a featureset (GeoJSON boundaries).", "get",
+        "featuresets",
+        "get",
+        "featureset/{id}",
+        "Retrieve a featureset (GeoJSON boundaries).",
+        "get",
         arg="featureset_id",
     ),
     ReadCommand("regions", "list", "regions", "List operational regions.", flags=(_PAGE_SIZE,)),
@@ -235,6 +259,9 @@ def _make_command(spec: ReadCommand, deps: Deps) -> click.Command:
             if flag.kind == "bool":
                 if value:
                     params[flag.param] = "true"
+            elif flag.kind == "list":
+                if value is not None:
+                    params[flag.param] = [v.strip() for v in value.split(",") if v.strip()]
             elif value is not None:
                 params[flag.param] = value
         records, meta = fetch(
@@ -249,7 +276,9 @@ def _make_command(spec: ReadCommand, deps: Deps) -> click.Command:
         if flag.kind == "bool":
             fn = click.option(*_option_names(flag.param), is_flag=True, help=flag.help)(fn)
         else:
-            fn = click.option(*_option_names(flag.param), type=_TYPES[flag.kind], help=flag.help)(fn)
+            fn = click.option(
+                *_option_names(flag.param), type=_TYPES.get(flag.kind, str), help=flag.help
+            )(fn)
     if spec.kind == "list":
         fn = click.option("--limit", type=int, metavar="N", help="Cap total records returned.")(fn)
     fn = click.option(

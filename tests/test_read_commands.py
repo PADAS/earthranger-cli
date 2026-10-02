@@ -46,10 +46,14 @@ def test_help_shows_the_endpoint():
 
 def test_list_paginates_and_emits_records_meta(fake):
     fake.responses["subjects"] = {
-        "count": 3, "next": "https://fake/api/v1.0/subjects/?page=2", "results": [{"id": "a"}, {"id": "b"}]
+        "count": 3,
+        "next": "https://fake/api/v1.0/subjects/?page=2",
+        "results": [{"id": "a"}, {"id": "b"}],
     }
     fake.responses["https://fake/api/v1.0/subjects/?page=2"] = {
-        "count": 3, "next": None, "results": [{"id": "c"}]
+        "count": 3,
+        "next": None,
+        "results": [{"id": "c"}],
     }
     result = _run(["subjects", "search", "--name", "Najin", "--render-last-location"])
     assert result.exit_code == 0, result.output
@@ -71,7 +75,9 @@ def test_underscored_alias_is_accepted(fake):
 
 def test_limit_caps_records_and_requests(fake):
     fake.responses["subjects"] = {
-        "count": 5, "next": "https://fake/?page=2", "results": [{"id": "a"}, {"id": "b"}]
+        "count": 5,
+        "next": "https://fake/?page=2",
+        "results": [{"id": "a"}, {"id": "b"}],
     }
     result = _run(["subjects", "search", "--limit", "2"])
     doc = json.loads(result.output)
@@ -91,7 +97,9 @@ def test_get_substitutes_positional_into_path(fake):
 
 def test_tracks_uses_v2_root_and_float_flags(fake):
     fake.responses["subject/s-1/tracks"] = {"type": "FeatureCollection", "features": []}
-    result = _run(["tracks", "get", "s-1", "--since", "2026-06-01T00:00:00Z", "--max-speed-kmh", "80"])
+    result = _run(
+        ["tracks", "get", "s-1", "--since", "2026-06-01T00:00:00Z", "--max-speed-kmh", "80"]
+    )
     assert result.exit_code == 0, result.output
     call = _gets(fake)[0]
     assert call[3] == "https://fake.pamdas.org/api/v2.0"
@@ -103,7 +111,7 @@ def test_events_search_lives_under_existing_events_group(fake):
     fake.responses["activity/events"] = {"count": 1, "next": None, "results": [{"id": "e1"}]}
     result = _run(["events", "search", "--event-type", "uuid-1", "--state", "active"])
     assert result.exit_code == 0, result.output
-    assert _gets(fake)[0][2] == {"event_type": "uuid-1", "state": "active", "page_size": 100}
+    assert _gets(fake)[0][2] == {"event_type": ["uuid-1"], "state": ["active"], "page_size": 100}
     # the authoring commands are still there
     assert {"apply", "post", "list", "show", "pull", "search", "get"} <= set(
         main.commands["events"].commands
@@ -151,3 +159,39 @@ def test_get_positional_is_percent_encoded(fake):
     result = _run(["sources", "get", "abc/def"])
     assert result.exit_code == 0, result.output
     assert _gets(fake)[0][1] == "source/abc%2Fdef"
+
+
+def _encoded(params) -> str:
+    """What requests actually puts on the wire for these params."""
+    from requests import PreparedRequest
+
+    req = PreparedRequest()
+    req.prepare_url("https://x.test/", params)
+    return req.url.split("?", 1)[1]
+
+
+def test_tracks_max_gap_minutes_is_an_integer_on_the_wire(fake):
+    # das parses this with int(); "30.0" fails that and silently disables the gap
+    fake.responses["subject/s-1/tracks"] = {"type": "FeatureCollection", "features": []}
+    result = _run(["tracks", "get", "s-1", "--max-gap-minutes", "30"])
+    assert result.exit_code == 0, result.output
+    params = _gets(fake)[0][2]
+    assert params == {"max_gap_minutes": 30}
+    assert _encoded(params) == "max_gap_minutes=30"
+
+
+def test_events_multi_value_filters_are_repeated_query_params(fake):
+    # das reads state/event_type with getlist(): "a,b" as one value matches
+    # the literal string "a,b"; it must go out as ?state=a&state=b
+    fake.responses["activity/events"] = {"count": 0, "next": None, "results": []}
+    result = _run(
+        ["events", "search", "--state", "active, resolved", "--event-type", "uuid-1,uuid-2"]
+    )
+    assert result.exit_code == 0, result.output
+    params = _gets(fake)[0][2]
+    assert params["state"] == ["active", "resolved"]
+    assert params["event_type"] == ["uuid-1", "uuid-2"]
+    assert (
+        _encoded({k: params[k] for k in ("state", "event_type")})
+        == "state=active&state=resolved&event_type=uuid-1&event_type=uuid-2"
+    )
