@@ -34,6 +34,7 @@ def test_make_client_wires_credentials():
 
 def test_get_choices_pages_through_results():
     client = Mock()
+    client._api_root.return_value = "https://x/api/v1.0"
     client._get.side_effect = [
         {"results": [{"value": "a"}], "next": "https://x/choices?page=2"},
         {"results": [{"value": "b"}], "next": None},
@@ -76,6 +77,7 @@ def test_post_and_patch_choice_paths():
 
 def test_get_all_choices_pages_without_field_filter():
     client = Mock()
+    client._api_root.return_value = "https://x/api/v1.0"
     client._get.side_effect = [
         {"results": [{"value": "a", "field": "f1"}], "next": "https://x/choices?page=2"},
         {"results": [{"value": "b", "field": "f2"}], "next": None},

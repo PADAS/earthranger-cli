@@ -5,3 +5,6 @@ __pycache__/
 dist/
 .venv/
 .DS_Store
+
+# git worktrees (superpowers:using-git-worktrees)
+.worktrees/

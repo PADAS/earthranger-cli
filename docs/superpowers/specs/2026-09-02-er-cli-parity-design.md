@@ -1,8 +1,7 @@
 # er-cli parity — absorbing the agent-facing read surface
 
 Date: 2026-09-02
-Status: Draft — captured from a comparison session; not yet approved for
-implementation. Revisit before starting any P0 item.
+Status: P0 implemented 2026-09-23; P1/P2 open.
 
 ## Overview
 
@@ -128,7 +127,7 @@ command is a thin wrapper:
 | `patrols search` / `get ID` | `get_patrols(**kw)` / `_get("activity/patrols/{id}")` |
 | `sources search` / `get ID` | `get_sources()` / `get_source_by_id(id)` |
 | `subject-groups list` / `get ID` | `get_subjectgroups(...)` / `_get("subjectgroup/{id}")` |
-| `subject-sources search --subject_id` | `get_subjectsources(subject_id)` |
+| `subject-sources search --subjects --sources` | `_get("subjectsources", params=...)` (er-cli's `v1.0_subjectsources_list`; the erclient helper `get_subjectsources(subject_id)` hits a different path) |
 | `fences list` | `_get("spatialfeaturegroup")` |
 | `featuresets get ID` | `_get("featureset/{id}")` |
 | `regions list` | `_get("regions")` |
@@ -166,12 +165,15 @@ everything new.
 
 ### P0 — the agent contract
 
-- [ ] Uniform JSON output (`--json`, `-o/--output`) on every read command,
-      er-cli's exact `{records, meta}` shape.
+- [x] Uniform JSON output (`--json`, `-o/--output`) on every read command,
+      er-cli's exact `{records, meta}` shape. (2026-09-23,
+      `docs/superpowers/plans/2026-09-23-read-surface.md`)
 - [x] Bearer-token auth path (`--token`, `ER_TOKEN`, `auth login --token`);
       precedence decided — see §Bearer-token auth.
-- [ ] Read-only resource commands per the table above.
-- [ ] Shared pagination helper with `--limit` and envelope unwrapping.
+- [x] Read-only resource commands per the table above — hand-written flags;
+      spec-derived flags remain the P1 decision. (2026-09-23)
+- [x] Shared pagination helper with `--limit` and envelope unwrapping
+      (`read.fetch` / `read.follow_pages`; choices use it too). (2026-09-23)
 
 ### P1 — robustness and ergonomics
 
@@ -180,8 +182,9 @@ everything new.
 - [ ] Event-type name → id resolution on `events search --event_type`
       (values, display names, UUIDs, comma-mixed); reuse in `events post`.
 - [ ] Retries with backoff on 429/5xx/network for reads.
-- [ ] `--version` flag; show `[GET /api/v1.0/...]` in each read command's
-      `--help`.
+- [ ] `--version` flag.
+- [x] Show `[GET /api/v1.0/...]` in each read command's `--help`. (2026-09-23,
+      shipped with the read surface)
 - [ ] Command-naming aliases per the Naming section.
 
 ### P2 — consolidation

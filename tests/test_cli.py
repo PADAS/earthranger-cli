@@ -1710,3 +1710,54 @@ def test_post_message_less_error_is_described(fake):
     assert result.exit_code == 1
     assert "FAILED   x: NotFound (no details from the server)" in result.output
     assert ": None" not in result.output
+
+
+# --- --json / -o on the existing read commands ---
+
+
+def test_list_categories_json_contract(fake):
+    fake.categories = [{"value": "wm", "display": "Wildlife Monitoring", "is_active": True}]
+    result = _run(["events", "list", "categories", "--json"])
+    assert result.exit_code == 0
+    doc = json.loads(result.output)
+    assert doc["records"] == fake.categories
+    assert doc["meta"] == {"total": 1, "pages": 1}
+
+
+def test_list_event_types_json_applies_category_filter(fake):
+    fake.event_types = [
+        {"value": "a", "display": "A", "category": {"value": "wm"}},
+        {"value": "b", "display": "B", "category": "other"},
+    ]
+    result = _run(["events", "list", "event-types", "--category", "wm", "--json"])
+    doc = json.loads(result.output)
+    assert [r["value"] for r in doc["records"]] == ["a"]
+    assert doc["meta"] == {"total": 1, "pages": 1}
+
+
+def test_show_event_type_json_wraps_the_existing_document(fake):
+    fake.event_types = [{"value": "s", "display": "S", "category": "wm", "schema": {}}]
+    result = _run(["events", "show", "event-type", "s", "--json"])
+    doc = json.loads(result.output)
+    assert doc["records"] == [{"event_type": fake.event_types[0], "choices": {}}]
+    assert doc["meta"] == {"total": 1, "pages": 1}
+
+
+def test_output_flag_implies_json_and_writes_file(fake, tmp_path):
+    fake.categories = [{"value": "wm", "display": "Wildlife Monitoring"}]
+    target = tmp_path / "cats.json"
+    runner = CliRunner()
+    result = runner.invoke(
+        main, ["events", "list", "categories", "-o", str(target)], catch_exceptions=False
+    )
+    assert result.exit_code == 0
+    assert result.stdout == ""
+    assert "1 record(s) written to" in result.stderr
+    assert json.loads(target.read_text())["records"][0]["value"] == "wm"
+
+
+def test_human_output_unchanged_without_json_flag(fake):
+    fake.categories = [{"value": "wm", "display": "Wildlife Monitoring", "is_active": True}]
+    result = _run(["events", "list", "categories"])
+    assert result.output.startswith("wm")
+    assert "records" not in result.output
