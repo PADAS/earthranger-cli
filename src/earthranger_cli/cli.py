@@ -13,6 +13,7 @@ from erclient.er_errors import ERClientBadCredentials, ERClientException, ERClie
 
 from . import client as er
 from . import config_store, token_store
+from . import read_commands as _read_commands
 from .apply import ApplyError, apply_spec, extract_choice_fields, normalize_v2_schema
 from .choices import choice_sort_key
 from .client import (
@@ -887,7 +888,6 @@ def choices_show(ctx, field_name):
 # --- read-only resource commands (er-cli parity) ---------------------------
 # Registered last so every group they extend (events, auth) already exists.
 # `_connect` is looked up at call time so tests can monkeypatch it.
-from . import read_commands as _read_commands
 
 _read_commands.register(
     main,

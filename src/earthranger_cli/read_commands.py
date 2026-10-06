@@ -25,7 +25,7 @@ from .read import fetch
 class Flag:
     param: str  # ER query parameter name, e.g. "updated_since"
     help: str
-    kind: str = "str"  # "str" | "int" | "float" | "bool" | "list"
+    kind: str = "str"  # "str" | "int" | "float" | "bool" | "list" | "positive_int"
     # "list": a comma-separated value split into repeated query parameters
     # (?state=a&state=b), which is how DRF's getlist() expects multi-values;
     # a single "a,b" string would be matched literally and return nothing.
@@ -67,7 +67,7 @@ GROUP_HELP: dict[str, str] = {
     "regions": "Read operational regions.",
 }
 
-_PAGE_SIZE = Flag("page_size", "Records per page (default 100).", "int")
+_PAGE_SIZE = Flag("page_size", "Records per page (default 100).", "positive_int")
 _INCLUDE_INACTIVE = Flag("include_inactive", "Include inactive records.", "bool")
 
 COMMANDS: tuple[ReadCommand, ...] = (
@@ -229,7 +229,7 @@ COMMANDS: tuple[ReadCommand, ...] = (
     ReadCommand("regions", "list", "regions", "List operational regions.", flags=(_PAGE_SIZE,)),
 )
 
-_TYPES = {"str": str, "int": int, "float": float}
+_TYPES = {"str": str, "int": int, "float": float, "positive_int": click.IntRange(min=1)}
 
 
 def _option_names(param: str) -> list[str]:
@@ -280,7 +280,9 @@ def _make_command(spec: ReadCommand, deps: Deps) -> click.Command:
                 *_option_names(flag.param), type=_TYPES.get(flag.kind, str), help=flag.help
             )(fn)
     if spec.kind == "list":
-        fn = click.option("--limit", type=int, metavar="N", help="Cap total records returned.")(fn)
+        fn = click.option(
+            "--limit", type=click.IntRange(min=1), metavar="N", help="Cap total records returned."
+        )(fn)
     fn = click.option(
         "-o", "--output", type=click.Path(dir_okay=False), help="Write JSON here instead of stdout."
     )(fn)

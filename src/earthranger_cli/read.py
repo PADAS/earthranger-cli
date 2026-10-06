@@ -15,6 +15,7 @@ the `{records, meta}` pieces every read command emits.
 from __future__ import annotations
 
 from typing import Any
+from urllib.parse import urlsplit, urlunsplit
 
 DEFAULT_PAGE_SIZE = 100
 
@@ -40,13 +41,17 @@ def follow_pages(
     """Collect `page` and every page reachable through its `next` link.
 
     Stops as soon as `limit` records are in hand (no further requests) and
-    trims any overshoot from the last page. `next` is the absolute URL ER
-    returns; erclient's `_get` passes absolute URLs through untouched.
+    trims any overshoot from the last page. Absolute `next` links use the
+    configured API origin, preserving the server-provided path and query.
     Returns (records, pages_fetched, count_reported).
     """
     records, next_url, count = normalize_page(page)
     pages = 1
     while next_url and (limit is None or len(records) < limit):
+        link = urlsplit(next_url)
+        if link.netloc:
+            origin = urlsplit(client._api_root())
+            next_url = urlunsplit((origin.scheme, origin.netloc, link.path, link.query, ""))
         more, next_url, _ = normalize_page(client._get(next_url, max_retries=0))
         records.extend(more)
         pages += 1

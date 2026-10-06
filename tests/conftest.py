@@ -56,7 +56,7 @@ class FakeER:
         self.calls.append(("patch_event_type", event_type, version))
         return event_type
 
-    def _api_root(self, version):
+    def _api_root(self, version="v1.0"):
         return f"https://fake.pamdas.org/api/{version}"
 
     # --- generic path methods (choices) ---

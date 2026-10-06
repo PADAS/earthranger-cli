@@ -50,7 +50,7 @@ def test_list_paginates_and_emits_records_meta(fake):
         "next": "https://fake/api/v1.0/subjects/?page=2",
         "results": [{"id": "a"}, {"id": "b"}],
     }
-    fake.responses["https://fake/api/v1.0/subjects/?page=2"] = {
+    fake.responses["https://fake.pamdas.org/api/v1.0/subjects/?page=2"] = {
         "count": 3,
         "next": None,
         "results": [{"id": "c"}],
@@ -195,3 +195,16 @@ def test_events_multi_value_filters_are_repeated_query_params(fake):
         _encoded({k: params[k] for k in ("state", "event_type")})
         == "state=active&state=resolved&event_type=uuid-1&event_type=uuid-2"
     )
+
+
+@pytest.mark.parametrize("option", ["--limit", "--page-size", "--page_size"])
+@pytest.mark.parametrize("value", ["0", "-1"])
+def test_pagination_controls_reject_nonpositive_values_before_connect(monkeypatch, option, value):
+    from unittest.mock import Mock
+
+    connect = Mock()
+    monkeypatch.setattr(cli_mod, "_connect", connect)
+    result = _run(["subjects", "search", option, value])
+    assert result.exit_code == 2
+    assert "Invalid value" in result.output
+    connect.assert_not_called()

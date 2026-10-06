@@ -1,5 +1,7 @@
 from unittest.mock import Mock
 
+import pytest
+
 from earthranger_cli.read import fetch, follow_pages, normalize_page
 
 
@@ -29,6 +31,7 @@ def test_normalize_none_is_empty():
 
 def test_follow_pages_walks_next_and_counts_pages():
     client = Mock()
+    client._api_root.return_value = "https://x/api/v1.0"
     client._get.side_effect = [{"count": 3, "next": None, "results": [{"id": "c"}]}]
     first = {"count": 3, "next": "https://x/subjects/?page=2", "results": [{"id": "a"}, {"id": "b"}]}
     recs, pages, count = follow_pages(client, first)
@@ -48,6 +51,7 @@ def test_follow_pages_stops_at_limit_without_extra_requests():
 
 def test_follow_pages_trims_overshoot_to_limit():
     client = Mock()
+    client._api_root.return_value = "https://x/api/v1.0"
     client._get.side_effect = [{"count": 4, "next": None, "results": [{"id": "c"}, {"id": "d"}]}]
     first = {"count": 4, "next": "https://x/?page=2", "results": [{"id": "a"}, {"id": "b"}]}
     recs, pages, _ = follow_pages(client, first, limit=3)
@@ -106,3 +110,22 @@ def test_fetch_caps_default_page_size_at_limit():
     client._get.reset_mock()
     fetch(client, "subjects", {"page_size": 50}, paginate=True, limit=5)
     assert client._get.call_args.kwargs["params"] == {"page_size": 50}
+
+
+@pytest.mark.parametrize("next_url", [
+    "http://internal:8000/api/v2.0/subjects/?page=2&state=a&state=b",
+    "//internal:8000/api/v2.0/subjects/?page=2&state=a&state=b",
+    "https://public.example:8443/api/v2.0/subjects/?page=2&state=a&state=b",
+])
+def test_pagination_uses_configured_origin_and_preserves_path_query(next_url):
+    client = Mock()
+    client._api_root.return_value = "https://public.example:8443/api/v1.0"
+    client._get.return_value = {"results": [{"id": "b"}], "next": None}
+    first = {"count": 2, "results": [{"id": "a"}], "next": next_url}
+    records, pages, count = follow_pages(client, first)
+    assert records == [{"id": "a"}, {"id": "b"}]
+    assert (pages, count) == (2, 2)
+    client._get.assert_called_once_with(
+        "https://public.example:8443/api/v2.0/subjects/?page=2&state=a&state=b",
+        max_retries=0,
+    )
