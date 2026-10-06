@@ -6,8 +6,12 @@ import pytest
 @pytest.fixture(autouse=True)
 def _isolated_token_cache(tmp_path, monkeypatch):
     """Point the token cache at a per-test directory so tests never read or
-    write the developer's real ~/.config/er-events."""
+    write the developer's real ~/.config/er-events, and drop any ER_* selection
+    the developer's shell has exported (the README's zsh wrapper leaves
+    ER_PROFILE set), so tests see the same clean environment everywhere."""
     monkeypatch.setenv("ER_EVENTS_CONFIG_DIR", str(tmp_path / "er-events-config"))
+    for var in ("ER_PROFILE", "ER_SERVER", "ER_USERNAME", "ER_PASSWORD", "ER_TOKEN"):
+        monkeypatch.delenv(var, raising=False)
 
 
 class FakeER:

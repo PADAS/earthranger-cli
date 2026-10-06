@@ -227,7 +227,10 @@ per profile; old `tokens/<host>.json` files are ignored.)
 | `status show`, `auth whoami` | Server status; the authenticated user |
 | `subjects search\|get`, `tracks get SUBJECT_ID`, `observations search` | Read subjects, tracks (v2 GeoJSON), raw observations |
 | `patrols search\|get`, `sources search\|get`, `subject-groups list\|get`, `subject-sources search` | Read patrols, sources, groups, collar↔subject assignments |
-| `fences list`, `featuresets get ID`, `regions list` | Read geofence groups, GeoJSON boundaries, operational regions |
+| `fences list`, `featuresets list\|get ID`, `regions list` | Read geofence groups, featuresets and their GeoJSON boundaries, operational regions |
+
+Every paginated read command answers to both `list` and `search` (`er subjects list`
+and `er regions search` both work); the names above are the ones shown in `--help`.
 | `auth login [--token T]/status/logout` | Cache (password session or static token), inspect, or clear the selected profile's credential |
 | `profile add/use/set/show/list/remove/current` | Named site profiles; `use` selects per shell and `add` auto-switches (via the wrapper); `set` edits the selected profile; `--profile NAME` per command |
 

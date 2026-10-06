@@ -220,6 +220,13 @@ COMMANDS: tuple[ReadCommand, ...] = (
     ),
     ReadCommand(
         "featuresets",
+        "list",
+        "featureset",
+        "List featuresets (id, name, feature types). ER marks this endpoint deprecated.",
+        flags=(_PAGE_SIZE,),
+    ),
+    ReadCommand(
+        "featuresets",
         "get",
         "featureset/{id}",
         "Retrieve a featureset (GeoJSON boundaries).",
@@ -292,6 +299,13 @@ def _make_command(spec: ReadCommand, deps: Deps) -> click.Command:
     return click.command(spec.name, help=f"{spec.help}\n\n{_endpoint(spec)}")(fn)
 
 
+# Every paginated command answers to both names: er-cli (and the tusker skills
+# written against it) say `search`; `list` is what people reach for first.
+# The row's own name is the one shown in the endpoint docs; the other is an
+# alias to the same Command object.
+_LIST_ALIASES = {"search": "list", "list": "search"}
+
+
 def register(main: click.Group, deps: Deps) -> None:
     """Attach every COMMANDS row to `main`, creating resource groups as needed.
     Rows whose group already exists (events, auth) are added to that group."""
@@ -300,4 +314,8 @@ def register(main: click.Group, deps: Deps) -> None:
         if group is None:
             group = click.Group(spec.group, help=GROUP_HELP[spec.group])
             main.add_command(group)
-        group.add_command(_make_command(spec, deps))
+        cmd = _make_command(spec, deps)
+        group.add_command(cmd)
+        alias = _LIST_ALIASES.get(spec.name) if spec.kind == "list" else None
+        if alias and alias not in group.commands:
+            group.add_command(cmd, name=alias)

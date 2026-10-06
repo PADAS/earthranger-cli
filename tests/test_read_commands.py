@@ -1,5 +1,6 @@
 import json
 
+import click
 import pytest
 from click.testing import CliRunner
 
@@ -34,6 +35,42 @@ def test_every_command_is_registered_with_output_option():
         assert ("page_size" in names) == (spec.kind == "list"), (spec.group, spec.name)
         assert cmd.help and spec.help in cmd.help
         assert ("{id}" in spec.path) == (spec.arg is not None), (spec.group, spec.name)
+
+
+def test_every_paginated_command_answers_to_list_and_search():
+    for spec in COMMANDS:
+        if spec.kind != "list" or spec.group == "events":
+            continue
+        group = main.commands[spec.group]
+        assert group.commands["list"] is group.commands["search"], spec.group
+        assert group.commands[spec.name] is group.commands["list"], spec.group
+    # get-only groups gain nothing
+    assert set(main.commands["tracks"].commands) == {"get"}
+    # `events list` is the authoring sub-group (categories, event-types) and
+    # must not be shadowed by an alias of `events search`
+    events = main.commands["events"].commands
+    assert isinstance(events["list"], click.Group)
+    assert {"categories", "event-types"} <= set(events["list"].commands)
+    assert events["search"] is not events["list"]
+
+
+def test_list_alias_runs_the_same_command(fake):
+    fake.responses["subjects"] = {"count": 0, "next": None, "results": []}
+    result = _run(["subjects", "list"])
+    assert result.exit_code == 0, result.output
+    assert _gets(fake)[0][1] == "subjects"
+    fake.responses["regions"] = {"count": 0, "next": None, "results": []}
+    result = _run(["regions", "search"])
+    assert result.exit_code == 0, result.output
+    assert _gets(fake)[1][1] == "regions"
+
+
+def test_featuresets_list(fake):
+    fake.responses["featureset"] = {"count": 1, "next": None, "results": [{"id": "f1"}]}
+    result = _run(["featuresets", "list"])
+    assert result.exit_code == 0, result.output
+    assert _gets(fake)[0][1] == "featureset"
+    assert json.loads(result.output)["records"] == [{"id": "f1"}]
 
 
 def test_help_shows_the_endpoint():
