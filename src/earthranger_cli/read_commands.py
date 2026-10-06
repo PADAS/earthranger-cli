@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from urllib.parse import quote
 
 import click
@@ -41,6 +42,10 @@ class ReadCommand:
     flags: tuple[Flag, ...] = ()
     version: str | None = None  # e.g. "v2.0"; None = erclient default (v1.0)
     arg: str | None = None  # positional name shown in help, e.g. "subject_id"
+    # Runs on the built query params just before the request: a place for an
+    # endpoint to refuse an unbounded request or fill in a sensible default.
+    # Raise click.UsageError to refuse; return the (possibly amended) params.
+    prepare: Callable[[dict], dict] | None = None
 
 
 @dataclass(frozen=True)
@@ -69,6 +74,37 @@ GROUP_HELP: dict[str, str] = {
 }
 
 _PAGE_SIZE = Flag("page_size", "Records per page (default 100).", "positive_int")
+
+OBSERVATION_SELECTORS = ("subject_id", "source_id", "subjectsource_id", "sourceprovider_id")
+OBSERVATIONS_DEFAULT_WINDOW = timedelta(hours=24)
+
+
+def _prepare_observations(params: dict) -> dict:
+    """Keep `observations search` bounded.
+
+    ER applies no default time window and, with no selector, falls through to
+    "every observation on the site up to now" — which the CLI would then page
+    through in full. das itself rejects more than one selector.
+    """
+    chosen = [p for p in OBSERVATION_SELECTORS if params.get(p)]
+    flags = ", ".join("--" + p.replace("_", "-") for p in OBSERVATION_SELECTORS)
+    if not chosen:
+        raise click.UsageError(
+            f"observations search needs exactly one of {flags}; without one ER returns "
+            "every observation on the site."
+        )
+    if len(chosen) > 1:
+        raise click.UsageError(f"pass only one of {flags} (got {', '.join(chosen)}).")
+    if not params.get("since"):
+        since = datetime.now(UTC) - OBSERVATIONS_DEFAULT_WINDOW
+        params["since"] = since.strftime("%Y-%m-%dT%H:%M:%SZ")
+        click.echo(
+            f"note: no --since given; defaulting to the last 24 hours ({params['since']}).",
+            err=True,
+        )
+    return params
+
+
 _INCLUDE_INACTIVE = Flag("include_inactive", "Include inactive records.", "bool")
 
 COMMANDS: tuple[ReadCommand, ...] = (
@@ -117,19 +153,22 @@ COMMANDS: tuple[ReadCommand, ...] = (
         "observations",
         "search",
         "observations",
-        "Search raw GPS observations.",
+        "Search raw GPS observations for one subject, source, assignment, or provider.\n\n"
+        "Exactly one selector is required; --since defaults to the last 24 hours.",
         flags=(
-            Flag("subject_id", "Subject id."),
-            Flag("source_id", "Source id."),
-            Flag("subjectsource_id", "Subject-source assignment id."),
-            Flag("since", "ISO-8601 start."),
-            Flag("until", "ISO-8601 end."),
+            Flag("subject_id", "Subject id (selector)."),
+            Flag("source_id", "Source id (selector)."),
+            Flag("subjectsource_id", "Subject-source assignment id (selector)."),
+            Flag("sourceprovider_id", "Source provider id (selector)."),
+            Flag("since", "ISO-8601 start (default: 24 hours ago)."),
+            Flag("until", "ISO-8601 end (default: now)."),
             Flag("filter", "ER observation filter (e.g. 0 = exclusion flags off)."),
             Flag("include_details", "Include observation details.", "bool"),
             Flag("bbox", "Bounding box: west,south,east,north."),
             Flag("sort_by", "Sort field (prefix '-' for descending)."),
             _PAGE_SIZE,
         ),
+        prepare=_prepare_observations,
     ),
     ReadCommand(
         "events",
@@ -305,6 +344,8 @@ def _make_command(spec: ReadCommand, deps: Deps) -> click.Command:
                     params[flag.param] = [v.strip() for v in value.split(",") if v.strip()]
             elif value is not None:
                 params[flag.param] = value
+        if spec.prepare is not None:
+            params = spec.prepare(params)
         records, meta = fetch(
             client, path, params, paginate=spec.kind == "list", limit=limit, version=spec.version
         )

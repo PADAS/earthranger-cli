@@ -273,3 +273,55 @@ def test_pagination_controls_reject_nonpositive_values_before_connect(monkeypatc
     assert result.exit_code == 2
     assert "Invalid value" in result.output
     connect.assert_not_called()
+
+
+def test_observations_refuses_an_unbounded_request(fake):
+    result = _run(["observations", "search"])
+    assert result.exit_code == 2
+    assert (
+        "needs exactly one of --subject-id, --source-id, --subjectsource-id, --sourceprovider-id"
+        in (result.output)
+    )
+    assert _gets(fake) == []  # nothing was requested
+
+    result = _run(["observations", "search", "--subject-id", "s-1", "--source-id", "src-1"])
+    assert result.exit_code == 2
+    assert "pass only one of" in result.output and "subject_id, source_id" in result.output
+    assert _gets(fake) == []
+
+
+def test_observations_defaults_since_to_last_24h_and_says_so(fake):
+    from datetime import UTC, datetime, timedelta
+
+    fake.responses["observations"] = {"count": 0, "next": None, "results": []}
+    runner = CliRunner()  # click >= 8.2 keeps stderr separate by default
+    result = runner.invoke(
+        main, ["observations", "search", "--subject-id", "s-1"], catch_exceptions=False
+    )
+    assert result.exit_code == 0, result.output
+    params = _gets(fake)[0][2]
+    assert params["subject_id"] == "s-1"
+    since = datetime.strptime(params["since"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
+    assert (
+        timedelta(hours=23, minutes=59) < datetime.now(UTC) - since < timedelta(hours=24, minutes=1)
+    )
+    assert "until" not in params  # ER defaults it to now
+    assert "note: no --since given; defaulting to the last 24 hours" in result.stderr
+    assert json.loads(result.stdout)["records"] == []  # stdout stays pure JSON
+
+
+def test_observations_explicit_since_and_provider_selector_pass_through(fake):
+    fake.responses["observations"] = {"count": 0, "next": None, "results": []}
+    runner = CliRunner()  # click >= 8.2 keeps stderr separate by default
+    result = runner.invoke(
+        main,
+        ["observations", "search", "--sourceprovider-id", "p-1", "--since", "2026-01-01T00:00:00Z"],
+        catch_exceptions=False,
+    )
+    assert result.exit_code == 0, result.output
+    assert _gets(fake)[0][2] == {
+        "sourceprovider_id": "p-1",
+        "since": "2026-01-01T00:00:00Z",
+        "page_size": 100,
+    }
+    assert "defaulting" not in result.stderr
