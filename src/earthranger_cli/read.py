@@ -14,6 +14,7 @@ the `{records, meta}` pieces every read command emits.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
@@ -35,9 +36,7 @@ def normalize_page(data: Any) -> tuple[list, str | None, int | None]:
     return [data], None, 1
 
 
-def follow_pages(
-    client, page: Any, *, limit: int | None = None
-) -> tuple[list, int, int | None]:
+def follow_pages(client, page: Any, *, limit: int | None = None) -> tuple[list, int, int | None]:
     """Collect `page` and every page reachable through its `next` link.
 
     Stops as soon as `limit` records are in hand (no further requests) and
@@ -68,6 +67,7 @@ def fetch(
     paginate: bool = False,
     limit: int | None = None,
     version: str | None = None,
+    unwrap: Callable[[Any], Any] | None = None,
 ) -> tuple[list, dict]:
     """GET `path` (relative to the API root) and return (records, meta).
 
@@ -78,10 +78,15 @@ def fetch(
     tracks) via erclient's `_api_root`.
     """
     params = {k: v for k, v in (params or {}).items() if v is not None}
-    if paginate and "page_size" not in params:
+    # an endpoint with its own envelope isn't DRF-paginated, so page_size would be noise
+    if paginate and unwrap is None and "page_size" not in params:
         params["page_size"] = min(limit, DEFAULT_PAGE_SIZE) if limit else DEFAULT_PAGE_SIZE
     base_url = client._api_root(version) if version else None
     page = client._get(path, base_url=base_url, params=params, max_retries=0)
+    if unwrap is not None:
+        # endpoint-specific envelope (e.g. {"features": [...]}) that normalize_page
+        # would otherwise treat as a single record
+        page = unwrap(page)
     if paginate:
         records, pages, count = follow_pages(client, page, limit=limit)
     else:

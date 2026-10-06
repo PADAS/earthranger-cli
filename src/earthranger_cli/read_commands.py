@@ -14,6 +14,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from typing import Any
 from urllib.parse import quote
 
 import click
@@ -46,6 +47,9 @@ class ReadCommand:
     # endpoint to refuse an unbounded request or fill in a sensible default.
     # Raise click.UsageError to refuse; return the (possibly amended) params.
     prepare: Callable[[dict], dict] | None = None
+    # Unwraps an endpoint-specific response envelope before pagination and
+    # metadata are computed (see read.fetch). Leave None for DRF-shaped pages.
+    unwrap: Callable[[Any], Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -79,12 +83,29 @@ OBSERVATION_SELECTORS = ("subject_id", "source_id", "subjectsource_id", "sourcep
 OBSERVATIONS_DEFAULT_WINDOW = timedelta(hours=24)
 
 
+def _unwrap_featureset_list(page: Any) -> Any:
+    """ER's featureset list is {"features": [...]} from an unpaginated view."""
+    if isinstance(page, dict) and "features" in page and "results" not in page:
+        return list(page.get("features") or [])
+    return page
+
+
+def _parse_iso(value: str, flag: str) -> datetime:
+    try:
+        parsed = datetime.fromisoformat(value)  # Python 3.11+ accepts a trailing Z
+    except ValueError:
+        raise click.UsageError(f"{flag} must be an ISO-8601 timestamp, got {value!r}.") from None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+
+
 def _prepare_observations(params: dict) -> dict:
     """Keep `observations search` bounded.
 
-    ER applies no default time window and, with no selector, falls through to
-    "every observation on the site up to now" — which the CLI would then page
-    through in full. das itself rejects more than one selector.
+    With no selector ER falls through to "every observation on the site up to
+    now", which the CLI would then page through in full; das itself rejects
+    more than one selector. With a selector but no `since`, ER defaults the
+    start to a day before `until` — we do the same client-side so the window
+    is visible in the request and in the stderr note.
     """
     chosen = [p for p in OBSERVATION_SELECTORS if params.get(p)]
     flags = ", ".join("--" + p.replace("_", "-") for p in OBSERVATION_SELECTORS)
@@ -96,10 +117,13 @@ def _prepare_observations(params: dict) -> dict:
     if len(chosen) > 1:
         raise click.UsageError(f"pass only one of {flags} (got {', '.join(chosen)}).")
     if not params.get("since"):
-        since = datetime.now(UTC) - OBSERVATIONS_DEFAULT_WINDOW
-        params["since"] = since.strftime("%Y-%m-%dT%H:%M:%SZ")
+        until = params.get("until")
+        end = _parse_iso(until, "--until") if until else datetime.now(UTC)
+        params["since"] = (end - OBSERVATIONS_DEFAULT_WINDOW).strftime("%Y-%m-%dT%H:%M:%SZ")
+        anchor = f"--until {until}" if until else "now"
         click.echo(
-            f"note: no --since given; defaulting to the last 24 hours ({params['since']}).",
+            f"note: no --since given; defaulting to the 24 hours before {anchor} "
+            f"({params['since']}).",
             err=True,
         )
     return params
@@ -295,8 +319,12 @@ COMMANDS: tuple[ReadCommand, ...] = (
         "featuresets",
         "list",
         "featureset",
-        "List featuresets (id, name, feature types).",
-        flags=(_PAGE_SIZE,),
+        "List featuresets (id, name, feature types). Not paginated on the server.",
+        flags=(
+            Flag("include_hidden", "Include feature types that are not visible.", "bool"),
+            Flag("summarize_features", "Include a feature summary per type.", "bool"),
+        ),
+        unwrap=_unwrap_featureset_list,
     ),
     ReadCommand(
         "featuresets",
@@ -347,7 +375,13 @@ def _make_command(spec: ReadCommand, deps: Deps) -> click.Command:
         if spec.prepare is not None:
             params = spec.prepare(params)
         records, meta = fetch(
-            client, path, params, paginate=spec.kind == "list", limit=limit, version=spec.version
+            client,
+            path,
+            params,
+            paginate=spec.kind == "list",
+            limit=limit,
+            version=spec.version,
+            unwrap=spec.unwrap,
         )
         emit(records, meta, output)
 

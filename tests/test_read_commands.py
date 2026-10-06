@@ -32,7 +32,8 @@ def test_every_command_is_registered_with_output_option():
         names = {p.name for p in cmd.params}
         assert "output" in names, (spec.group, spec.name)
         assert ("limit" in names) == (spec.kind == "list"), (spec.group, spec.name)
-        assert ("page_size" in names) == (spec.kind == "list"), (spec.group, spec.name)
+        paginated = spec.kind == "list" and spec.unwrap is None
+        assert ("page_size" in names) == paginated, (spec.group, spec.name)
         assert cmd.help and spec.help in cmd.help
         assert ("{id}" in spec.path) == (spec.arg is not None), (spec.group, spec.name)
 
@@ -93,12 +94,39 @@ def test_spatial_feature_groups_and_features_replace_fences(fake):
     assert json.loads(result.output)["records"][0]["id"] == "f-1"
 
 
-def test_featuresets_list(fake):
-    fake.responses["featureset"] = {"count": 1, "next": None, "results": [{"id": "f1"}]}
-    result = _run(["featuresets", "list"])
+def test_featuresets_list_unwraps_the_features_envelope(fake):
+    # das's FeatureSetListJsonView: {"features": [...]}, not a DRF page
+    fake.responses["featureset"] = {
+        "features": [
+            {"id": "f1", "name": "Boundaries", "types": [], "description": "", "geojson_url": "/x"},
+            {"id": "f2", "name": "Roads", "types": [], "description": "", "geojson_url": "/y"},
+        ]
+    }
+    result = _run(["featuresets", "list", "--include-hidden"])
     assert result.exit_code == 0, result.output
-    assert _gets(fake)[0][1] == "featureset"
-    assert json.loads(result.output)["records"] == [{"id": "f1"}]
+    assert _gets(fake)[0][1:3] == ("featureset", {"include_hidden": "true"})  # no page_size
+    doc = json.loads(result.output)
+    assert [r["id"] for r in doc["records"]] == ["f1", "f2"]
+    assert doc["meta"] == {"total": 2, "pages": 1, "count_reported": 2}
+
+    result = _run(["featuresets", "list", "--limit", "1"])
+    assert [r["id"] for r in json.loads(result.output)["records"]] == ["f1"]
+
+    fake.responses["featureset"] = {"features": []}
+    result = _run(["featuresets", "list"])
+    assert json.loads(result.output) == {
+        "records": [],
+        "meta": {"total": 0, "pages": 1, "count_reported": 0},
+    }
+
+
+def test_featureset_get_keeps_geojson_feature_collection_whole(fake):
+    # the unwrap is per-row: a FeatureCollection from `get` must stay one record
+    fake.responses["featureset/f1"] = {"type": "FeatureCollection", "features": [{"id": "a"}]}
+    result = _run(["featuresets", "get", "f1"])
+    doc = json.loads(result.output)
+    assert doc["records"][0]["type"] == "FeatureCollection"
+    assert doc["meta"]["total"] == 1
 
 
 def test_help_shows_the_endpoint():
@@ -306,7 +334,7 @@ def test_observations_defaults_since_to_last_24h_and_says_so(fake):
         timedelta(hours=23, minutes=59) < datetime.now(UTC) - since < timedelta(hours=24, minutes=1)
     )
     assert "until" not in params  # ER defaults it to now
-    assert "note: no --since given; defaulting to the last 24 hours" in result.stderr
+    assert "note: no --since given; defaulting to the 24 hours before now" in result.stderr
     assert json.loads(result.stdout)["records"] == []  # stdout stays pure JSON
 
 
@@ -325,3 +353,25 @@ def test_observations_explicit_since_and_provider_selector_pass_through(fake):
         "page_size": 100,
     }
     assert "defaulting" not in result.stderr
+
+
+def test_observations_default_since_is_anchored_to_an_explicit_until(fake):
+    fake.responses["observations"] = {"count": 0, "next": None, "results": []}
+    runner = CliRunner()
+    result = runner.invoke(
+        main,
+        ["observations", "search", "--source-id", "src-1", "--until", "2026-01-02T00:00:00Z"],
+        catch_exceptions=False,
+    )
+    assert result.exit_code == 0, result.output
+    params = _gets(fake)[0][2]
+    assert params["until"] == "2026-01-02T00:00:00Z"
+    assert params["since"] == "2026-01-01T00:00:00Z"  # 24h before --until, not before now
+    assert "defaulting to the 24 hours before --until 2026-01-02T00:00:00Z" in result.stderr
+
+
+def test_observations_rejects_unparseable_until_before_requesting(fake):
+    result = _run(["observations", "search", "--source-id", "src-1", "--until", "yesterday"])
+    assert result.exit_code == 2
+    assert "--until must be an ISO-8601 timestamp" in result.output
+    assert _gets(fake) == []

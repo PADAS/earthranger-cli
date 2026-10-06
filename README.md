@@ -225,7 +225,7 @@ per profile; old `tokens/<host>.json` files are ignored.)
 | `events get EVENT_ID [-o F]` | One event as a one-record `{records, meta}` document |
 | `events list categories\|event-types [--json] [-o F]`, `events show event-type V [--json] [-o F]` | Same as above, opt-in `{records, meta}` output |
 | `status show`, `auth whoami` | Server status; the authenticated user |
-| `subjects search\|get`, `tracks get SUBJECT_ID`, `observations search --subject-id ID` | Read subjects, tracks (v2 GeoJSON), raw observations (one selector required; `--since` defaults to the last 24 h) |
+| `subjects search\|get`, `tracks get SUBJECT_ID`, `observations search --subject-id ID` | Read subjects, tracks (v2 GeoJSON), raw observations (one selector required; `--since` defaults to 24 h before `--until`, or before now) |
 | `patrols search\|get`, `sources search\|get`, `subject-groups list\|get`, `subject-sources search` | Read patrols, sources, groups, collar↔subject assignments |
 | `spatial-feature-groups list\|get ID`, `spatial-features list\|get ID` | Read spatial feature groups and the features in them (geofences, roads, water points, boundaries) |
 | `featuresets list\|get ID`, `regions list` | Read featuresets and their GeoJSON boundaries, operational regions |
