@@ -227,7 +227,8 @@ per profile; old `tokens/<host>.json` files are ignored.)
 | `status show`, `auth whoami` | Server status; the authenticated user |
 | `subjects search\|get`, `tracks get SUBJECT_ID`, `observations search` | Read subjects, tracks (v2 GeoJSON), raw observations |
 | `patrols search\|get`, `sources search\|get`, `subject-groups list\|get`, `subject-sources search` | Read patrols, sources, groups, collar↔subject assignments |
-| `fences list`, `featuresets list\|get ID`, `regions list` | Read geofence groups, featuresets and their GeoJSON boundaries, operational regions |
+| `spatial-feature-groups list\|get ID`, `spatial-features list\|get ID` | Read spatial feature groups and the features in them (geofences, roads, water points, boundaries) |
+| `featuresets list\|get ID`, `regions list` | Read featuresets and their GeoJSON boundaries, operational regions |
 
 Every paginated read command answers to both `list` and `search` (`er subjects list`
 and `er regions search` both work); the names above are the ones shown in `--help`.

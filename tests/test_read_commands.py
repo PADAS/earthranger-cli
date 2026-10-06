@@ -65,6 +65,34 @@ def test_list_alias_runs_the_same_command(fake):
     assert _gets(fake)[1][1] == "regions"
 
 
+def test_spatial_feature_groups_and_features_replace_fences(fake):
+    assert "fences" not in main.commands
+    assert set(main.commands["spatial-feature-groups"].commands) == {"list", "search", "get"}
+    assert set(main.commands["spatial-features"].commands) == {"list", "search", "get"}
+
+    fake.responses["spatialfeaturegroup"] = {"count": 0, "next": None, "results": []}
+    result = _run(["spatial-feature-groups", "list", "--sort-by", "-updated_at"])
+    assert result.exit_code == 0, result.output
+    assert _gets(fake)[0][1:3] == (
+        "spatialfeaturegroup",
+        {"sort_by": "-updated_at", "page_size": 100},
+    )
+
+    fake.responses["spatialfeaturegroup/g-1"] = {"id": "g-1", "name": "Roads"}
+    result = _run(["spatial-feature-groups", "get", "g-1"])
+    assert json.loads(result.output)["records"] == [{"id": "g-1", "name": "Roads"}]
+
+    # das's SpatialFeatureFilterSet uses CSVWidget: one comma-joined value, not repeats
+    fake.responses["spatialfeature"] = {"count": 0, "next": None, "results": []}
+    result = _run(["spatial-features", "list", "--feature-class", "t-1,t-2"])
+    assert result.exit_code == 0, result.output
+    assert _gets(fake)[2][2] == {"feature_class": "t-1,t-2", "page_size": 100}
+
+    fake.responses["spatialfeature/f-1"] = {"type": "Feature", "id": "f-1"}
+    result = _run(["spatial-features", "get", "f-1"])
+    assert json.loads(result.output)["records"][0]["id"] == "f-1"
+
+
 def test_featuresets_list(fake):
     fake.responses["featureset"] = {"count": 1, "next": None, "results": [{"id": "f1"}]}
     result = _run(["featuresets", "list"])

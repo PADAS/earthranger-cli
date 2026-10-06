@@ -62,7 +62,8 @@ GROUP_HELP: dict[str, str] = {
     "sources": "Read collar / device sources.",
     "subject-groups": "Read subject groups.",
     "subject-sources": "Read subject-to-source assignments.",
-    "fences": "Read spatial feature groups (geofences).",
+    "spatial-feature-groups": "Read spatial feature groups (named collections of spatial features).",
+    "spatial-features": "Read spatial features (geofences, roads, water points, boundaries...).",
     "featuresets": "Read featuresets (GeoJSON boundaries).",
     "regions": "Read operational regions.",
 }
@@ -211,18 +212,51 @@ COMMANDS: tuple[ReadCommand, ...] = (
             _PAGE_SIZE,
         ),
     ),
+    # ER serves the v1 mapping read endpoints below with Deprecation/Sunset
+    # headers; they are still the only way to read these objects over the API.
     ReadCommand(
-        "fences",
+        "spatial-feature-groups",
         "list",
         "spatialfeaturegroup",
-        "List spatial feature groups (geofences).",
-        flags=(Flag("sort_by", "Sort field."), _PAGE_SIZE),
+        "List spatial feature groups.",
+        flags=(
+            Flag("sort_by", "name | created_at | updated_at (prefix '-' to reverse)."),
+            _PAGE_SIZE,
+        ),
+    ),
+    ReadCommand(
+        "spatial-feature-groups",
+        "get",
+        "spatialfeaturegroup/{id}",
+        "Retrieve one spatial feature group.",
+        "get",
+        arg="group_id",
+    ),
+    ReadCommand(
+        "spatial-features",
+        "list",
+        "spatialfeature",
+        "List spatial features.",
+        flags=(
+            Flag("feature_class", "Feature type id(s), comma-separated."),
+            Flag("display_category", "Display category id(s), comma-separated."),
+            Flag("sort_by", "name (prefix '-' to reverse)."),
+            _PAGE_SIZE,
+        ),
+    ),
+    ReadCommand(
+        "spatial-features",
+        "get",
+        "spatialfeature/{id}",
+        "Retrieve one spatial feature (GeoJSON).",
+        "get",
+        arg="feature_id",
     ),
     ReadCommand(
         "featuresets",
         "list",
         "featureset",
-        "List featuresets (id, name, feature types). ER marks this endpoint deprecated.",
+        "List featuresets (id, name, feature types).",
         flags=(_PAGE_SIZE,),
     ),
     ReadCommand(
