@@ -119,7 +119,9 @@ def _prepare_observations(params: dict) -> dict:
     if not params.get("since"):
         until = params.get("until")
         end = _parse_iso(until, "--until") if until else datetime.now(UTC)
-        params["since"] = (end - OBSERVATIONS_DEFAULT_WINDOW).strftime("%Y-%m-%dT%H:%M:%SZ")
+        # `end` keeps whatever offset --until carried; convert before stamping a Z
+        start = (end - OBSERVATIONS_DEFAULT_WINDOW).astimezone(UTC)
+        params["since"] = start.strftime("%Y-%m-%dT%H:%M:%SZ")
         anchor = f"--until {until}" if until else "now"
         click.echo(
             f"note: no --since given; defaulting to the 24 hours before {anchor} "

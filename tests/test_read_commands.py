@@ -375,3 +375,18 @@ def test_observations_rejects_unparseable_until_before_requesting(fake):
     assert result.exit_code == 2
     assert "--until must be an ISO-8601 timestamp" in result.output
     assert _gets(fake) == []
+
+
+@pytest.mark.parametrize(
+    ("until", "expected_since"),
+    [
+        ("2026-01-02T00:00:00+03:00", "2025-12-31T21:00:00Z"),  # positive offset
+        ("2026-01-02T00:00:00-05:00", "2026-01-01T05:00:00Z"),  # negative offset
+        ("2026-01-02T00:00:00", "2026-01-01T00:00:00Z"),  # naive: treated as UTC
+    ],
+)
+def test_observations_default_since_converts_until_offset_to_utc(fake, until, expected_since):
+    fake.responses["observations"] = {"count": 0, "next": None, "results": []}
+    result = _run(["observations", "search", "--source-id", "src-1", "--until", until])
+    assert result.exit_code == 0, result.output
+    assert _gets(fake)[0][2]["since"] == expected_since
