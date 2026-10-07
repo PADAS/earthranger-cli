@@ -11,6 +11,7 @@ output.emit) so agent skills can consume it unchanged.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -20,7 +21,7 @@ from urllib.parse import quote
 import click
 
 from .output import emit
-from .read import fetch
+from .read import fetch, follow_pages
 
 
 @dataclass(frozen=True)
@@ -50,6 +51,10 @@ class ReadCommand:
     # Unwraps an endpoint-specific response envelope before pagination and
     # metadata are computed (see read.fetch). Leave None for DRF-shaped pages.
     unwrap: Callable[[Any], Any] | None = None
+    # Runs on the query params after connecting, for lookups that need the
+    # server (e.g. turning event-type names into the ids the API filters on).
+    # Raise click.UsageError to refuse; return the (possibly amended) params.
+    resolve: Callable[[Any, dict], dict] | None = None
 
 
 @dataclass(frozen=True)
@@ -88,6 +93,73 @@ def _unwrap_featureset_list(page: Any) -> Any:
     if isinstance(page, dict) and "features" in page and "results" not in page:
         return list(page.get("features") or [])
     return page
+
+
+_UUID_RE = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.IGNORECASE
+)
+
+
+def _all_event_types(client) -> list[dict]:
+    """Every event type on the server, both schema versions.
+
+    das serves v1 and v2 types from separate listings — the v1 endpoint
+    filters to version 1 and the v2 endpoint to version 2 — so a type created
+    by this CLI (always v2) is missing from the v1 list and vice versa. The
+    v2 listing is a plain list today; it is run through the page normalizer
+    so a paginated response would also work.
+    """
+    v1 = client.get_event_types(include_inactive=True)
+    v2_page = client.get_event_types(include_inactive=True, version="v2.0")
+    v2, _, _ = follow_pages(client, v2_page)
+    return [t for t in list(v1 or []) + list(v2) if isinstance(t, dict)]
+
+
+def _resolve_event_types(client, params: dict) -> dict:
+    """Let --event-type take values (`geofence_break`) or display names
+    (`Geofence Break`) as well as ids: the events endpoint filters on
+    event-type *id*, so names are mapped through the event-types listings.
+    Ids pass through untouched, so names and ids can be mixed. An exact
+    value match is authoritative; a display name is accepted only when it
+    matches exactly one type, since das does not require them to be unique."""
+    wanted = params.get("event_type")
+    if not wanted or all(_UUID_RE.match(w) for w in wanted):
+        return params
+    types = _all_event_types(client)
+    by_value: dict[str, str] = {}
+    by_display: dict[str, list[dict]] = {}
+    for t in types:
+        if not t.get("id"):
+            continue
+        if t.get("value"):
+            by_value[t["value"]] = t["id"]
+        if t.get("display"):
+            by_display.setdefault(str(t["display"]).casefold(), []).append(t)
+    resolved: list[str] = []
+    for w in wanted:
+        if _UUID_RE.match(w):
+            resolved.append(w)
+            continue
+        if w in by_value:
+            resolved.append(by_value[w])
+            continue
+        matches = by_display.get(w.casefold(), [])
+        if len(matches) == 1:
+            resolved.append(matches[0]["id"])
+            continue
+        if len(matches) > 1:
+            options = ", ".join(sorted(f"{m.get('value')} ({m['id']})" for m in matches))
+            raise click.UsageError(
+                f"display name {w!r} matches {len(matches)} event types: {options}. "
+                "Pass the value or id instead."
+            )
+        available = ", ".join(sorted(by_value))
+        raise click.UsageError(
+            f"unknown event type {w!r}. Pass a value, display name or id; "
+            f"values on this server: {available}"
+        )
+    params["event_type"] = resolved
+    return params
 
 
 def _parse_iso(value: str, flag: str) -> datetime:
@@ -204,7 +276,8 @@ COMMANDS: tuple[ReadCommand, ...] = (
         flags=(
             Flag(
                 "event_type",
-                "Event type id(s), comma-separated (ids, not friendly values).",
+                "Event type value(s), display name(s) or id(s), comma-separated; "
+                "names are resolved to ids for you.",
                 "list",
             ),
             Flag("event_category", "Event category value."),
@@ -222,6 +295,7 @@ COMMANDS: tuple[ReadCommand, ...] = (
             Flag("exclude_contained", "Exclude events contained in a collection.", "bool"),
             _PAGE_SIZE,
         ),
+        resolve=_resolve_event_types,
     ),
     ReadCommand(
         "events", "get", "activity/event/{id}", "Retrieve one event.", "get", arg="event_id"
@@ -379,6 +453,8 @@ def _make_command(spec: ReadCommand, deps: Deps) -> click.Command:
         if spec.prepare is not None:
             params = spec.prepare(params)
         client = deps.connect(ctx)
+        if spec.resolve is not None:
+            params = spec.resolve(client, params)
         records, meta = fetch(
             client,
             path,

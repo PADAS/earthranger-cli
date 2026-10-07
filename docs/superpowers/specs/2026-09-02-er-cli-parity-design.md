@@ -191,8 +191,11 @@ added `spatial-features list|get` and `featuresets list`.
 
 - [x] Decide on spec-derived flags for the read surface: **no**, see
       §Read-only resource commands. (2026-10-07)
-- [ ] Event-type name → id resolution on `events search --event_type`
-      (values, display names, UUIDs, comma-mixed); reuse in `events post`.
+- [x] Event-type name → id resolution on `events search --event-type`
+      (values, display names case-insensitively, UUIDs, comma-mixed; one
+      event-types listing per invocation, none when only ids are given).
+      (2026-10-07) `events post` needs nothing: das's event write takes the
+      type *value*, not an id.
 - [ ] Retries with backoff on 429/5xx/network for reads.
 - [ ] `--version` flag.
 - [x] Show `[GET /api/v1.0/...]` in each read command's `--help`. (2026-09-23,

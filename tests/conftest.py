@@ -19,6 +19,10 @@ class FakeER:
     def __init__(self, categories=None, event_types=None, choices=None):
         self.categories = categories or []
         self.event_types = event_types or []
+        # set by tests that need the v2 listing to differ from v1 (das serves
+        # them separately); None means "same as event_types" for the many
+        # authoring tests that don't care
+        self.event_types_v2 = None
         self.choices = choices or {}  # field name -> list[dict]
         self.calls = []  # (method, ...) tuples, appended for every call
         self.auth = None  # token dict, set by token_store.apply_to_client
@@ -51,6 +55,8 @@ class FakeER:
     # --- event types ---
     def get_event_types(self, include_inactive=False, include_schema=False, version="v1.0"):
         self.calls.append(("get_event_types", version))
+        if version == "v2.0" and self.event_types_v2 is not None:
+            return self.event_types_v2
         return self.event_types
 
     def post_event_type(self, event_type, version="v1.0"):
