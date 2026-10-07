@@ -134,14 +134,19 @@ command is a thin wrapper:
 | `featuresets list` / `get ID` | `_get("featureset")` / `_get("featureset/{id}")` |
 | `regions list` | `_get("regions")` |
 
-**Open question — spec-derived flags.** er-cli's core idea is that
+**Decided 2026-10-07 — spec-derived flags: no.** er-cli's idea was that
 re-bundling `openapi.yaml` updates every command's flags with no code
-change. Recommended: adopt it for the `search`/`list` read commands
-(bundle the spec, port `spec.py`, build click options at import time from
-each operation's query params, add a test that flags match the spec) and
-keep authoring commands hand-written. Alternative: hand-write the flags
-each command needs today and skip the 14k-line spec. Decide when starting
-P1; P0 can ship hand-written flags and switch later.
+change. In practice every read command shipped since P0 (PR 18, PR 23:
+seventeen rows) used the hand-written `Flag` registry, and three review
+rounds showed why that is the better fit: the flags that mattered needed
+per-flag knowledge the OpenAPI spec does not carry — which multi-value
+params das reads with `getlist()` (repeated params) versus `CSVWidget`
+(one comma-joined value), which numeric params das parses with `int()`,
+which endpoints are unpaginated `APIView`s with their own envelope. A
+14k-line bundled spec would have generated the wrong encodings for all of
+those and still needed a per-row override table. Hand-written rows stay;
+each row is one `ReadCommand` with its flags, and endpoint quirks live on
+the row (`prepare`, `unwrap`).
 
 ### Pagination and retries
 
@@ -157,11 +162,16 @@ P1; P0 can ship hand-written flags and switch later.
 
 er-cli uses top-level `event-types list` and `event-categories list`;
 this repo nests them as `events list event-types` / `events list
-categories`, and uses `list` where er-cli uses `search`. Pick one and add
-hidden aliases for the other so existing scripts and tusker skill drafts
-both work. Leaning: keep this repo's nesting for event objects (they are
-the authoring domain) and adopt er-cli's flat `<resource> <action>` for
-everything new.
+categories`, and uses `list` where er-cli uses `search`.
+
+**Decided 2026-10-06 (PR 23).** Every paginated read command answers to
+both `list` and `search`, as visible aliases of one Command; the row's own
+name is the one in `--help`. `events list` stays the authoring sub-group
+and is not aliased. Event objects keep this repo's nesting; everything new
+uses er-cli's flat `<resource> <action>`. PR 23 also renamed er-cli's
+`fences` to `spatial-feature-groups` (a group holds roads, water points
+and boundaries as well as geofences; nothing in das is called a fence) and
+added `spatial-features list|get` and `featuresets list`.
 
 ## Todo
 
@@ -179,15 +189,44 @@ everything new.
 
 ### P1 — robustness and ergonomics
 
-- [ ] Decide on and (if yes) implement spec-derived flags for the read
-      surface.
+- [x] Decide on spec-derived flags for the read surface: **no**, see
+      §Read-only resource commands. (2026-10-07)
 - [ ] Event-type name → id resolution on `events search --event_type`
       (values, display names, UUIDs, comma-mixed); reuse in `events post`.
 - [ ] Retries with backoff on 429/5xx/network for reads.
 - [ ] `--version` flag.
 - [x] Show `[GET /api/v1.0/...]` in each read command's `--help`. (2026-09-23,
       shipped with the read surface)
-- [ ] Command-naming aliases per the Naming section.
+- [x] Command-naming aliases per the Naming section. (2026-10-06, PR 23 —
+      plus the `fences` rename and the `observations search` guard, see
+      §Hardening.)
+
+### Hardening (not in the original phases; driven by early users and review)
+
+Work that kept the shipped surface honest rather than extending it. Listed
+so the phases above don't suggest the repo was idle between P0 and P1.
+
+- [x] `--server` accepts hostnames and URLs, not just site names
+      (`sandbox.pamdas.org` no longer becomes `sandbox.pamdas.org.pamdas.org`);
+      canonical lower-cased host for identity comparisons; junk stored
+      servers are tolerated. (PR 9)
+- [x] Token-auth follow-ups: every `/user/me/` outcome has a clean error,
+      401s on writes carry the credential remedy, static records never hit
+      the refresh path. (PR 10)
+- [x] `events search` multi-value filters as repeated params; integer
+      `--max-gap-minutes`. (PR 18 review)
+- [x] `observations search` requires exactly one selector and defaults
+      `--since` to 24 h before `--until` (or now), converted to UTC; the
+      guard runs before any connection. Without it a bare call paged
+      through every observation on the site. (PR 23)
+- [x] `featuresets list` unwraps das's `{"features": [...]}` envelope so
+      `--limit` and `meta` are right. (PR 23)
+- [ ] **`events post` validates event details against the type's v2
+      schema before sending.** das deliberately does not validate
+      `event_details` against the JSON schema on write (`schemas/submission.py`
+      says so), so a wrong field key, a non-choice select value, a string
+      where a number is expected, or a missing required field is stored
+      silently and mis-rendered later. Raised by an early user; next up.
 
 ### P2 — consolidation
 
