@@ -11,8 +11,8 @@ import click
 import requests.exceptions
 from erclient.er_errors import ERClientBadCredentials, ERClientException, ERClientNotFound
 
+from . import __version__, config_store, token_store
 from . import client as er
-from . import config_store, token_store
 from . import read_commands as _read_commands
 from .apply import ApplyError, apply_spec, extract_choice_fields, normalize_v2_schema
 from .choices import choice_sort_key
@@ -269,6 +269,7 @@ def _connect_with_cached_token(ctx, name: str, profile: dict, server: str, cache
 
 
 @click.group()
+@click.version_option(__version__, "--version", prog_name="er")
 @click.option(
     "--server",
     envvar="ER_SERVER",

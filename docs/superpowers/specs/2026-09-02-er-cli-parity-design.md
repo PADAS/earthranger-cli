@@ -196,8 +196,11 @@ added `spatial-features list|get` and `featuresets list`.
       event-types listing per invocation, none when only ids are given).
       (2026-10-07) `events post` needs nothing: das's event write takes the
       type *value*, not an id.
-- [ ] Retries with backoff on 429/5xx/network for reads.
-- [ ] `--version` flag.
+- [x] Retries with backoff on 429/5xx/network for reads. (2026-10-07) A
+      GET-only urllib3 `Retry` mounted on erclient's session: 3 retries,
+      0/2/4 s backoff, `Retry-After` honoured, writes never replayed;
+      erclient's own fixed-sleep loop stays disabled so nothing retries twice.
+- [x] `--version` flag. (2026-10-07)
 - [x] Show `[GET /api/v1.0/...]` in each read command's `--help`. (2026-09-23,
       shipped with the read surface)
 - [x] Command-naming aliases per the Naming section. (2026-10-06, PR 23 —

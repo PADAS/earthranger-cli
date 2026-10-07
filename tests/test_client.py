@@ -9,6 +9,7 @@ from earthranger_cli.client import (
     get_me,
     make_client,
     make_static_token_client,
+    make_token_client,
     normalize_server,
     patch_choice,
     post_choice,
@@ -162,3 +163,39 @@ def test_get_me_is_a_one_shot_probe():
 def test_normalize_server_rejects_non_strings_as_server_error(bad):
     with pytest.raises(ServerError, match="invalid server"):
         normalize_server(bad)
+
+
+@pytest.mark.parametrize(
+    "make",
+    [
+        lambda: make_client(server="x", username="u", password="p"),
+        lambda: make_token_client(server="x"),
+        lambda: make_static_token_client(server="x", token="t"),
+    ],
+)
+def test_every_client_gets_the_get_only_read_retry_policy(make):
+    client = make()
+    for scheme in ("https://x.pamdas.org/api/v1.0/subjects", "http://localhost:8000/api/v1.0/x"):
+        retry = client._http_session.get_adapter(scheme).max_retries
+        assert retry.total == 3
+        assert set(retry.status_forcelist) == {429, 500, 502, 503, 504}
+        assert retry.backoff_factor == 1
+        assert retry.respect_retry_after_header is True
+        assert retry.raise_on_status is False  # erclient maps the final status itself
+        # writes are never replayed: a timed-out POST may have landed
+        assert retry.is_retry("GET", 503) is True
+        assert retry.is_retry("POST", 503) is False
+        assert retry.is_retry("PATCH", 502) is False
+        assert retry.is_retry("GET", 404) is False  # not transient
+
+
+def test_read_retry_backoff_schedule():
+    from urllib3.util.retry import RequestHistory
+
+    from earthranger_cli.client import _read_retry_policy
+
+    policy = _read_retry_policy()
+    attempt = RequestHistory("GET", "/api/v1.0/subjects", None, 503, None)
+    # urllib3: no wait before the first retry, then factor * 2**(n-1)
+    waits = [policy.new(history=(attempt,) * n).get_backoff_time() for n in (1, 2, 3)]
+    assert waits == [0, 2, 4]
