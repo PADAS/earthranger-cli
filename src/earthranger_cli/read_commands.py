@@ -11,6 +11,7 @@ output.emit) so agent skills can consume it unchanged.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -50,6 +51,10 @@ class ReadCommand:
     # Unwraps an endpoint-specific response envelope before pagination and
     # metadata are computed (see read.fetch). Leave None for DRF-shaped pages.
     unwrap: Callable[[Any], Any] | None = None
+    # Runs on the query params after connecting, for lookups that need the
+    # server (e.g. turning event-type names into the ids the API filters on).
+    # Raise click.UsageError to refuse; return the (possibly amended) params.
+    resolve: Callable[[Any, dict], dict] | None = None
 
 
 @dataclass(frozen=True)
@@ -88,6 +93,41 @@ def _unwrap_featureset_list(page: Any) -> Any:
     if isinstance(page, dict) and "features" in page and "results" not in page:
         return list(page.get("features") or [])
     return page
+
+
+_UUID_RE = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.IGNORECASE
+)
+
+
+def _resolve_event_types(client, params: dict) -> dict:
+    """Let --event-type take values (`geofence_break`) or display names
+    (`Geofence Break`) as well as ids: the events endpoint filters on
+    event-type *id*, so names are mapped through one event-types listing.
+    Ids pass through untouched, so names and ids can be mixed."""
+    wanted = params.get("event_type")
+    if not wanted or all(_UUID_RE.match(w) for w in wanted):
+        return params
+    types = [t for t in client.get_event_types(include_inactive=True) if isinstance(t, dict)]
+    by_value = {t["value"]: t["id"] for t in types if t.get("value") and t.get("id")}
+    by_display = {
+        str(t["display"]).casefold(): t["id"] for t in types if t.get("display") and t.get("id")
+    }
+    resolved: list[str] = []
+    for w in wanted:
+        if _UUID_RE.match(w):
+            resolved.append(w)
+            continue
+        type_id = by_value.get(w) or by_display.get(w.casefold())
+        if not type_id:
+            available = ", ".join(sorted(by_value))
+            raise click.UsageError(
+                f"unknown event type {w!r}. Pass a value, display name or id; "
+                f"values on this server: {available}"
+            )
+        resolved.append(type_id)
+    params["event_type"] = resolved
+    return params
 
 
 def _parse_iso(value: str, flag: str) -> datetime:
@@ -204,7 +244,8 @@ COMMANDS: tuple[ReadCommand, ...] = (
         flags=(
             Flag(
                 "event_type",
-                "Event type id(s), comma-separated (ids, not friendly values).",
+                "Event type value(s), display name(s) or id(s), comma-separated; "
+                "names are resolved to ids for you.",
                 "list",
             ),
             Flag("event_category", "Event category value."),
@@ -222,6 +263,7 @@ COMMANDS: tuple[ReadCommand, ...] = (
             Flag("exclude_contained", "Exclude events contained in a collection.", "bool"),
             _PAGE_SIZE,
         ),
+        resolve=_resolve_event_types,
     ),
     ReadCommand(
         "events", "get", "activity/event/{id}", "Retrieve one event.", "get", arg="event_id"
@@ -379,6 +421,8 @@ def _make_command(spec: ReadCommand, deps: Deps) -> click.Command:
         if spec.prepare is not None:
             params = spec.prepare(params)
         client = deps.connect(ctx)
+        if spec.resolve is not None:
+            params = spec.resolve(client, params)
         records, meta = fetch(
             client,
             path,

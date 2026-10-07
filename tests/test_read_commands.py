@@ -202,9 +202,22 @@ def test_tracks_uses_v2_root_and_float_flags(fake):
 
 def test_events_search_lives_under_existing_events_group(fake):
     fake.responses["activity/events"] = {"count": 1, "next": None, "results": [{"id": "e1"}]}
-    result = _run(["events", "search", "--event-type", "uuid-1", "--state", "active"])
+    result = _run(
+        [
+            "events",
+            "search",
+            "--event-type",
+            "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+            "--state",
+            "active",
+        ]
+    )
     assert result.exit_code == 0, result.output
-    assert _gets(fake)[0][2] == {"event_type": ["uuid-1"], "state": ["active"], "page_size": 100}
+    assert _gets(fake)[0][2] == {
+        "event_type": ["aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"],
+        "state": ["active"],
+        "page_size": 100,
+    }
     # the authoring commands are still there
     assert {"apply", "post", "list", "show", "pull", "search", "get"} <= set(
         main.commands["events"].commands
@@ -278,15 +291,25 @@ def test_events_multi_value_filters_are_repeated_query_params(fake):
     # the literal string "a,b"; it must go out as ?state=a&state=b
     fake.responses["activity/events"] = {"count": 0, "next": None, "results": []}
     result = _run(
-        ["events", "search", "--state", "active, resolved", "--event-type", "uuid-1,uuid-2"]
+        [
+            "events",
+            "search",
+            "--state",
+            "active, resolved",
+            "--event-type",
+            "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa,bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+        ]
     )
     assert result.exit_code == 0, result.output
     params = _gets(fake)[0][2]
     assert params["state"] == ["active", "resolved"]
-    assert params["event_type"] == ["uuid-1", "uuid-2"]
+    assert params["event_type"] == [
+        "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+        "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+    ]
     assert (
         _encoded({k: params[k] for k in ("state", "event_type")})
-        == "state=active&state=resolved&event_type=uuid-1&event_type=uuid-2"
+        == "state=active&state=resolved&event_type=aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa&event_type=bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
     )
 
 
@@ -406,3 +429,67 @@ def test_observations_default_since_converts_until_offset_to_utc(fake, until, ex
     result = _run(["observations", "search", "--source-id", "src-1", "--until", until])
     assert result.exit_code == 0, result.output
     assert _gets(fake)[0][2]["since"] == expected_since
+
+
+_TYPES = [
+    {
+        "id": "11111111-1111-1111-1111-111111111111",
+        "value": "geofence_break",
+        "display": "Geofence Break",
+    },
+    {"id": "22222222-2222-2222-2222-222222222222", "value": "high_speed", "display": "High Speed"},
+    {
+        "id": "33333333-3333-3333-3333-333333333333",
+        "value": "old_type",
+        "display": "Old",
+        "is_active": False,
+    },
+]
+
+
+def _types_fetches(fake):
+    return [c for c in fake.calls if c[0] == "get_event_types"]
+
+
+def test_events_search_resolves_values_display_names_and_mixed_ids(fake):
+    fake.event_types = _TYPES
+    fake.responses["activity/events"] = {"count": 0, "next": None, "results": []}
+    result = _run(
+        [
+            "events",
+            "search",
+            "--event-type",
+            "geofence_break, high speed,33333333-3333-3333-3333-333333333333",
+        ]
+    )
+    assert result.exit_code == 0, result.output
+    params = next(c for c in fake.calls if c[0] == "_get" and c[1] == "activity/events")[2]
+    assert params["event_type"] == [
+        "11111111-1111-1111-1111-111111111111",  # by value
+        "22222222-2222-2222-2222-222222222222",  # by display name, case-insensitive
+        "33333333-3333-3333-3333-333333333333",  # id passed through
+    ]
+    assert len(_types_fetches(fake)) == 1  # one listing for the whole flag
+
+
+def test_events_search_with_only_ids_does_not_fetch_event_types(fake):
+    fake.responses["activity/events"] = {"count": 0, "next": None, "results": []}
+    result = _run(["events", "search", "--event-type", "11111111-1111-1111-1111-111111111111"])
+    assert result.exit_code == 0, result.output
+    assert _types_fetches(fake) == []
+
+
+def test_events_search_unknown_name_lists_the_servers_values(fake):
+    fake.event_types = _TYPES
+    result = _run(["events", "search", "--event-type", "geofence_brake"])
+    assert result.exit_code == 2
+    assert "unknown event type 'geofence_brake'" in result.output
+    assert "values on this server: geofence_break, high_speed, old_type" in result.output
+    assert not any(c[0] == "_get" and c[1] == "activity/events" for c in fake.calls)
+
+
+def test_events_search_without_event_type_is_unchanged(fake):
+    fake.responses["activity/events"] = {"count": 0, "next": None, "results": []}
+    result = _run(["events", "search", "--state", "active"])
+    assert result.exit_code == 0, result.output
+    assert _types_fetches(fake) == []
