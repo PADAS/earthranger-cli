@@ -149,9 +149,25 @@ def test_explicit_non_object_details_reach_the_schema(details):
     assert len(errors[0]) == 1 and errors[0][0].endswith("is not of type 'object'")
 
 
-def test_null_details_mean_no_details():
-    errors = validate_events(_fake(), [{"event_type": "animal_sighting", "event_details": None}])
-    assert errors == [["species: required field is missing"]]
+@pytest.mark.parametrize(
+    "schema", [None, {"json": {"type": "object", "properties": {"count": {"type": "number"}}}}]
+)
+def test_null_details_are_rejected_even_without_required_fields_or_schema(schema):
+    fake = _fake()
+    fake.responses["activity/eventtypes/animal_sighting/schema"] = schema
+    event = {"event_type": "animal_sighting", "event_details": None}
+    assert validate_events(fake, [event]) == [
+        ["event_details must be an object; use {} or omit the field for no details."]
+    ]
+    assert event["event_details"] is None
+
+
+def test_omitted_details_are_accepted_without_required_fields():
+    fake = _fake()
+    fake.responses["activity/eventtypes/animal_sighting/schema"] = {
+        "json": {"type": "object", "properties": {"count": {"type": "number"}}}
+    }
+    assert validate_events(fake, [{"event_type": "animal_sighting"}]) == [[]]
 
 
 # A v2 type with a collection, a conditional section holding another

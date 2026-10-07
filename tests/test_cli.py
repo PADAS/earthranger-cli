@@ -1874,6 +1874,24 @@ def test_post_batch_reports_each_bad_event_and_posts_none(fake):
     ]
 
 
+def test_post_batch_with_null_details_posts_nothing(fake, tmp_path):
+    _seed_sighting(fake)
+    fake.responses["activity/eventtypes/animal_sighting/schema"] = {
+        "json": {"type": "object", "properties": {"count": {"type": "number"}}}
+    }
+    runner = CliRunner()
+    path = tmp_path / "events.yaml"
+    path.write_text(
+        "- {event_type: animal_sighting, event_details: {count: 1}}\n"
+        "- {event_type: animal_sighting, event_details: null}\n"
+    )
+    result = runner.invoke(main, ["events", "post", "--file", str(path)], catch_exceptions=False)
+    assert result.exit_code == 1
+    assert "events[1]): event_details must be an object; use {} or omit the field" in result.output
+    assert "1 of 2 event(s) failed validation; nothing was posted" in result.output
+    assert not any(c[0] == "post_event" for c in fake.calls)
+
+
 def test_post_unknown_event_type_is_a_clean_error(fake):
     from erclient.er_errors import ERClientNotFound
 

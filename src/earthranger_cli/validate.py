@@ -171,15 +171,17 @@ def validate_events(client, events: list[dict]) -> list[list[str]]:
                 )
                 validators[value] = cls(schema)
         validator = validators[value]
+        # Only omission means "no details". Never validate a replacement for
+        # an explicit null that would still be sent unchanged to the server.
+        details = event.get("event_details", {})
+        if details is None:
+            problems.append(
+                ["event_details must be an object; use {} or omit the field for no details."]
+            )
+            continue
         if validator is None:
             problems.append([])
             continue
-        # absent or null details mean "no details" (das defaults the field to
-        # {}); any other value — [], false, 0, "" — is the caller's and must
-        # reach the schema, which will say it is not an object
-        details = event.get("event_details")
-        if details is None:
-            details = {}
         errors = list(validator.iter_errors(details))
         # When a conditional section's `then` branch fails deeper down (a bad
         # item inside its collection), 2020-12 no longer counts that branch's
