@@ -221,12 +221,16 @@ so the phases above don't suggest the repo was idle between P0 and P1.
       through every observation on the site. (PR 23)
 - [x] `featuresets list` unwraps das's `{"features": [...]}` envelope so
       `--limit` and `meta` are right. (PR 23)
-- [ ] **`events post` validates event details against the type's v2
-      schema before sending.** das deliberately does not validate
-      `event_details` against the JSON schema on write (`schemas/submission.py`
-      says so), so a wrong field key, a non-choice select value, a string
-      where a number is expected, or a missing required field is stored
-      silently and mis-rendered later. Raised by an early user; next up.
+- [x] **`events post` validates event details against the type's schema
+      before sending** (2026-10-07, PR 26). das deliberately does not
+      validate `event_details` on write (`schemas/submission.py` says so), so
+      a wrong field key, a non-choice select value, a string where a number
+      is expected, or a missing required field was stored silently. The CLI
+      fetches ER's own rendered schema once per type (v2:
+      `eventtypes/<v>/schema?pre_render=true&s_format=enum`, choices inlined
+      as enums, strictness re-added; v1: the legacy rendered envelope) and
+      checks every event with `jsonschema` before any post; `--no-validate`
+      skips it. Raised by an early user.
 
 ### P2 — consolidation
 
