@@ -23,9 +23,9 @@ V2_RENDERED = {
     "ui": {},
 }
 
-V1_TYPE = {"value": "fence_break", "version": "1", "display": "Fence Break"}
-# What GET /api/v1.0/activity/events/schema/eventtype/fence_break returns: the
-# jinja-rendered v1 envelope with inline enums.
+# A v1 type is NOT served by the v2 detail endpoint (das filters it to v2);
+# the CLI falls back to GET /api/v1.0/activity/events/schema/eventtype/fence_break,
+# the jinja-rendered v1 envelope with inline enums.
 V1_RENDERED = {
     "schema": {
         "$schema": "http://json-schema.org/draft-04/schema#",
@@ -44,7 +44,6 @@ def _fake():
     fake = FakeER()
     fake.responses["activity/eventtypes/animal_sighting"] = V2_TYPE
     fake.responses["activity/eventtypes/animal_sighting/schema"] = V2_RENDERED
-    fake.responses["activity/eventtypes/fence_break"] = V1_TYPE
     fake.responses["activity/events/schema/eventtype/fence_break"] = V1_RENDERED
     return fake
 
@@ -100,10 +99,12 @@ def test_schema_is_fetched_once_per_type():
         [_ev("animal_sighting", species="lion"), _ev("animal_sighting", species="elephant")]
         + [_ev("fence_break", fence_name="north")] * 3,
     )
-    schema_gets = [c[1] for c in fake.calls if c[0] == "_get" and "schema" in c[1]]
-    assert schema_gets == [
+    gets = [c[1] for c in fake.calls if c[0] == "_get"]
+    assert gets == [
+        "activity/eventtypes/animal_sighting",
         "activity/eventtypes/animal_sighting/schema",
-        "activity/events/schema/eventtype/fence_break",
+        "activity/eventtypes/fence_break",  # 404: not a v2 type
+        "activity/events/schema/eventtype/fence_break",  # so resolved as v1
     ]
     # the v2 rendered schema is requested with choices inlined as enums
     v2_call = next(c for c in fake.calls if c[1] == "activity/eventtypes/animal_sighting/schema")
@@ -115,7 +116,7 @@ def test_unknown_event_type_raises_before_validating_anything():
     fake = _fake()
 
     def missing(path, base_url=None, params=None, max_retries=5, **kw):
-        if path == "activity/eventtypes/nope":
+        if path.endswith("/nope"):  # neither a v2 type nor a v1 type
             raise ERClientNotFound()
         return FakeER._get(fake, path, base_url=base_url, params=params, max_retries=max_retries)
 
@@ -134,3 +135,121 @@ def test_type_with_no_schema_accepts_anything():
     fake.responses["activity/eventtypes/empty"] = {"value": "empty", "version": "2"}
     fake.responses["activity/eventtypes/empty/schema"] = None
     assert validate_events(fake, [_ev("empty", anything="goes")]) == [[]]
+
+
+@pytest.mark.parametrize("bad", [None, 7, {"value": "x"}, "", ["a"]])
+def test_non_string_event_type_is_a_clean_error(bad):
+    with pytest.raises(UnknownEventType, match="event_type must be a non-empty string"):
+        validate_events(_fake(), [{"event_type": bad, "event_details": {}}])
+
+
+@pytest.mark.parametrize("details", [[], False, 0, ""])
+def test_explicit_non_object_details_reach_the_schema(details):
+    errors = validate_events(_fake(), [{"event_type": "animal_sighting", "event_details": details}])
+    assert len(errors[0]) == 1 and errors[0][0].endswith("is not of type 'object'")
+
+
+def test_null_details_mean_no_details():
+    errors = validate_events(_fake(), [{"event_type": "animal_sighting", "event_details": None}])
+    assert errors == [["species: required field is missing"]]
+
+
+# A v2 type with a collection, a conditional section holding another
+# collection, a location (fixed shape) and an attachment field — rendered as
+# das serves it: strictness stripped on the root and on both collections.
+V2_NESTED = {
+    "json": {
+        "type": "object",
+        "properties": {
+            "animals": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "count": {"type": "number"},
+                        "species": {"type": "string", "enum": ["lion", "elephant"]},
+                    },
+                    "required": ["species"],
+                },
+            },
+            "where": {
+                "type": "object",
+                "properties": {"latitude": {"type": "number"}, "longitude": {"type": "number"}},
+                "unevaluatedProperties": False,
+            },
+            "photos": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {"uploadId": {"type": "string"}},
+                    "unevaluatedProperties": False,
+                },
+            },
+            "has_injuries": {"type": "boolean"},
+        },
+        "allOf": [
+            {
+                "if": {
+                    "properties": {"has_injuries": {"const": True}},
+                    "required": ["has_injuries"],
+                },
+                "then": {
+                    "properties": {
+                        "injuries": {
+                            "type": "array",
+                            "items": {"type": "object", "properties": {"kind": {"type": "string"}}},
+                        }
+                    }
+                },
+            }
+        ],
+    }
+}
+
+
+def _nested_fake():
+    fake = FakeER()
+    fake.responses["activity/eventtypes/nested"] = {"value": "nested", "version": "2"}
+    fake.responses["activity/eventtypes/nested/schema"] = V2_NESTED
+    return fake
+
+
+def test_unknown_keys_inside_collection_items_are_errors_with_their_path():
+    errors = validate_events(
+        _nested_fake(),
+        [_ev("nested", animals=[{"species": "lion"}, {"species": "lion", "coutn": 2}])],
+    )
+    assert errors == [["animals.1.coutn: not a field of 'nested'"]]
+
+
+def test_missing_required_inside_collection_item_names_the_item():
+    errors = validate_events(_nested_fake(), [_ev("nested", animals=[{"count": 2}])])
+    assert errors == [["animals.0.species: required field is missing"]]
+
+
+def test_conditional_section_collection_items_are_strict_too():
+    errors = validate_events(
+        _nested_fake(),
+        [_ev("nested", has_injuries=True, injuries=[{"kind": "leg"}, {"knid": "tail"}])],
+    )
+    assert errors == [["injuries.1.knid: not a field of 'nested'"]]
+    # and the section's own field is accepted when the condition holds
+    assert validate_events(_nested_fake(), [_ev("nested", has_injuries=True, injuries=[])]) == [[]]
+
+
+def test_fixed_shape_objects_keep_their_own_rules():
+    # location-like objects and attachment items are not collections: das
+    # leaves their strictness alone, and so do we — they validate as written
+    errors = validate_events(
+        _nested_fake(),
+        [
+            _ev(
+                "nested",
+                where={"latitude": 1, "longitude": 2, "altitude": 3},
+                photos=[{"uploadId": "u", "x": 1}],
+            )
+        ],
+    )
+    assert errors == [
+        ["photos.0.x: not a field of 'nested'", "where.altitude: not a field of 'nested'"]
+    ]

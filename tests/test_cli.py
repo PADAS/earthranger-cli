@@ -1878,7 +1878,7 @@ def test_post_unknown_event_type_is_a_clean_error(fake):
     from erclient.er_errors import ERClientNotFound
 
     def missing(path, base_url=None, params=None, max_retries=5, **kw):
-        if path.startswith("activity/eventtypes/"):
+        if path.endswith("/nope"):  # neither a v2 type nor a v1 type
             raise ERClientNotFound()
         return FakeER._get(fake, path, base_url=base_url, params=params, max_retries=max_retries)
 
@@ -1887,3 +1887,17 @@ def test_post_unknown_event_type_is_a_clean_error(fake):
     assert result.exit_code == 1
     assert result.output.strip() == "error: no event type with value 'nope'"
     assert not any(c[0] == "post_event" for c in fake.calls)
+
+
+@pytest.mark.parametrize("raw", ["null", "7", "{a: 1}", "''"])
+def test_batch_file_rejects_non_string_event_type_before_anything(fake, raw):
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        with open("events.yaml", "w") as f:
+            f.write(f"- {{event_type: {raw}, event_details: {{}}}}\n")
+        result = runner.invoke(
+            main, ["events", "post", "--file", "events.yaml"], catch_exceptions=False
+        )
+    assert result.exit_code == 1
+    assert "error: events[0].event_type must be a non-empty string" in result.output
+    assert fake.calls == []

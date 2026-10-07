@@ -60,6 +60,10 @@ def load_events_file(path: str) -> list[dict]:
     for i, item in enumerate(data):
         if not isinstance(item, dict) or "event_type" not in item:
             raise FieldArgError(f"events[{i}] must be a mapping with an 'event_type'")
+        if not isinstance(item["event_type"], str) or not item["event_type"]:
+            raise FieldArgError(
+                f"events[{i}].event_type must be a non-empty string, got {item['event_type']!r}"
+            )
         event = dict(item)
         event.setdefault("time", datetime.now(UTC).isoformat())
         events.append(event)
