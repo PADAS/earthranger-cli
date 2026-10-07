@@ -171,13 +171,13 @@ def validate_events(client, events: list[dict]) -> list[list[str]]:
                 )
                 validators[value] = cls(schema)
         validator = validators[value]
-        # Only omission means "no details". Never validate a replacement for
-        # an explicit null that would still be sent unchanged to the server.
+        # Only omission means "no details". An explicit null or any other
+        # non-object would be sent unchanged and refused by das, so it is a
+        # problem regardless of what the schema says (the CLI's batch loader
+        # already refuses these; this guards programmatic callers).
         details = event.get("event_details", {})
-        if details is None:
-            problems.append(
-                ["event_details must be an object; use {} or omit the field for no details."]
-            )
+        if not isinstance(details, dict):
+            problems.append([f"event_details must be an object of field values, got {details!r}"])
             continue
         if validator is None:
             problems.append([])

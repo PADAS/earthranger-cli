@@ -64,6 +64,15 @@ def load_events_file(path: str) -> list[dict]:
             raise FieldArgError(
                 f"events[{i}].event_type must be a non-empty string, got {item['event_type']!r}"
             )
+        if "event_details" in item and not isinstance(item["event_details"], dict):
+            # das rejects null and any non-object here (the serializer has no
+            # allow_null and expects a mapping); refuse before any request,
+            # and independently of --no-validate — this is envelope shape,
+            # not schema conformance
+            raise FieldArgError(
+                f"events[{i}].event_details must be a mapping of field values, "
+                f"got {item['event_details']!r}"
+            )
         event = dict(item)
         event.setdefault("time", datetime.now(UTC).isoformat())
         events.append(event)
