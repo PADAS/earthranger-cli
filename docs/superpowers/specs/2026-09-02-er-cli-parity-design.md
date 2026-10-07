@@ -29,8 +29,9 @@ everything below is additive.
 - A bearer-token auth path so sandboxes with an injected token never need
   an interactive login.
 - The read-only resource commands er-cli exposes (subjects, tracks,
-  observations, events, patrols, sources, subject groups, fences,
-  featuresets, regions, status, whoami), with auto-pagination and
+  observations, events, patrols, sources, subject groups, spatial
+  feature groups and features, featuresets, regions, status, whoami),
+  with auto-pagination and
   `--limit`.
 - Retries with backoff on transient failures.
 
@@ -128,8 +129,9 @@ command is a thin wrapper:
 | `sources search` / `get ID` | `get_sources()` / `get_source_by_id(id)` |
 | `subject-groups list` / `get ID` | `get_subjectgroups(...)` / `_get("subjectgroup/{id}")` |
 | `subject-sources search --subjects --sources` | `_get("subjectsources", params=...)` (er-cli's `v1.0_subjectsources_list`; the erclient helper `get_subjectsources(subject_id)` hits a different path) |
-| `fences list` | `_get("spatialfeaturegroup")` |
-| `featuresets get ID` | `_get("featureset/{id}")` |
+| `spatial-feature-groups list` / `get ID` | `_get("spatialfeaturegroup")` / `_get("spatialfeaturegroup/{id}")` — er-cli called this resource `fences`; renamed because groups hold roads, water points and boundaries as well as geofences |
+| `spatial-features list` / `get ID` | `_get("spatialfeature")` / `_get("spatialfeature/{id}")` |
+| `featuresets list` / `get ID` | `_get("featureset")` / `_get("featureset/{id}")` |
 | `regions list` | `_get("regions")` |
 
 **Open question — spec-derived flags.** er-cli's core idea is that

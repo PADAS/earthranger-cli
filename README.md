@@ -225,11 +225,15 @@ per profile; old `tokens/<host>.json` files are ignored.)
 | `events get EVENT_ID [-o F]` | One event as a one-record `{records, meta}` document |
 | `events list categories\|event-types [--json] [-o F]`, `events show event-type V [--json] [-o F]` | Same as above, opt-in `{records, meta}` output |
 | `status show`, `auth whoami` | Server status; the authenticated user |
-| `subjects search\|get`, `tracks get SUBJECT_ID`, `observations search` | Read subjects, tracks (v2 GeoJSON), raw observations |
+| `subjects search\|get`, `tracks get SUBJECT_ID`, `observations search --subject-id ID` | Read subjects, tracks (v2 GeoJSON), raw observations (one selector required; `--since` defaults to 24 h before `--until`, or before now) |
 | `patrols search\|get`, `sources search\|get`, `subject-groups list\|get`, `subject-sources search` | Read patrols, sources, groups, collar↔subject assignments |
-| `fences list`, `featuresets get ID`, `regions list` | Read geofence groups, GeoJSON boundaries, operational regions |
+| `spatial-feature-groups list\|get ID`, `spatial-features list\|get ID` | Read spatial feature groups and the features in them (geofences, roads, water points, boundaries) |
+| `featuresets list\|get ID`, `regions list` | Read featuresets and their GeoJSON boundaries, operational regions |
 | `auth login [--token T]/status/logout` | Cache (password session or static token), inspect, or clear the selected profile's credential |
 | `profile add/use/set/show/list/remove/current` | Named site profiles; `use` selects per shell and `add` auto-switches (via the wrapper); `set` edits the selected profile; `--profile NAME` per command |
+
+Every paginated read command answers to both `list` and `search` (`er subjects list`
+and `er regions search` both work); the names above are the ones shown in `--help`.
 
 ## Reading data (agent-friendly JSON)
 

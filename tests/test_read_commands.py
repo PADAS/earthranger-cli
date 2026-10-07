@@ -1,5 +1,6 @@
 import json
 
+import click
 import pytest
 from click.testing import CliRunner
 
@@ -31,9 +32,101 @@ def test_every_command_is_registered_with_output_option():
         names = {p.name for p in cmd.params}
         assert "output" in names, (spec.group, spec.name)
         assert ("limit" in names) == (spec.kind == "list"), (spec.group, spec.name)
-        assert ("page_size" in names) == (spec.kind == "list"), (spec.group, spec.name)
+        paginated = spec.kind == "list" and spec.unwrap is None
+        assert ("page_size" in names) == paginated, (spec.group, spec.name)
         assert cmd.help and spec.help in cmd.help
         assert ("{id}" in spec.path) == (spec.arg is not None), (spec.group, spec.name)
+
+
+def test_every_paginated_command_answers_to_list_and_search():
+    for spec in COMMANDS:
+        if spec.kind != "list" or spec.group == "events":
+            continue
+        group = main.commands[spec.group]
+        assert group.commands["list"] is group.commands["search"], spec.group
+        assert group.commands[spec.name] is group.commands["list"], spec.group
+    # get-only groups gain nothing
+    assert set(main.commands["tracks"].commands) == {"get"}
+    # `events list` is the authoring sub-group (categories, event-types) and
+    # must not be shadowed by an alias of `events search`
+    events = main.commands["events"].commands
+    assert isinstance(events["list"], click.Group)
+    assert {"categories", "event-types"} <= set(events["list"].commands)
+    assert events["search"] is not events["list"]
+
+
+def test_list_alias_runs_the_same_command(fake):
+    fake.responses["subjects"] = {"count": 0, "next": None, "results": []}
+    result = _run(["subjects", "list"])
+    assert result.exit_code == 0, result.output
+    assert _gets(fake)[0][1] == "subjects"
+    fake.responses["regions"] = {"count": 0, "next": None, "results": []}
+    result = _run(["regions", "search"])
+    assert result.exit_code == 0, result.output
+    assert _gets(fake)[1][1] == "regions"
+
+
+def test_spatial_feature_groups_and_features_replace_fences(fake):
+    assert "fences" not in main.commands
+    assert set(main.commands["spatial-feature-groups"].commands) == {"list", "search", "get"}
+    assert set(main.commands["spatial-features"].commands) == {"list", "search", "get"}
+
+    fake.responses["spatialfeaturegroup"] = {"count": 0, "next": None, "results": []}
+    result = _run(["spatial-feature-groups", "list", "--sort-by", "-updated_at"])
+    assert result.exit_code == 0, result.output
+    assert _gets(fake)[0][1:3] == (
+        "spatialfeaturegroup",
+        {"sort_by": "-updated_at", "page_size": 100},
+    )
+
+    fake.responses["spatialfeaturegroup/g-1"] = {"id": "g-1", "name": "Roads"}
+    result = _run(["spatial-feature-groups", "get", "g-1"])
+    assert json.loads(result.output)["records"] == [{"id": "g-1", "name": "Roads"}]
+
+    # das's SpatialFeatureFilterSet uses CSVWidget: one comma-joined value, not repeats
+    fake.responses["spatialfeature"] = {"count": 0, "next": None, "results": []}
+    result = _run(["spatial-features", "list", "--feature-class", "t-1,t-2"])
+    assert result.exit_code == 0, result.output
+    assert _gets(fake)[2][2] == {"feature_class": "t-1,t-2", "page_size": 100}
+
+    fake.responses["spatialfeature/f-1"] = {"type": "Feature", "id": "f-1"}
+    result = _run(["spatial-features", "get", "f-1"])
+    assert json.loads(result.output)["records"][0]["id"] == "f-1"
+
+
+def test_featuresets_list_unwraps_the_features_envelope(fake):
+    # das's FeatureSetListJsonView: {"features": [...]}, not a DRF page
+    fake.responses["featureset"] = {
+        "features": [
+            {"id": "f1", "name": "Boundaries", "types": [], "description": "", "geojson_url": "/x"},
+            {"id": "f2", "name": "Roads", "types": [], "description": "", "geojson_url": "/y"},
+        ]
+    }
+    result = _run(["featuresets", "list", "--include-hidden"])
+    assert result.exit_code == 0, result.output
+    assert _gets(fake)[0][1:3] == ("featureset", {"include_hidden": "true"})  # no page_size
+    doc = json.loads(result.output)
+    assert [r["id"] for r in doc["records"]] == ["f1", "f2"]
+    assert doc["meta"] == {"total": 2, "pages": 1, "count_reported": 2}
+
+    result = _run(["featuresets", "list", "--limit", "1"])
+    assert [r["id"] for r in json.loads(result.output)["records"]] == ["f1"]
+
+    fake.responses["featureset"] = {"features": []}
+    result = _run(["featuresets", "list"])
+    assert json.loads(result.output) == {
+        "records": [],
+        "meta": {"total": 0, "pages": 1, "count_reported": 0},
+    }
+
+
+def test_featureset_get_keeps_geojson_feature_collection_whole(fake):
+    # the unwrap is per-row: a FeatureCollection from `get` must stay one record
+    fake.responses["featureset/f1"] = {"type": "FeatureCollection", "features": [{"id": "a"}]}
+    result = _run(["featuresets", "get", "f1"])
+    doc = json.loads(result.output)
+    assert doc["records"][0]["type"] == "FeatureCollection"
+    assert doc["meta"]["total"] == 1
 
 
 def test_help_shows_the_endpoint():
@@ -208,3 +301,108 @@ def test_pagination_controls_reject_nonpositive_values_before_connect(monkeypatc
     assert result.exit_code == 2
     assert "Invalid value" in result.output
     connect.assert_not_called()
+
+
+def test_observations_guard_runs_before_any_connection(monkeypatch):
+    # no `fake` fixture: _connect is real, and there is no server, profile or
+    # password anywhere — the selector error must still be what the user sees
+    monkeypatch.setattr(cli_mod, "make_client", lambda **kw: pytest.fail("must not connect"))
+    result = _run(["observations", "search"])
+    assert result.exit_code == 2
+    assert "needs exactly one of --subject-id" in result.output
+    assert "Missing server" not in result.output
+    assert "Password" not in result.output
+
+    result = _run(["observations", "search", "--source-id", "s", "--until", "nope"])
+    assert result.exit_code == 2
+    assert "--until must be an ISO-8601 timestamp" in result.output
+    assert "Missing server" not in result.output
+
+
+def test_observations_refuses_an_unbounded_request(fake):
+    result = _run(["observations", "search"])
+    assert result.exit_code == 2
+    assert (
+        "needs exactly one of --subject-id, --source-id, --subjectsource-id, --sourceprovider-id"
+        in (result.output)
+    )
+    assert _gets(fake) == []  # nothing was requested
+
+    result = _run(["observations", "search", "--subject-id", "s-1", "--source-id", "src-1"])
+    assert result.exit_code == 2
+    assert "pass only one of" in result.output and "subject_id, source_id" in result.output
+    assert _gets(fake) == []
+
+
+def test_observations_defaults_since_to_last_24h_and_says_so(fake):
+    from datetime import UTC, datetime, timedelta
+
+    fake.responses["observations"] = {"count": 0, "next": None, "results": []}
+    runner = CliRunner()  # click >= 8.2 keeps stderr separate by default
+    result = runner.invoke(
+        main, ["observations", "search", "--subject-id", "s-1"], catch_exceptions=False
+    )
+    assert result.exit_code == 0, result.output
+    params = _gets(fake)[0][2]
+    assert params["subject_id"] == "s-1"
+    since = datetime.strptime(params["since"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
+    assert (
+        timedelta(hours=23, minutes=59) < datetime.now(UTC) - since < timedelta(hours=24, minutes=1)
+    )
+    assert "until" not in params  # ER defaults it to now
+    assert "note: no --since given; defaulting to the 24 hours before now" in result.stderr
+    assert json.loads(result.stdout)["records"] == []  # stdout stays pure JSON
+
+
+def test_observations_explicit_since_and_provider_selector_pass_through(fake):
+    fake.responses["observations"] = {"count": 0, "next": None, "results": []}
+    runner = CliRunner()  # click >= 8.2 keeps stderr separate by default
+    result = runner.invoke(
+        main,
+        ["observations", "search", "--sourceprovider-id", "p-1", "--since", "2026-01-01T00:00:00Z"],
+        catch_exceptions=False,
+    )
+    assert result.exit_code == 0, result.output
+    assert _gets(fake)[0][2] == {
+        "sourceprovider_id": "p-1",
+        "since": "2026-01-01T00:00:00Z",
+        "page_size": 100,
+    }
+    assert "defaulting" not in result.stderr
+
+
+def test_observations_default_since_is_anchored_to_an_explicit_until(fake):
+    fake.responses["observations"] = {"count": 0, "next": None, "results": []}
+    runner = CliRunner()
+    result = runner.invoke(
+        main,
+        ["observations", "search", "--source-id", "src-1", "--until", "2026-01-02T00:00:00Z"],
+        catch_exceptions=False,
+    )
+    assert result.exit_code == 0, result.output
+    params = _gets(fake)[0][2]
+    assert params["until"] == "2026-01-02T00:00:00Z"
+    assert params["since"] == "2026-01-01T00:00:00Z"  # 24h before --until, not before now
+    assert "defaulting to the 24 hours before --until 2026-01-02T00:00:00Z" in result.stderr
+
+
+def test_observations_rejects_unparseable_until_before_requesting(fake):
+    result = _run(["observations", "search", "--source-id", "src-1", "--until", "yesterday"])
+    assert result.exit_code == 2
+    assert "--until must be an ISO-8601 timestamp" in result.output
+    assert _gets(fake) == []
+
+
+@pytest.mark.parametrize(
+    ("until", "expected_since"),
+    [
+        ("2026-01-02T00:00:00+03:00", "2025-12-31T21:00:00Z"),  # positive offset
+        ("2026-01-02T00:00:00-05:00", "2026-01-01T05:00:00Z"),  # negative offset
+        ("2026-01-02T00:00:00", "2026-01-01T00:00:00Z"),  # naive: treated as UTC
+    ],
+)
+def test_observations_default_since_converts_until_offset_to_utc(fake, until, expected_since):
+    fake.responses["observations"] = {"count": 0, "next": None, "results": []}
+    result = _run(["observations", "search", "--source-id", "src-1", "--until", until])
+    assert result.exit_code == 0, result.output
+    assert _gets(fake)[0][2]["since"] == expected_since
