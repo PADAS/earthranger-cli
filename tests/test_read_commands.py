@@ -303,6 +303,22 @@ def test_pagination_controls_reject_nonpositive_values_before_connect(monkeypatc
     connect.assert_not_called()
 
 
+def test_observations_guard_runs_before_any_connection(monkeypatch):
+    # no `fake` fixture: _connect is real, and there is no server, profile or
+    # password anywhere — the selector error must still be what the user sees
+    monkeypatch.setattr(cli_mod, "make_client", lambda **kw: pytest.fail("must not connect"))
+    result = _run(["observations", "search"])
+    assert result.exit_code == 2
+    assert "needs exactly one of --subject-id" in result.output
+    assert "Missing server" not in result.output
+    assert "Password" not in result.output
+
+    result = _run(["observations", "search", "--source-id", "s", "--until", "nope"])
+    assert result.exit_code == 2
+    assert "--until must be an ISO-8601 timestamp" in result.output
+    assert "Missing server" not in result.output
+
+
 def test_observations_refuses_an_unbounded_request(fake):
     result = _run(["observations", "search"])
     assert result.exit_code == 2

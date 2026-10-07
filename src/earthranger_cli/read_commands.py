@@ -359,7 +359,9 @@ def _endpoint(spec: ReadCommand) -> str:
 
 def _make_command(spec: ReadCommand, deps: Deps) -> click.Command:
     def callback(ctx, output, limit=None, **kwargs):
-        client = deps.connect(ctx)
+        # Build and validate the request before connecting: a usage error (a
+        # missing selector, an unparseable --until) must not first demand a
+        # server or prompt for a password.
         path = spec.path
         if spec.arg:
             path = path.replace("{id}", quote(kwargs.pop(spec.arg), safe=""))
@@ -376,6 +378,7 @@ def _make_command(spec: ReadCommand, deps: Deps) -> click.Command:
                 params[flag.param] = value
         if spec.prepare is not None:
             params = spec.prepare(params)
+        client = deps.connect(ctx)
         records, meta = fetch(
             client,
             path,

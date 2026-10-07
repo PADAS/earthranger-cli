@@ -229,11 +229,11 @@ per profile; old `tokens/<host>.json` files are ignored.)
 | `patrols search\|get`, `sources search\|get`, `subject-groups list\|get`, `subject-sources search` | Read patrols, sources, groups, collar↔subject assignments |
 | `spatial-feature-groups list\|get ID`, `spatial-features list\|get ID` | Read spatial feature groups and the features in them (geofences, roads, water points, boundaries) |
 | `featuresets list\|get ID`, `regions list` | Read featuresets and their GeoJSON boundaries, operational regions |
+| `auth login [--token T]/status/logout` | Cache (password session or static token), inspect, or clear the selected profile's credential |
+| `profile add/use/set/show/list/remove/current` | Named site profiles; `use` selects per shell and `add` auto-switches (via the wrapper); `set` edits the selected profile; `--profile NAME` per command |
 
 Every paginated read command answers to both `list` and `search` (`er subjects list`
 and `er regions search` both work); the names above are the ones shown in `--help`.
-| `auth login [--token T]/status/logout` | Cache (password session or static token), inspect, or clear the selected profile's credential |
-| `profile add/use/set/show/list/remove/current` | Named site profiles; `use` selects per shell and `add` auto-switches (via the wrapper); `set` edits the selected profile; `--profile NAME` per command |
 
 ## Reading data (agent-friendly JSON)
 
