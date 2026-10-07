@@ -1,6 +1,7 @@
 """FakeER: an in-memory stand-in for erclient.ERClient covering the calls we make."""
 
 import pytest
+from erclient.er_errors import ERClientNotFound
 
 
 @pytest.fixture(autouse=True)
@@ -71,6 +72,17 @@ class FakeER:
         if path in self.responses:
             self.calls.append(("_get", path, params, base_url, max_retries))
             return self.responses[path]
+        if path.startswith("activity/eventtypes/"):
+            # unseeded v2 lookups 404, as das does for anything that isn't a
+            # v2 type; the CLI then falls back to the v1 schema endpoint
+            self.calls.append(("_get", path, params, base_url, max_retries))
+            raise ERClientNotFound()
+        if path.startswith("activity/events/schema/eventtype/"):
+            # unseeded v1 schema: the type exists but has no schema, so it
+            # accepts any details — keeps posting tests that don't care about
+            # validation simple
+            self.calls.append(("_get", path, params, base_url, max_retries))
+            return None
         self.calls.append(("_get", path, params))
         field = (params or {}).get("field")
         if field is None:
