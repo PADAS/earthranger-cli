@@ -230,6 +230,8 @@ dependencies = [
     { name = "earthranger-client" },
     { name = "jsonschema" },
     { name = "pyyaml" },
+    { name = "requests" },
+    { name = "urllib3" },
 ]
 
 [package.optional-dependencies]
@@ -245,7 +247,9 @@ requires-dist = [
     { name = "jsonschema", specifier = ">=4.18" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
     { name = "pyyaml", specifier = ">=6.0" },
+    { name = "requests", specifier = ">=2.31" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.4" },
+    { name = "urllib3", specifier = ">=2.0" },
 ]
 provides-extras = ["dev"]
 

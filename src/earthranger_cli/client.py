@@ -6,6 +6,7 @@ erclient has no first-class choices methods; we use its generic path methods
 
 from __future__ import annotations
 
+import sys
 from urllib.parse import urlsplit, urlunsplit
 
 from erclient.client import ERClient
@@ -72,15 +73,35 @@ def normalize_server(server: str) -> str:
 
 # Transient failures a read may simply try again: rate limiting and the 5xx
 # family, plus connection/read errors. Three retries with exponential backoff
-# (0 s, 2 s, 4 s) and a Retry-After header honoured when the server sends one.
+# (0 s, 2 s, 4 s); a Retry-After header is honoured up to a short cap.
 READ_RETRY_STATUSES = frozenset({429, 500, 502, 503, 504})
 READ_RETRIES = 3
+# urllib3 would otherwise sleep for up to 6 h on a server-supplied Retry-After
+READ_RETRY_AFTER_MAX = 30
+
+
+class _NotingRetry(Retry):
+    """urllib3 Retry that says so on stderr each time it retries, so a command
+    that is waiting out a 503 doesn't look hung, and the eventual error
+    (which erclient words as 'after 1 tries') isn't the whole story."""
+
+    def increment(self, method=None, url=None, response=None, error=None, *args, **kwargs):
+        new = super().increment(method, url, response, error, *args, **kwargs)
+        reason = f"HTTP {response.status}" if response is not None else type(error).__name__
+        print(
+            f"note: {reason} on {method} {url}; retrying ({len(new.history)} of {READ_RETRIES})",
+            file=sys.stderr,
+        )
+        return new
 
 
 def _read_retry_policy() -> Retry:
-    return Retry(
+    return _NotingRetry(
         total=READ_RETRIES,
-        connect=READ_RETRIES,
+        # urllib3 counts DNS failures and connection-refused as connect
+        # timeouts: one connect retry (no backoff before the first) keeps a
+        # real blip covered without making a mistyped --server wait 6 s
+        connect=1,
         read=READ_RETRIES,
         status=READ_RETRIES,
         backoff_factor=1,
@@ -90,6 +111,7 @@ def _read_retry_policy() -> Retry:
         # too; this replaces it.)
         allowed_methods=frozenset({"GET"}),
         respect_retry_after_header=True,
+        retry_after_max=READ_RETRY_AFTER_MAX,
         # hand the final response back to erclient so its own status mapping
         # (401 -> ERClientBadCredentials, 404 -> ERClientNotFound, ...) applies
         raise_on_status=False,
@@ -105,6 +127,11 @@ def with_read_retries(client: ERClient) -> ERClient:
     nothing retries twice.
     """
     adapter = HTTPAdapter(max_retries=_read_retry_policy())
+    # requests resolves adapters by longest matching prefix, and a Session is
+    # born with stock (no-retry) adapters on "http://" / "https://" while
+    # erclient adds its own on "http" / "https". Clear all of them and mount
+    # exactly one per scheme, so nothing can shadow the policy.
+    client._http_session.adapters.clear()
     client._http_session.mount("http://", adapter)
     client._http_session.mount("https://", adapter)
     return client
@@ -158,9 +185,11 @@ def describe_error(e: ERClientException) -> str:
 
 
 def get_me(client) -> dict:
-    """The authenticated user (/user/me/), as a one-shot probe: no retries, so a
-    credential check against a struggling site fails in one round-trip rather
-    than erclient's default five attempts with 5 s sleeps."""
+    """The authenticated user (/user/me/). erclient's own retry loop (five
+    attempts, fixed 5 s sleeps) is disabled; the client's transport-level
+    read policy (see with_read_retries: 0/2/4 s, Retry-After capped) still
+    applies, so a credential check against a struggling site fails within
+    seconds rather than ~25 s."""
     return client._get("user/me", max_retries=0)
 
 

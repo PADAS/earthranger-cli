@@ -152,7 +152,9 @@ def test_normalize_server_rejects_blank_and_non_http_schemes(bad):
         normalize_server(bad)
 
 
-def test_get_me_is_a_one_shot_probe():
+def test_get_me_disables_erclients_own_retry_loop():
+    # transport-level read retries (0/2/4 s) still apply; erclient's five
+    # fixed 5 s sleeps must not stack on top of them
     client = Mock()
     client._get.return_value = {"username": "chris"}
     assert get_me(client) == {"username": "chris"}
@@ -175,12 +177,17 @@ def test_normalize_server_rejects_non_strings_as_server_error(bad):
 )
 def test_every_client_gets_the_get_only_read_retry_policy(make):
     client = make()
+    # erclient's and requests' stock adapters are gone, not shadowed: exactly
+    # one adapter per scheme, so nothing can outrank the policy by prefix
+    assert sorted(client._http_session.adapters) == ["http://", "https://"]
     for scheme in ("https://x.pamdas.org/api/v1.0/subjects", "http://localhost:8000/api/v1.0/x"):
         retry = client._http_session.get_adapter(scheme).max_retries
         assert retry.total == 3
+        assert retry.connect == 1  # a mistyped --server must not wait out 0/2/4 s
         assert set(retry.status_forcelist) == {429, 500, 502, 503, 504}
         assert retry.backoff_factor == 1
         assert retry.respect_retry_after_header is True
+        assert retry.retry_after_max == 30  # never the urllib3 default of 6 h
         assert retry.raise_on_status is False  # erclient maps the final status itself
         # writes are never replayed: a timed-out POST may have landed
         assert retry.is_retry("GET", 503) is True
@@ -199,3 +206,30 @@ def test_read_retry_backoff_schedule():
     # urllib3: no wait before the first retry, then factor * 2**(n-1)
     waits = [policy.new(history=(attempt,) * n).get_backoff_time() for n in (1, 2, 3)]
     assert waits == [0, 2, 4]
+
+
+def test_each_retry_is_announced_on_stderr(capsys):
+    from urllib3.exceptions import ConnectTimeoutError
+    from urllib3.response import HTTPResponse
+
+    from earthranger_cli.client import _read_retry_policy
+
+    policy = _read_retry_policy()
+    once = policy.increment("GET", "/api/v1.0/subjects", response=HTTPResponse(status=503))
+    twice = once.increment("GET", "/api/v1.0/subjects", error=ConnectTimeoutError())
+    assert len(twice.history) == 2
+    assert twice.__class__ is policy.__class__  # the note survives urllib3's cloning
+    err = capsys.readouterr().err.splitlines()
+    assert err == [
+        "note: HTTP 503 on GET /api/v1.0/subjects; retrying (1 of 3)",
+        "note: ConnectTimeoutError on GET /api/v1.0/subjects; retrying (2 of 3)",
+    ]
+
+
+def test_retry_after_is_capped():
+    from urllib3.response import HTTPResponse
+
+    from earthranger_cli.client import _read_retry_policy
+
+    resp = HTTPResponse(status=503, headers={"Retry-After": "3600"})
+    assert _read_retry_policy().get_retry_after(resp) == 30
