@@ -71,6 +71,13 @@ class FakeER:
         if path in self.responses:
             self.calls.append(("_get", path, params, base_url, max_retries))
             return self.responses[path]
+        if path.startswith("activity/eventtypes/"):
+            # unseeded type: exists, v2, has no schema (accepts any details) —
+            # keeps posting tests that don't care about validation simple
+            self.calls.append(("_get", path, params, base_url, max_retries))
+            return (
+                None if path.endswith("/schema") else {"value": path.split("/")[2], "version": "2"}
+            )
         self.calls.append(("_get", path, params))
         field = (params or {}).get("field")
         if field is None:

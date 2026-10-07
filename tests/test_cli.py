@@ -1761,3 +1761,129 @@ def test_human_output_unchanged_without_json_flag(fake):
     result = _run(["events", "list", "categories"])
     assert result.output.startswith("wm")
     assert "records" not in result.output
+
+
+_SIGHTING_SCHEMA = {
+    "json": {
+        "type": "object",
+        "properties": {
+            "species": {"type": "string", "enum": ["elephant", "lion"]},
+            "count": {"type": "number", "minimum": 0},
+        },
+        "required": ["species"],
+    }
+}
+
+
+def _seed_sighting(fake):
+    fake.responses["activity/eventtypes/animal_sighting"] = {
+        "value": "animal_sighting",
+        "version": "2",
+    }
+    fake.responses["activity/eventtypes/animal_sighting/schema"] = _SIGHTING_SCHEMA
+
+
+def test_post_rejects_invalid_details_and_posts_nothing(fake):
+    _seed_sighting(fake)
+    result = _run(
+        [
+            "events",
+            "post",
+            "--event-type",
+            "animal_sighting",
+            "--field",
+            "species=zebra",
+            "--field",
+            "count=-2",
+            "--field",
+            "colour=grey",
+        ]
+    )
+    assert result.exit_code == 1
+    assert result.output.splitlines() == [
+        "invalid  animal_sighting (events[0]): colour: not a field of 'animal_sighting'",
+        "invalid  animal_sighting (events[0]): count: -2 is less than the minimum of 0",
+        "invalid  animal_sighting (events[0]): species: 'zebra' is not one of ['elephant', 'lion']",
+        "error: 1 of 1 event(s) failed validation; nothing was posted. Fix them or pass --no-validate.",
+    ]
+    assert not any(c[0] == "post_event" for c in fake.calls)
+
+
+def test_post_valid_details_go_through(fake):
+    _seed_sighting(fake)
+    result = _run(
+        [
+            "events",
+            "post",
+            "--event-type",
+            "animal_sighting",
+            "--field",
+            "species=lion",
+            "--field",
+            "count=3",
+        ]
+    )
+    assert result.exit_code == 0, result.output
+    assert result.output.strip() == "posted   animal_sighting"
+    posted = next(c for c in fake.calls if c[0] == "post_event")[1]
+    assert posted["event_details"] == {"species": "lion", "count": 3}
+
+
+def test_post_no_validate_skips_the_schema_fetch(fake):
+    _seed_sighting(fake)
+    result = _run(
+        [
+            "events",
+            "post",
+            "--no-validate",
+            "--event-type",
+            "animal_sighting",
+            "--field",
+            "species=zebra",
+        ]
+    )
+    assert result.exit_code == 0, result.output
+    assert not any("eventtypes" in str(c[1]) for c in fake.calls if c[0] == "_get")
+    assert any(c[0] == "post_event" for c in fake.calls)
+
+
+def test_post_batch_reports_each_bad_event_and_posts_none(fake):
+    _seed_sighting(fake)
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        with open("events.yaml", "w") as f:
+            f.write(
+                "- {event_type: animal_sighting, event_details: {species: lion}}\n"
+                "- {event_type: animal_sighting, event_details: {count: 1}}\n"
+                "- {event_type: animal_sighting, event_details: {species: zebra}}\n"
+            )
+        result = runner.invoke(
+            main, ["events", "post", "--file", "events.yaml"], catch_exceptions=False
+        )
+    assert result.exit_code == 1
+    lines = result.output.splitlines()
+    assert lines[0] == "invalid  animal_sighting (events[1]): species: required field is missing"
+    assert lines[1] == (
+        "invalid  animal_sighting (events[2]): species: 'zebra' is not one of ['elephant', 'lion']"
+    )
+    assert lines[2].startswith("error: 2 of 3 event(s) failed validation; nothing was posted.")
+    assert not any(c[0] == "post_event" for c in fake.calls)
+    # the schema was fetched once for the three events
+    assert [c[1] for c in fake.calls if c[0] == "_get" and c[1].endswith("/schema")] == [
+        "activity/eventtypes/animal_sighting/schema"
+    ]
+
+
+def test_post_unknown_event_type_is_a_clean_error(fake):
+    from erclient.er_errors import ERClientNotFound
+
+    def missing(path, base_url=None, params=None, max_retries=5, **kw):
+        if path.startswith("activity/eventtypes/"):
+            raise ERClientNotFound()
+        return FakeER._get(fake, path, base_url=base_url, params=params, max_retries=max_retries)
+
+    fake._get = missing
+    result = _run(["events", "post", "--event-type", "nope", "--field", "a=1"])
+    assert result.exit_code == 1
+    assert result.output.strip() == "error: no event type with value 'nope'"
+    assert not any(c[0] == "post_event" for c in fake.calls)

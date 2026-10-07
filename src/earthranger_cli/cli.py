@@ -34,6 +34,7 @@ from .events import (
 )
 from .output import emit
 from .pull import PullError, pull_category, render_spec_yaml
+from .validate import UnknownEventType, validate_events
 
 
 def _api_errors(f):
@@ -340,10 +341,22 @@ def apply_cmd(ctx, spec_file, dry_run):
     type=click.Path(exists=True, dir_okay=False),
     help="YAML list of events to post.",
 )
+@click.option(
+    "--no-validate",
+    "no_validate",
+    is_flag=True,
+    help="Skip checking event details against the type's schema before posting.",
+)
 @click.pass_context
 @_api_errors
-def post_event_cmd(ctx, event_type, fields, location, time_, title, file_):
-    """Post one event (via flags) or a batch (via --file)."""
+def post_event_cmd(ctx, event_type, fields, location, time_, title, file_, no_validate):
+    """Post one event (via flags) or a batch (via --file).
+
+    Before anything is sent, each event's details are checked against its
+    type's schema as ER renders it (fields, required fields, choice values,
+    types, bounds). ER itself does not validate details on write, so without
+    this a typo is stored silently. --no-validate skips the check.
+    """
     try:
         if file_:
             events = load_events_file(file_)
@@ -363,6 +376,8 @@ def post_event_cmd(ctx, event_type, fields, location, time_, title, file_):
         click.echo(f"error: {e}")
         sys.exit(1)
     client = _connect(ctx)
+    if not no_validate:
+        _validate_or_exit(client, events)
     try:
         outcomes = post_events(client, events)
     except PostAborted as aborted:
@@ -375,6 +390,26 @@ def post_event_cmd(ctx, event_type, fields, location, time_, title, file_):
         )
         raise aborted.cause
     if _report_post_outcomes(events, outcomes):
+        sys.exit(1)
+
+
+def _validate_or_exit(client, events: list[dict]) -> None:
+    """Report every schema problem in the batch and exit 1 before any post."""
+    try:
+        problems = validate_events(client, events)
+    except UnknownEventType as e:
+        click.echo(f"error: {e}")
+        sys.exit(1)
+    bad = 0
+    for i, (event, messages) in enumerate(zip(events, problems)):
+        for message in messages:
+            click.echo(f"invalid  {event['event_type']} (events[{i}]): {message}")
+        bad += bool(messages)
+    if bad:
+        click.echo(
+            f"error: {bad} of {len(events)} event(s) failed validation; nothing was posted. "
+            "Fix them or pass --no-validate."
+        )
         sys.exit(1)
 
 
@@ -446,9 +481,7 @@ def list_event_types(ctx, category, json_, output):
         return
     for t in types:
         active = "" if t.get("is_active", True) else "  (inactive)"
-        click.echo(
-            f"{t.get('value'):<40} {t.get('display'):<40} {_category_value_of(t)}{active}"
-        )
+        click.echo(f"{t.get('value'):<40} {t.get('display'):<40} {_category_value_of(t)}{active}")
 
 
 @events_group.group("show")

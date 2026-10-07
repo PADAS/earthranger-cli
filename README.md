@@ -195,6 +195,16 @@ per profile; old `tokens/<host>.json` files are ignored.)
        --location -1.286,36.817
    ```
 
+   Before anything is sent, the event's details are checked against the
+   type's schema as ER renders it: unknown fields, values outside a
+   select's choices, wrong types, out-of-range numbers and missing
+   required fields are all reported, one line each, and nothing is
+   posted. ER's API does **not** make these checks itself (its form
+   builder does, in the browser), so without this a typo like
+   `--field speices=elephant` would be stored silently. `--no-validate`
+   skips the check when you mean to post something the schema doesn't
+   describe.
+
 4. Edit: change the spec (rename a display, add a field, drop an
    option), dry-run again, re-apply. `apply` patches exactly what
    differs; dropped options are deactivated, never deleted.
@@ -215,8 +225,8 @@ per profile; old `tokens/<host>.json` files are ignored.)
 | Command | What it does |
 |---|---|
 | `events apply SPEC [--dry-run]` | Upsert category, choices, and event types from a spec |
-| `events post --event-type V --field k=v ...` | Post one event (`--location LAT,LON`, `--time`, `--title`) |
-| `events post --file events.yaml` | Post a batch; exits 1 if any fail |
+| `events post --event-type V --field k=v ... [--no-validate]` | Post one event (`--location LAT,LON`, `--time`, `--title`); details are validated against the type's schema first |
+| `events post --file events.yaml [--no-validate]` | Post a batch; every event is validated before any is sent; exits 1 if any fail |
 | `events list categories` | List categories (inactive included) |
 | `events list event-types [--category V]` | List event types |
 | `events show event-type V` | Full v2 event-type JSON + its Choice records |
