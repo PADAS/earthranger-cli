@@ -143,10 +143,15 @@ def test_non_string_event_type_is_a_clean_error(bad):
         validate_events(_fake(), [{"event_type": bad, "event_details": {}}])
 
 
-@pytest.mark.parametrize("details", [[], False, 0, ""])
-def test_explicit_non_object_details_reach_the_schema(details):
-    errors = validate_events(_fake(), [{"event_type": "animal_sighting", "event_details": details}])
-    assert len(errors[0]) == 1 and errors[0][0].endswith("is not of type 'object'")
+@pytest.mark.parametrize("details", [[], False, 0, "", None, [1, 2], "x"])
+@pytest.mark.parametrize("schema", [None, V2_RENDERED])
+def test_non_object_details_are_rejected_with_or_without_a_schema(details, schema):
+    # das refuses every one of these; the message must not depend on whether
+    # the type happens to have a schema
+    fake = _fake()
+    fake.responses["activity/eventtypes/animal_sighting/schema"] = schema
+    errors = validate_events(fake, [{"event_type": "animal_sighting", "event_details": details}])
+    assert errors == [[f"event_details must be an object of field values, got {details!r}"]]
 
 
 @pytest.mark.parametrize(
@@ -157,7 +162,7 @@ def test_null_details_are_rejected_even_without_required_fields_or_schema(schema
     fake.responses["activity/eventtypes/animal_sighting/schema"] = schema
     event = {"event_type": "animal_sighting", "event_details": None}
     assert validate_events(fake, [event]) == [
-        ["event_details must be an object; use {} or omit the field for no details."]
+        ["event_details must be an object of field values, got None"]
     ]
     assert event["event_details"] is None
 

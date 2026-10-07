@@ -1887,9 +1887,26 @@ def test_post_batch_with_null_details_posts_nothing(fake, tmp_path):
     )
     result = runner.invoke(main, ["events", "post", "--file", str(path)], catch_exceptions=False)
     assert result.exit_code == 1
-    assert "events[1]): event_details must be an object; use {} or omit the field" in result.output
-    assert "1 of 2 event(s) failed validation; nothing was posted" in result.output
-    assert not any(c[0] == "post_event" for c in fake.calls)
+    # refused by the loader: before any connection, schema fetch, or post
+    assert result.output.strip() == (
+        "error: events[1].event_details must be a mapping of field values, got None"
+    )
+    assert fake.calls == []
+
+
+@pytest.mark.parametrize("raw", ["null", "[1, 2]", "x", "0", "false"])
+@pytest.mark.parametrize("extra", [[], ["--no-validate"]])
+def test_batch_file_rejects_non_object_details_even_with_no_validate(fake, raw, extra):
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        with open("events.yaml", "w") as f:
+            f.write(f"- {{event_type: animal_sighting, event_details: {raw}}}\n")
+        result = runner.invoke(
+            main, ["events", "post", "--file", "events.yaml", *extra], catch_exceptions=False
+        )
+    assert result.exit_code == 1
+    assert "error: events[0].event_details must be a mapping of field values, got " in result.output
+    assert fake.calls == []  # no connection, no fetch, no post
 
 
 def test_post_unknown_event_type_is_a_clean_error(fake):
