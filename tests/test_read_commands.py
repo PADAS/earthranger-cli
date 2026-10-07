@@ -453,6 +453,7 @@ def _types_fetches(fake):
 
 def test_events_search_resolves_values_display_names_and_mixed_ids(fake):
     fake.event_types = _TYPES
+    fake.event_types_v2 = []
     fake.responses["activity/events"] = {"count": 0, "next": None, "results": []}
     result = _run(
         [
@@ -469,7 +470,8 @@ def test_events_search_resolves_values_display_names_and_mixed_ids(fake):
         "22222222-2222-2222-2222-222222222222",  # by display name, case-insensitive
         "33333333-3333-3333-3333-333333333333",  # id passed through
     ]
-    assert len(_types_fetches(fake)) == 1  # one listing for the whole flag
+    # one v1 and one v2 listing for the whole flag, in that order
+    assert [c[1] for c in _types_fetches(fake)] == ["v1.0", "v2.0"]
 
 
 def test_events_search_with_only_ids_does_not_fetch_event_types(fake):
@@ -481,6 +483,7 @@ def test_events_search_with_only_ids_does_not_fetch_event_types(fake):
 
 def test_events_search_unknown_name_lists_the_servers_values(fake):
     fake.event_types = _TYPES
+    fake.event_types_v2 = []
     result = _run(["events", "search", "--event-type", "geofence_brake"])
     assert result.exit_code == 2
     assert "unknown event type 'geofence_brake'" in result.output
@@ -493,3 +496,61 @@ def test_events_search_without_event_type_is_unchanged(fake):
     result = _run(["events", "search", "--state", "active"])
     assert result.exit_code == 0, result.output
     assert _types_fetches(fake) == []
+
+
+_V2_ONLY = {
+    "id": "44444444-4444-4444-4444-444444444444",
+    "value": "animal_sighting",
+    "display": "Animal Sighting",
+}
+
+
+def test_events_search_resolves_types_that_only_the_v2_listing_has(fake):
+    # das's v1 listing filters to version 1, so a type created by this CLI
+    # (always v2) is absent from it and must come from the v2 listing —
+    # served here in paginated form to show the normalizer handles it
+    fake.event_types = _TYPES
+    fake.event_types_v2 = {"count": 1, "next": None, "results": [_V2_ONLY]}
+    fake.responses["activity/events"] = {"count": 0, "next": None, "results": []}
+    result = _run(["events", "search", "--event-type", "animal_sighting,Geofence Break"])
+    assert result.exit_code == 0, result.output
+    params = next(c for c in fake.calls if c[0] == "_get" and c[1] == "activity/events")[2]
+    assert params["event_type"] == [_V2_ONLY["id"], _TYPES[0]["id"]]
+    assert [c[1] for c in _types_fetches(fake)] == ["v1.0", "v2.0"]
+
+
+def test_events_search_rejects_an_ambiguous_display_name(fake):
+    fake.event_types = _TYPES + [
+        {"id": "55555555-5555-5555-5555-555555555555", "value": "sighting", "display": "Sighting"},
+        {
+            "id": "66666666-6666-6666-6666-666666666666",
+            "value": "sighting_v2",
+            "display": "SIGHTING",
+        },
+    ]
+    fake.event_types_v2 = []
+    result = _run(["events", "search", "--event-type", "sighting"])  # exact value: fine
+    assert result.exit_code == 0, result.output
+    params = next(c for c in fake.calls if c[0] == "_get" and c[1] == "activity/events")[2]
+    assert params["event_type"] == ["55555555-5555-5555-5555-555555555555"]
+
+    result = _run(["events", "search", "--event-type", "Sighting"])  # display: two matches
+    assert result.exit_code == 2
+    assert "display name 'Sighting' matches 2 event types: " in result.output
+    assert "sighting (55555555-5555-5555-5555-555555555555)" in result.output
+    assert "sighting_v2 (66666666-6666-6666-6666-666666666666)" in result.output
+    assert "Pass the value or id instead." in result.output
+
+
+def test_events_search_exact_value_beats_a_colliding_display_name(fake):
+    # a type whose *display* equals another type's *value* must not hijack it
+    fake.event_types = [
+        {"id": "77777777-7777-7777-7777-777777777777", "value": "fire", "display": "Fire"},
+        {"id": "88888888-8888-8888-8888-888888888888", "value": "wildfire", "display": "fire"},
+    ]
+    fake.event_types_v2 = []
+    fake.responses["activity/events"] = {"count": 0, "next": None, "results": []}
+    result = _run(["events", "search", "--event-type", "fire"])
+    assert result.exit_code == 0, result.output
+    params = next(c for c in fake.calls if c[0] == "_get" and c[1] == "activity/events")[2]
+    assert params["event_type"] == ["77777777-7777-7777-7777-777777777777"]
