@@ -239,18 +239,36 @@ so the phases above don't suggest the repo was idle between P0 and P1.
       as enums, strictness re-added; v1: the legacy rendered envelope) and
       checks every event with `jsonschema` before any post; `--no-validate`
       skips it. Raised by an early user.
+- [ ] erclient's token refresh uses module-level `requests.post`, not the
+      session, so the read retry policy does not cover `/oauth2/token`: a
+      single 502 there reads as "cached session expired — run er auth login".
+      Pre-existing; surfaced in the PR 30 review. Needs an erclient change
+      or a refresh wrapper here.
+- [ ] erclient's convenience methods (`get_event_types`, `get_events`, …)
+      used by the authoring commands and by name resolution build their own
+      paths and still run erclient's fixed-sleep retry loop with no body-read
+      retry. Covering them means re-implementing those calls as `get_json`
+      paths. Surfaced in the PR 30 review; no one has been bitten.
 
 ### P2 — consolidation
 
-- [ ] Optional fallback read of `~/.earthranger/config.json`, or a one-off
-      `er profile import-legacy` — only if anyone has such a file.
-- [ ] Offline tests mirroring er-cli's: DRF page normalization, envelope
-      unwrap, paginated fetch with a mocked transport, name resolution,
-      missing-credentials error text.
-- [ ] README section "How agent skills use it" with the one-liner pattern
-      (`er events search --event_type geofence_break --updated_since … -o /tmp/gf.json`).
-- [ ] Retire `packages/er-cli` in tusker: point its Dockerfile/requirements
-      at this repo, delete the package, keep the README's skill guidance.
+- [-] ~~Optional fallback read of `~/.earthranger/config.json`, or a one-off
+      `er profile import-legacy`.~~ Declined 2026-10-08: no known user of
+      such a file (er-cli was never adopted by a tusker skill). Revisit only
+      if one turns up.
+- [x] Offline tests mirroring er-cli's. Covered as the surface was built
+      (2026-10-08): page normalization and envelope unwrap (`test_read.py`),
+      paginated fetch with a mocked client (`test_read.py`,
+      `test_read_commands.py`), name resolution (`test_read_commands.py`),
+      missing-credentials text (`test_cli.py`). No separate suite needed.
+- [x] README section "How agent skills use it" (2026-10-08): the write-to
+      `-o` then read-the-file pattern, four one-liners, and what a skill can
+      rely on — exit codes, bounded requests, retries, validated posts,
+      sandbox auth.
+- [-] Retire `packages/er-cli` in tusker. Not done from this repo: tusker is
+      owned by another team. Everything er-cli offered now exists here (this
+      spec's P0/P1), so the retirement is a one-PR change on their side when
+      they choose to make it.
 
 ## Testing
 

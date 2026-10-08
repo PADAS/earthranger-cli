@@ -270,15 +270,49 @@ tusker's `er-cli` and the Skylight CLI, so agent skills can "write to
 - The pre-existing `events list ...` and `events show event-type` keep their
   human output by default; pass `--json` (or `-o`) for the contract above.
 
-Typical skill one-liner:
+### How agent skills use it
+
+The pattern is: run one command with `-o`, then read only the fields you
+need from the file. Raw payloads never enter the model's context, stdout
+is empty on success, and anything the CLI wants to tell you (a defaulted
+time window, a retry) goes to stderr as a `note:` line.
 
 ```bash
-er events search --event-type <uuid> --updated-since 2026-09-01T00:00:00Z -o /tmp/ev.json
+# Events of a type since a time — the type is its value, display name or id
+er events search --event-type geofence_break --updated-since 2026-09-01T00:00:00Z -o /tmp/gf.json
+
+# One subject's track for a window (v2 GeoJSON; one record, a FeatureCollection)
+er tracks get <subject_id> --since 2026-06-01T00:00:00Z --until 2026-06-08T00:00:00Z -o /tmp/track.json
+
+# One subject's raw observations for a day — a selector is required, and
+# --since defaults to 24 h before --until (or before now) if you omit it
+er observations search --subject-id <subject_id> --until 2026-06-02T00:00:00Z -o /tmp/obs.json
+
+# Everything in a small table, capped
+er subjects search --limit 500 -o /tmp/subjects.json
 ```
 
-`--event-type` takes event-type **ids** for now; resolving friendly values
-like `geofence_break` to ids is on the backlog (see
-`docs/superpowers/specs/2026-09-02-er-cli-parity-design.md`).
+Then, in the skill, `jq '.records[] | {id, title, time}' /tmp/gf.json` or
+the language equivalent.
+
+What a skill can rely on:
+
+- **Exit codes.** `0` with the file written; `2` for a usage error (missing
+  selector, unknown event-type name, bad timestamp) with the reason on
+  stderr and no request made; `1` for an API or auth failure, also on
+  stderr, with the credential to fix named when it was a 401.
+- **Bounded requests.** `observations search` refuses to run without a
+  selector because ER would otherwise return every observation on the
+  site. `--limit` stops paging as soon as it is reached.
+- **Retries.** Transient failures (429, 5xx, connection or body-read
+  errors) are retried three times with 0/2/4 s backoff and a `note:` on
+  stderr; `Retry-After` is honoured up to 30 s. Writes are never replayed.
+- **Posting is checked.** `er events post` validates details against the
+  type's schema before sending, so a skill that builds an event from model
+  output gets a per-field error instead of a silently stored typo.
+- **Auth in a sandbox** is `ER_SERVER` plus `ER_TOKEN` in the environment,
+  no profile and no login; see the Docker note under *Authenticate* for
+  passing the token safely.
 
 ## Spec reference
 
