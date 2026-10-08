@@ -297,10 +297,13 @@ the language equivalent.
 
 What a skill can rely on:
 
-- **Exit codes.** `0` with the file written; `2` for a usage error (missing
-  selector, unknown event-type name, bad timestamp) with the reason on
-  stderr and no request made; `1` for an API or auth failure, also on
-  stderr, with the credential to fix named when it was a 401.
+- **Exit codes.** `0` with the file written; `2` for a CLI usage error,
+  with the reason on stderr. Missing observation selectors are rejected
+  before connecting; unknown event-type names are rejected after fetching
+  the server's type listings. Most timestamp flags are passed to the API
+  for validation. API and auth failures exit `1`; messages handled by the
+  CLI's API error wrapper go to stdout, with the credential to fix named
+  when it was a 401. Capture both output streams when diagnosing failures.
 - **Bounded requests.** `observations search` refuses to run without a
   selector because ER would otherwise return every observation on the
   site. `--limit` stops paging as soon as it is reached.
