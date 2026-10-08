@@ -14,9 +14,59 @@ the `{records, meta}` pieces every read command emits.
 
 from __future__ import annotations
 
+import sys
+import time
 from collections.abc import Callable
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
+
+from requests.exceptions import ChunkedEncodingError, ConnectionError
+from urllib3.exceptions import MaxRetryError, ProtocolError, ReadTimeoutError
+
+# Shared with the transport policy in client.py: attempts after the first.
+READ_RETRIES = 3
+_sleep = time.sleep  # patched in tests
+
+
+def _is_body_read_failure(exc: BaseException) -> bool:
+    """A GET whose headers arrived but whose body did not.
+
+    requests consumes the body *after* the adapter's retry loop has returned
+    (Session.send -> r.content), so a connection dropped mid-body surfaces as
+    ChunkedEncodingError (ProtocolError) or ConnectionError(ReadTimeoutError)
+    with no transport retry. A ConnectionError wrapping MaxRetryError is the
+    opposite case — the transport already retried and gave up — and must not
+    be retried again here.
+    """
+    if isinstance(exc, ChunkedEncodingError):
+        return True
+    if isinstance(exc, ConnectionError):
+        cause = exc.args[0] if exc.args else None
+        return isinstance(cause, (ProtocolError, ReadTimeoutError)) and not isinstance(
+            cause, MaxRetryError
+        )
+    return False
+
+
+def get_json(client, path: str, **kwargs: Any) -> Any:
+    """`client._get(path, max_retries=0, **kwargs)` with a bounded retry for
+    body-read failures, which the transport-level policy cannot see. Same
+    schedule as that policy (0 s, 2 s, 4 s) and the same stderr note."""
+    for attempt in range(READ_RETRIES + 1):
+        try:
+            return client._get(path, max_retries=0, **kwargs)
+        except (ChunkedEncodingError, ConnectionError) as exc:
+            if attempt == READ_RETRIES or not _is_body_read_failure(exc):
+                raise
+            wait = 0 if attempt == 0 else 2**attempt
+            print(
+                f"note: {type(exc).__name__} while reading GET {path}; "
+                f"retrying ({attempt + 1} of {READ_RETRIES})",
+                file=sys.stderr,
+            )
+            _sleep(wait)
+    raise AssertionError("unreachable")
+
 
 DEFAULT_PAGE_SIZE = 100
 
@@ -51,7 +101,7 @@ def follow_pages(client, page: Any, *, limit: int | None = None) -> tuple[list, 
         if link.netloc:
             origin = urlsplit(client._api_root())
             next_url = urlunsplit((origin.scheme, origin.netloc, link.path, link.query, ""))
-        more, next_url, _ = normalize_page(client._get(next_url, max_retries=0))
+        more, next_url, _ = normalize_page(get_json(client, next_url))
         records.extend(more)
         pages += 1
     if limit is not None:
@@ -82,7 +132,7 @@ def fetch(
     if paginate and unwrap is None and "page_size" not in params:
         params["page_size"] = min(limit, DEFAULT_PAGE_SIZE) if limit else DEFAULT_PAGE_SIZE
     base_url = client._api_root(version) if version else None
-    page = client._get(path, base_url=base_url, params=params, max_retries=0)
+    page = get_json(client, path, base_url=base_url, params=params)
     if unwrap is not None:
         # endpoint-specific envelope (e.g. {"features": [...]}) that normalize_page
         # would otherwise treat as a single record

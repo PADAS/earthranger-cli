@@ -274,3 +274,27 @@ def test_fixed_shape_objects_keep_their_own_rules():
     assert errors == [
         ["photos.0.x: not a field of 'nested'", "where.altitude: not a field of 'nested'"]
     ]
+
+
+def test_schema_fetch_body_failure_is_retried(monkeypatch, capsys):
+    from requests.exceptions import ChunkedEncodingError
+    from urllib3.exceptions import ProtocolError
+
+    from earthranger_cli import read
+
+    monkeypatch.setattr(read, "_sleep", lambda s: None)
+    fake = _fake()
+    real_get = fake._get
+    dropped = {"left": 1}
+
+    def flaky(path, base_url=None, params=None, max_retries=5, **kw):
+        if path.endswith("/schema") and dropped["left"]:
+            dropped["left"] -= 1
+            raise ChunkedEncodingError(ProtocolError("Connection broken: IncompleteRead"))
+        return real_get(path, base_url=base_url, params=params, max_retries=max_retries)
+
+    fake._get = flaky
+    errors = validate_events(fake, [_ev("animal_sighting", species="lion")])
+    assert errors == [[]]
+    assert "retrying (1 of 3)" in capsys.readouterr().err
+    assert dropped["left"] == 0  # the drop was consumed, then the schema came through

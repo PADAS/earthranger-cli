@@ -23,6 +23,9 @@ dependencies = [
     "click>=8.1",
     "pyyaml>=6.0",
     "jsonschema>=4.18",
+    # imported directly (client.py mounts a retry policy on erclient's session)
+    "requests>=2.31",
+    "urllib3>=2.0",
 ]
 
 [project.urls]

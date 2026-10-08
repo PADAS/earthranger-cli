@@ -1936,3 +1936,11 @@ def test_batch_file_rejects_non_string_event_type_before_anything(fake, raw):
     assert result.exit_code == 1
     assert "error: events[0].event_type must be a non-empty string" in result.output
     assert fake.calls == []
+
+
+def test_version_flag():
+    from earthranger_cli import __version__
+
+    result = _run(["--version"])
+    assert result.exit_code == 0
+    assert result.output.strip() == f"er, version {__version__}"

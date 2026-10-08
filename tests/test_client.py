@@ -9,6 +9,7 @@ from earthranger_cli.client import (
     get_me,
     make_client,
     make_static_token_client,
+    make_token_client,
     normalize_server,
     patch_choice,
     post_choice,
@@ -151,7 +152,9 @@ def test_normalize_server_rejects_blank_and_non_http_schemes(bad):
         normalize_server(bad)
 
 
-def test_get_me_is_a_one_shot_probe():
+def test_get_me_disables_erclients_own_retry_loop():
+    # transport-level read retries (0/2/4 s) still apply; erclient's five
+    # fixed 5 s sleeps must not stack on top of them
     client = Mock()
     client._get.return_value = {"username": "chris"}
     assert get_me(client) == {"username": "chris"}
@@ -162,3 +165,114 @@ def test_get_me_is_a_one_shot_probe():
 def test_normalize_server_rejects_non_strings_as_server_error(bad):
     with pytest.raises(ServerError, match="invalid server"):
         normalize_server(bad)
+
+
+@pytest.mark.parametrize(
+    "make",
+    [
+        lambda: make_client(server="x", username="u", password="p"),
+        lambda: make_token_client(server="x"),
+        lambda: make_static_token_client(server="x", token="t"),
+    ],
+)
+def test_every_client_gets_the_get_only_read_retry_policy(make):
+    client = make()
+    # erclient's and requests' stock adapters are gone, not shadowed: exactly
+    # one adapter per scheme, so nothing can outrank the policy by prefix
+    assert sorted(client._http_session.adapters) == ["http://", "https://"]
+    for scheme in ("https://x.pamdas.org/api/v1.0/subjects", "http://localhost:8000/api/v1.0/x"):
+        retry = client._http_session.get_adapter(scheme).max_retries
+        assert retry.total == 3
+        assert retry.connect == 1  # a mistyped --server must not wait out 0/2/4 s
+        assert set(retry.status_forcelist) == {429, 500, 502, 503, 504}
+        assert retry.backoff_factor == 1
+        assert retry.respect_retry_after_header is True
+        assert retry.other == 0  # the one category allowed_methods does not gate
+        assert retry.raise_on_status is False  # erclient maps the final status itself
+        # writes are never replayed: a timed-out POST may have landed
+        assert retry.is_retry("GET", 503) is True
+        assert retry.is_retry("POST", 503) is False
+        assert retry.is_retry("PATCH", 502) is False
+        assert retry.is_retry("GET", 404) is False  # not transient
+
+
+def test_read_retry_backoff_schedule():
+    from urllib3.util.retry import RequestHistory
+
+    from earthranger_cli.client import _read_retry_policy
+
+    policy = _read_retry_policy()
+    attempt = RequestHistory("GET", "/api/v1.0/subjects", None, 503, None)
+    # urllib3: no wait before the first retry, then factor * 2**(n-1)
+    waits = [policy.new(history=(attempt,) * n).get_backoff_time() for n in (1, 2, 3)]
+    assert waits == [0, 2, 4]
+
+
+def test_each_retry_is_announced_on_stderr(capsys):
+    from urllib3.exceptions import ConnectTimeoutError
+    from urllib3.response import HTTPResponse
+
+    from earthranger_cli.client import _read_retry_policy
+
+    policy = _read_retry_policy()
+    once = policy.increment("GET", "/api/v1.0/subjects", response=HTTPResponse(status=503))
+    twice = once.increment("GET", "/api/v1.0/subjects", error=ConnectTimeoutError())
+    assert len(twice.history) == 2
+    assert twice.__class__ is policy.__class__  # the note survives urllib3's cloning
+    err = capsys.readouterr().err.splitlines()
+    assert err == [
+        "note: HTTP 503 on GET /api/v1.0/subjects; retrying (1 of 3)",
+        "note: ConnectTimeoutError on GET /api/v1.0/subjects; retrying (2 of 3)",
+    ]
+
+
+def test_retry_after_is_capped():
+    from urllib3.response import HTTPResponse
+
+    from earthranger_cli.client import _read_retry_policy
+
+    resp = HTTPResponse(status=503, headers={"Retry-After": "3600"})
+    assert _read_retry_policy().get_retry_after(resp) == 30
+
+
+@pytest.mark.parametrize("method", ["POST", "PATCH", "GET"])
+def test_other_errors_never_retry_so_writes_cannot_be_replayed(method, capsys):
+    from urllib3.exceptions import MaxRetryError, SSLError
+
+    from earthranger_cli.client import _read_retry_policy
+
+    # an SSL error after the request went out is urllib3's "other" category,
+    # which allowed_methods does not gate: it must be exhausted immediately
+    with pytest.raises(MaxRetryError):
+        _read_retry_policy().increment(method, "/api/v1.0/activity/events", error=SSLError("boom"))
+    assert capsys.readouterr().err == ""  # no retry happened, so no note
+
+
+def test_first_choices_page_body_failure_is_retried(monkeypatch, capsys):
+    from requests.exceptions import ChunkedEncodingError
+    from urllib3.exceptions import ProtocolError
+
+    from earthranger_cli import read
+
+    monkeypatch.setattr(read, "_sleep", lambda s: None)
+    client = Mock()
+    client._get.side_effect = [
+        ChunkedEncodingError(ProtocolError("Connection broken: IncompleteRead")),
+        {"results": [{"value": "a"}], "next": None},
+    ]
+    assert [c["value"] for c in get_choices(client, "t1_species")] == ["a"]
+    assert client._get.call_count == 2
+    assert "retrying (1 of 3)" in capsys.readouterr().err
+
+
+def test_get_me_body_failure_is_retried(monkeypatch):
+    from requests.exceptions import ChunkedEncodingError
+    from urllib3.exceptions import ProtocolError
+
+    from earthranger_cli import read
+
+    monkeypatch.setattr(read, "_sleep", lambda s: None)
+    client = Mock()
+    client._get.side_effect = [ChunkedEncodingError(ProtocolError("x")), {"username": "chris"}]
+    assert get_me(client) == {"username": "chris"}
+    assert client._get.call_count == 2
