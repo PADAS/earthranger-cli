@@ -142,10 +142,10 @@ def connection_options(f):
 
 
 def _resolve_connection(ctx) -> tuple[str, str | None]:
-    """Resolve (server, username) from flags/env or a selected profile.
-    Explicit --server/--username always win; a profile named with --profile
-    (or ER_PROFILE, e.g. via the er-use shell helper) supplies the defaults.
-    Profile selection is per invocation — there is no global active profile."""
+    """Resolve (server, username) from flags/env or the selected profile.
+    Explicit --server/--username always win; the selected profile (--profile,
+    ER_PROFILE, or the default persisted by 'er profile use', in that order)
+    supplies the defaults."""
     server = ctx.obj["server"]
     username = ctx.obj["username"]
     profile = None
@@ -160,7 +160,7 @@ def _resolve_connection(ctx) -> tuple[str, str | None]:
     if not server:
         raise click.UsageError(
             "Missing server: pass --server, set ER_SERVER, or select a profile "
-            "(--profile NAME / ER_PROFILE)."
+            "('er profile use NAME', --profile NAME, or ER_PROFILE)."
         )
     return server, username
 
@@ -284,7 +284,11 @@ def _connect_with_cached_token(ctx, name: str, profile: dict, server: str, cache
     envvar="ER_TOKEN",
     help="Pre-issued OAuth bearer token (wins over --password and cached sessions).",
 )
-@click.option("--profile", envvar="ER_PROFILE", help="Named profile to use (see 'er profile').")
+@click.option(
+    "--profile",
+    envvar="ER_PROFILE",
+    help="Named profile to use (see 'er profile'); defaults to the one set by 'er profile use'.",
+)
 @click.pass_context
 def main(ctx, server, username, password, token, profile):
     """EarthRanger site management CLI."""
@@ -293,7 +297,9 @@ def main(ctx, server, username, password, token, profile):
         "username": username,
         "password": password,
         "token": token,
-        "profile": profile,
+        # --profile / ER_PROFILE pin this invocation; otherwise the persisted
+        # default (er profile use) applies
+        "profile": profile or config_store.get_active(),
     }
 
 

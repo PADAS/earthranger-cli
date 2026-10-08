@@ -615,6 +615,51 @@ def test_explicit_server_flag_overrides_profile_server(monkeypatch):
     assert seen["server"] == "other"
 
 
+def test_default_profile_supplies_server(monkeypatch):
+    # 'er profile use' persisted a default; a bare command resolves it with
+    # no --profile flag and no ER_PROFILE in the environment
+    config_store.add_profile("prod", server="myreserve", username="ops")
+    config_store.set_active("prod")
+    token_store.save_token("prod", AUTH, FUTURE, "ops")
+    seen = {}
+
+    def fake_token_client(*, server):
+        seen["server"] = server
+        return FakeER()
+
+    monkeypatch.setattr(cli_mod, "make_token_client", fake_token_client)
+    result = _run(["events", "list", "categories"])
+    assert result.exit_code == 0
+    assert seen["server"] == "myreserve"
+
+
+def test_env_profile_overrides_default_profile(monkeypatch):
+    config_store.add_profile("prod", server="myreserve")
+    config_store.add_profile("sandbox", server="sandbox")
+    config_store.set_active("prod")
+    monkeypatch.setenv("ER_PROFILE", "sandbox")
+    result = _run(["profile", "current"])
+    assert result.output == "sandbox\n"
+
+
+def test_profile_flag_overrides_env_and_default(monkeypatch):
+    config_store.add_profile("prod", server="myreserve")
+    config_store.add_profile("sandbox", server="sandbox")
+    config_store.add_profile("dev", server="dev")
+    config_store.set_active("prod")
+    monkeypatch.setenv("ER_PROFILE", "sandbox")
+    result = _run(["--profile", "dev", "profile", "current"])
+    assert result.output == "dev\n"
+    result = _run(["profile", "current", "--profile", "dev"])  # trailing flag too
+    assert result.output == "dev\n"
+
+
+def test_missing_server_error_names_profile_use():
+    result = _run(["events", "list", "categories"])
+    assert result.exit_code != 0
+    assert "er profile use" in result.output
+
+
 def test_unknown_profile_flag_is_usage_error():
     result = _run(["--profile", "zzz", "events", "list", "categories"])
     assert result.exit_code != 0
