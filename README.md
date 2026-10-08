@@ -64,52 +64,32 @@ Sessions live on profiles (gcloud-style): create a profile, log in once,
 and every command run under that profile reuses its cached session.
 
 ```bash
-er profile add myreserve --server myreserve --username me   # prints: export ER_PROFILE=myreserve
-export ER_PROFILE=myreserve   # select it in this shell (the wrapper below automates this)
+er profile add myreserve --server myreserve --username me   # becomes the default profile
 er auth login                 # prompts for your password
 ```
 
-Working across sites? Save each as a profile and select one per shell
-or per command — selection is never global:
+Working across sites? Save each as a profile; `er profile use` picks the
+default, and a flag or env var overrides it per command or per shell:
 
 ```bash
 er profile add sandbox --server sandbox --username me
-er profile add prod --server myreserve --username me   # adding auto-switches (via the wrapper)
-er profile use sandbox                 # switch this shell (needs the wrapper below)
+er profile add prod --server myreserve --username me   # adding auto-switches the default
+er profile use sandbox                 # make sandbox the default (all shells)
 er profile set username me2           # edit a property on the selected profile
 er --profile sandbox events list categories   # one-off override
-er profile list                        # marker shows this shell's selection
+export ER_PROFILE=prod                 # pin this shell, regardless of the default
+er profile list                        # marker shows this invocation's selection
 er profile current                     # prints it (exit 1 if none) — prompt-friendly
+er profile use                         # clear the default
 ```
 
-A selected profile supplies the server and default username when you
-don't pass them; explicit `--server`/`--username` flags always win.
-
-`er profile use` and `er profile add` print an `export ER_PROFILE=...`
-line on stdout (a subprocess can't set its parent shell's env; add's
-confirmation goes to stderr), so add this wrapper to your zshrc — it
-evals that line in place, which also makes a newly added profile the
-shell's selection immediately, and passes every other command through;
-the optional prompt segment shows the shell's selection:
-
-```zsh
-er() {
-  if [[ $1 == profile && ($2 == use || $2 == add) ]]; then
-    local out
-    out=$(command er "$@") || { [[ -n $out ]] && print -r -- "$out"; return 1; }
-    # eval only the switch protocol; anything else (e.g. --help) prints normally
-    if [[ $out == "unset ER_PROFILE" || ($out == "export ER_PROFILE="* && $out != *$'\n'*) ]]; then
-      eval "$out"
-    elif [[ -n $out ]]; then
-      print -r -- "$out"
-    fi
-  else
-    command er "$@"
-  fi
-}
-_er_prompt() { [[ -n $ER_PROFILE ]] && print -n "%F{yellow}(er:$ER_PROFILE)%f "; }
-setopt PROMPT_SUBST; PROMPT='$(_er_prompt)'"$PROMPT"
-```
+Selection order is `--profile`, then `ER_PROFILE`, then the default from
+`er profile use`. The selected profile supplies the server and default
+username when you don't pass them; explicit `--server`/`--username` flags
+always win. The default is stored in `~/.config/er-events/config.json`
+and is shared by every shell, so pin a terminal with `ER_PROFILE` when you
+need it to stay on one site. `er profile use` tells you on stderr when the
+current shell has `ER_PROFILE` set and so won't follow the new default.
 
 `auth login` requires a selected profile: it verifies your credentials
 and caches the access and refresh tokens (never your password) in
@@ -240,7 +220,7 @@ per profile; old `tokens/<host>.json` files are ignored.)
 | `spatial-feature-groups list\|get ID`, `spatial-features list\|get ID` | Read spatial feature groups and the features in them (geofences, roads, water points, boundaries) |
 | `featuresets list\|get ID`, `regions list` | Read featuresets and their GeoJSON boundaries, operational regions |
 | `auth login [--token T]/status/logout` | Cache (password session or static token), inspect, or clear the selected profile's credential |
-| `profile add/use/set/show/list/remove/current` | Named site profiles; `use` selects per shell and `add` auto-switches (via the wrapper); `set` edits the selected profile; `--profile NAME` per command |
+| `profile add/use/set/show/list/remove/current` | Named site profiles; `use` sets the default and `add` auto-switches to the new one; `set` edits the selected profile; `--profile NAME` / `ER_PROFILE` override per command or shell |
 
 Every paginated read command answers to both `list` and `search` (`er subjects list`
 and `er regions search` both work); the names above are the ones shown in `--help`.
