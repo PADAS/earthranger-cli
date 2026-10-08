@@ -79,16 +79,30 @@ def _config_lock():
             fcntl.flock(f, fcntl.LOCK_UN)
 
 
-def _load() -> dict:
+def _load(*, for_write: bool = False) -> dict:
+    """Read config.json. A missing file is empty config. An unreadable or
+    unparseable one is empty config for readers (every command reads this at
+    startup, so it must never crash them) but a ConfigError for writers, so
+    a mutation never replaces the user's profiles with that emptiness."""
     path = config_file()
-    if not path.exists():
+    try:
+        text = path.read_text()
+    except FileNotFoundError:
+        return {"profiles": {}}
+    except OSError as e:
+        if for_write:
+            raise ConfigError(f"could not read {path}: {e}") from e
         return {"profiles": {}}
     try:
-        data = json.loads(path.read_text())
-    except (OSError, ValueError):
-        return {"profiles": {}}  # corrupt config == empty
+        data = json.loads(text)
+    except ValueError:
+        data = None
     if not isinstance(data, dict) or not isinstance(data.get("profiles"), dict):
-        return {"profiles": {}}
+        if for_write:
+            raise ConfigError(
+                f"{path} is not a valid config file; fix or delete it before changing profiles."
+            )
+        return {"profiles": {}}  # corrupt config == empty
     cfg = {"profiles": data["profiles"]}
     # a pointer at a profile that no longer exists (stale or hand-edited) is
     # no selection at all, same as a corrupt file is no config
@@ -103,23 +117,28 @@ def _save(cfg: dict) -> None:
 
 
 def add_profile(
-    name: str, *, server: str, username: str | None = None, make_default: bool = False
-) -> None:
-    """Add or overwrite a profile; with make_default, also make it the default
-    in the same write."""
+    name: str, *, server: str, username: str | None = None, default_if_new: bool = False
+) -> tuple[bool, str | None]:
+    """Add or overwrite a profile. With default_if_new, a profile that did not
+    exist yet (or the first default ever) becomes the default in the same
+    write; overwriting an existing one leaves the default alone. Returns
+    (switched, default after the write), decided from the locked read."""
     if not isinstance(name, str) or not _PROFILE_NAME_RE.match(name):
         raise ConfigError(
             f"invalid profile name {name!r} (use lowercase letters, digits, '-', '_')"
         )
     with _config_lock():
-        cfg = _load()
+        cfg = _load(for_write=True)
+        is_new = name not in cfg["profiles"]
         profile: dict = {"server": server}
         if username:
             profile["username"] = username
         cfg["profiles"][name] = profile
-        if make_default:
+        switched = default_if_new and (is_new or "active" not in cfg)
+        if switched:
             cfg["active"] = name
         _save(cfg)
+        return switched, cfg.get("active")
 
 
 def get_profile(name: str) -> dict | None:
@@ -139,7 +158,7 @@ def set_profile_property(name: str, key: str, value: str) -> None:
     if not isinstance(value, str) or not value:
         raise ConfigError(f"{key}: a non-empty value is required")
     with _config_lock():
-        cfg = _load()
+        cfg = _load(for_write=True)
         if name not in cfg["profiles"]:
             raise ConfigError(f"no profile named {name!r}")
         cfg["profiles"][name][key] = value
@@ -148,7 +167,7 @@ def set_profile_property(name: str, key: str, value: str) -> None:
 
 def remove_profile(name: str) -> bool:
     with _config_lock():
-        cfg = _load()
+        cfg = _load(for_write=True)
         if name not in cfg["profiles"]:
             return False
         del cfg["profiles"][name]
@@ -166,11 +185,9 @@ def get_active() -> str | None:
 def set_active(name: str | None) -> None:
     """Persist NAME as the default profile; None clears the default."""
     with _config_lock():
-        cfg = _load()
+        cfg = _load(for_write=True)
         if name is None:
-            if "active" not in cfg:
-                return  # nothing to clear; never rewrite a corrupt file as empty
-            del cfg["active"]
+            cfg.pop("active", None)  # a valid file is rewritten: this also drops a stale pointer
         elif name not in cfg["profiles"]:
             raise ConfigError(f"no profile named {name!r}")
         else:

@@ -75,17 +75,31 @@ def _is_unauthorized(e: BaseException | None) -> bool:
 
 
 def _credential_remedy() -> str:
-    """Which credential this invocation used, and how to fix it; "" if unknown."""
+    """Which credential this invocation used, and how to fix it; "" if unknown.
+
+    Read from what _connect recorded, not from the flags: a selected profile
+    (now usually the persisted default) is present on nearly every run, but
+    its stored credential is only sent when the server matches — blaming it
+    for a 401 against another server, or for a mistyped prompted password,
+    would send the user to re-login to the wrong place."""
     ctx = click.get_current_context(silent=True)
     obj = (ctx.obj if ctx is not None else None) or {}
-    if obj.get("token"):
+    used = obj.get("credential_used")
+    if used is None:
+        # an explicit flag is unambiguous even when _connect didn't run
+        if obj.get("token"):
+            used = "token"
+        elif obj.get("password"):
+            used = "password"
+    if used == "token":
         return "check --token / ER_TOKEN."
-    if obj.get("password"):
+    if used == "password":
         return "check --username / --password."
-    name = obj.get("profile")
-    if name:
+    if used == "prompt":
+        return "check the username and password you entered."
+    if isinstance(used, tuple) and used[0] == "profile":
         return (
-            f"the credential stored on profile {name!r} is expired or revoked; "
+            f"the credential stored on profile {used[1]!r} is expired or revoked; "
             "run 'er auth login' (or 'er auth login --token')."
         )
     return ""
@@ -178,6 +192,7 @@ def _connect(ctx):
     token = ctx.obj.get("token")
     if token:
         # the token is the identity: no username, no cache, no refresh
+        ctx.obj["credential_used"] = "token"
         return make_static_token_client(server=server, token=token)
     password = ctx.obj["password"]
     name = ctx.obj.get("profile")
@@ -193,11 +208,15 @@ def _connect(ctx):
         if profile is not None and cached:
             server_matches = _same_server(server, profile.get("server") or "")
             if server_matches and (not username or cached.get("username") == username):
+                ctx.obj["credential_used"] = ("profile", name)
                 return _connect_with_cached_token(ctx, name, profile, server, cached)
     if not username:
         raise click.UsageError("Missing username: pass --username or set ER_USERNAME.")
-    if not password:
+    if password:
+        ctx.obj["credential_used"] = "password"
+    else:
         password = click.prompt("Password", hide_input=True)
+        ctx.obj["credential_used"] = "prompt"
     return make_client(server=server, username=username, password=password)
 
 
@@ -542,7 +561,8 @@ def auth_login(ctx):
             stored_desc = f"invalid stored server {stored!r}"
         raise click.UsageError(
             f"server {normalize_server(server)!r} differs from profile {name!r} "
-            f"({stored_desc}); update it first with 'er profile set server ...'."
+            f"({stored_desc}); update it first with 'er profile set server ...', or log "
+            "in to another profile with --profile NAME (create one with 'er profile add')."
         )
     host = token_store.server_host(server)
     token = ctx.obj.get("token")
@@ -754,18 +774,18 @@ def profile_add(name, p_server, p_username):
                     err=True,
                 )
         # a new profile (or the first default) auto-switches; overwriting an
-        # existing one is an in-place edit and must not redirect every shell
-        current_default = config_store.get_active()
-        make_default = existing is None or current_default is None
-        config_store.add_profile(
-            name, server=p_server, username=p_username, make_default=make_default
+        # existing one is an in-place edit and must not redirect every shell.
+        # The store decides under its own lock so a concurrent 'profile use'
+        # can't be overwritten by a decision made from a stale read.
+        switched, default = config_store.add_profile(
+            name, server=p_server, username=p_username, default_if_new=True
         )
     host = token_store.server_host(p_server)
-    if make_default:
+    if switched:
         click.echo(f"Added profile {name!r} ({host}); it is now the default.")
         _note_env_profile_override(name)
     else:
-        click.echo(f"Added profile {name!r} ({host}); the default is still {current_default!r}.")
+        click.echo(f"Added profile {name!r} ({host}); the default is still {default!r}.")
 
 
 @profile_group.command("list")
@@ -820,12 +840,13 @@ def _note_env_profile_override(name: str | None) -> None:
     zsh wrapper) pins the selection and would otherwise make the change look
     like a no-op."""
     pinned = os.environ.get("ER_PROFILE")
-    if pinned and pinned != name:
-        click.echo(
-            f"note: ER_PROFILE={pinned} is set in this shell and overrides the default; "
-            "unset it to follow the default here.",
-            err=True,
-        )
+    if not pinned or pinned == name:
+        return
+    if name is None:
+        tail = "still selects it; unset it to run with no profile here."
+    else:
+        tail = "overrides the default; unset it to follow the default here."
+    click.echo(f"note: ER_PROFILE={pinned} is set in this shell and {tail}", err=True)
 
 
 @profile_group.command("use")

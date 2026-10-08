@@ -45,19 +45,60 @@ def test_active_pointing_at_missing_profile_reads_as_none():
     assert config_store.list_profiles() == {"a": {"server": "a"}}
 
 
-def test_clearing_active_on_corrupt_config_does_not_rewrite_it():
-    # a no-op clear must never turn 'corrupt == empty' into an actual empty file
+def test_mutations_refuse_a_corrupt_config():
+    # reads treat an unparseable file as empty; writes must never turn that
+    # emptiness into the file's new contents
     config_store.add_profile("a", server="a")
     config_store.config_file().write_text("{broken")
-    config_store.set_active(None)
+    for mutate in (
+        lambda: config_store.add_profile("b", server="b"),
+        lambda: config_store.add_profile("b", server="b", default_if_new=True),
+        lambda: config_store.set_active("a"),
+        lambda: config_store.set_active(None),
+        lambda: config_store.set_profile_property("a", "username", "u"),
+        lambda: config_store.remove_profile("a"),
+    ):
+        with pytest.raises(config_store.ConfigError, match="not a valid config file"):
+            mutate()
     assert config_store.config_file().read_text() == "{broken"
 
 
-def test_add_profile_can_make_default_in_one_write():
-    config_store.add_profile("a", server="a", make_default=True)
-    assert config_store.get_active() == "a"
-    config_store.add_profile("b", server="b")
-    assert config_store.get_active() == "a"  # default only moves when asked
+def test_clearing_active_removes_a_stale_pointer():
+    import json
+
+    config_store.add_profile("a", server="a")
+    f = config_store.config_file()
+    data = json.loads(f.read_text())
+    data["active"] = "gone"
+    f.write_text(json.dumps(data))
+    config_store.set_active(None)
+    assert "active" not in json.loads(f.read_text())
+
+
+def test_add_profile_default_if_new_decides_under_the_lock():
+    # the switch decision is made from the locked read, in the same write
+    add = config_store.add_profile
+    assert add("a", server="a", default_if_new=True) == (True, "a")
+    assert add("b", server="b", default_if_new=True) == (True, "b")  # new: switches
+    assert add("a", server="a2", default_if_new=True) == (False, "b")  # edit: stays
+    assert add("c", server="c") == (False, "b")  # not asked: never switches
+    config_store.set_active(None)
+    assert add("a", server="a3", default_if_new=True) == (True, "a")  # no default yet
+    assert config_store.get_profile("a") == {"server": "a3"}
+
+
+def test_unreadable_config_dir_reads_as_empty(tmp_path, monkeypatch):
+    import os
+
+    d = tmp_path / "locked"
+    d.mkdir()
+    monkeypatch.setenv("ER_EVENTS_CONFIG_DIR", str(d))
+    os.chmod(d, 0)
+    try:
+        assert config_store.list_profiles() == {}
+        assert config_store.get_active() is None
+    finally:
+        os.chmod(d, 0o700)
 
 
 def test_remove_profile_clears_active():

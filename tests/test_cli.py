@@ -744,7 +744,8 @@ def test_profile_use_clear_notes_env_override(monkeypatch):
     result = _run(["profile", "use"])
     assert result.exit_code == 0
     assert result.stdout == "Default profile cleared.\n"
-    assert "ER_PROFILE=sandbox is set in this shell" in result.stderr
+    assert "ER_PROFILE=sandbox is set in this shell and still selects it" in result.stderr
+    assert "follow the default" not in result.stderr  # there is no default to follow
     assert config_store.get_active() is None
 
 
@@ -766,6 +767,56 @@ def test_profile_add_overwrite_keeps_existing_default():
     result = _run(["profile", "add", "sandbox", "--server", "sandbox"])
     assert "it is now the default." in result.stdout
     assert config_store.get_active() == "sandbox"
+
+
+def test_bare_command_survives_unreadable_config_dir(monkeypatch, tmp_path):
+    # main() reads the default profile on every run; a config dir it can't
+    # stat must not turn an explicit --server/--token command into a traceback
+    import os
+
+    d = tmp_path / "locked"
+    d.mkdir()
+    monkeypatch.setenv("ER_EVENTS_CONFIG_DIR", str(d))
+    monkeypatch.setattr(cli_mod, "make_static_token_client", lambda **kw: FakeER())
+    os.chmod(d, 0)
+    try:
+        result = _run(["--server", "sandbox", "--token", "t", "events", "list", "categories"])
+    finally:
+        os.chmod(d, 0o700)
+    assert result.exit_code == 0
+
+
+def test_prompted_password_401_is_not_blamed_on_default_profile(monkeypatch):
+    from erclient.er_errors import ERClientBadCredentials
+
+    config_store.add_profile("prod", server="myreserve", username="ops")
+    config_store.set_active("prod")
+    token_store.save_token("prod", AUTH, FUTURE, "ops")
+    fake = FakeER()
+
+    def bad(include_inactive=False):
+        raise ERClientBadCredentials("Invalid credentials given.")
+
+    fake.get_event_categories = bad
+    monkeypatch.setattr(cli_mod, "make_client", lambda **kw: fake)
+    # --server differs from prod, so prod's cached token is never sent; the
+    # password typed at the prompt is what the server refused
+    result = _run(
+        ["--server", "sandbox", "--username", "me", "events", "list", "categories"], input="pw\n"
+    )
+    assert result.exit_code == 1
+    assert "stored on profile 'prod'" not in result.output
+    assert "check the username and password you entered" in result.output
+
+
+def test_auth_login_server_mismatch_offers_profile_flag(monkeypatch):
+    config_store.add_profile("prod", server="myreserve", username="ops")
+    config_store.set_active("prod")
+    result = _run(["auth", "login", "--server", "sandbox", "--password", "pw"])
+    assert result.exit_code != 0
+    out = result.output + result.stderr
+    assert "differs from profile 'prod'" in out
+    assert "--profile" in out and "er profile add" in out
 
 
 def test_profile_remove_clears_default():
