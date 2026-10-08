@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import functools
 import json
+import os
 import sys
 
 import click
@@ -753,10 +754,11 @@ def profile_add(name, p_server, p_username):
                     err=True,
                 )
         config_store.add_profile(name, server=p_server, username=p_username)
-    # confirmation to stderr; stdout stays eval-able so the shell wrapper can
-    # auto-switch this shell to the new profile (same pattern as profile use)
-    click.echo(f"Added profile {name!r} ({token_store.server_host(p_server)}).", err=True)
-    click.echo(f"export ER_PROFILE={name}")
+        config_store.set_active(name)  # adding auto-switches
+    click.echo(
+        f"Added profile {name!r} ({token_store.server_host(p_server)}); it is now the default."
+    )
+    _note_env_profile_override(name)
 
 
 @profile_group.command("list")
@@ -803,22 +805,35 @@ def profile_current(ctx):
     click.echo(name)
 
 
+def _note_env_profile_override(name: str) -> None:
+    """After changing the default, warn when this shell won't follow it:
+    an exported ER_PROFILE (e.g. left by the retired zsh wrapper) pins the
+    selection and would otherwise make the switch look like a no-op."""
+    pinned = os.environ.get("ER_PROFILE")
+    if pinned and pinned != name:
+        click.echo(
+            f"note: ER_PROFILE={pinned} is set in this shell and overrides the default; "
+            "unset it to follow the default here.",
+            err=True,
+        )
+
+
 @profile_group.command("use")
 @click.argument("name", required=False)
 @_api_errors
 def profile_use(name):
-    """Select a profile for the current shell.
+    """Make NAME the default profile for every shell (no NAME clears it).
 
-    A subprocess cannot modify its parent shell's environment, so this prints
-    the `export ER_PROFILE=...` line (or `unset` with no NAME) for the shell
-    to eval — the `er` wrapper function from the README does that for you.
+    Pin a single invocation or shell with --profile or ER_PROFILE instead;
+    both override the default.
     """
     if name is None:
-        click.echo("unset ER_PROFILE")
+        config_store.set_active(None)
+        click.echo("Default profile cleared.")
         return
-    if config_store.get_profile(name) is None:
-        raise config_store.ConfigError(f"no profile named {name!r}")
-    click.echo(f"export ER_PROFILE={name}")
+    config_store.set_active(name)  # rejects unknown names
+    click.echo(f"Default profile set to {name!r}.")
+    _note_env_profile_override(name)
 
 
 @profile_group.command("set")

@@ -545,10 +545,11 @@ from earthranger_cli import config_store
 def test_profile_add_use_list_remove():
     result = _run(["profile", "add", "sandbox", "--server", "sandbox", "--username", "chris"])
     assert result.exit_code == 0
-    assert "Added profile 'sandbox' (sandbox.pamdas.org)." in result.stderr
-    assert result.stdout == "export ER_PROFILE=sandbox\n"  # eval-able: auto-switch
+    assert result.stdout == "Added profile 'sandbox' (sandbox.pamdas.org); it is now the default.\n"
+    assert config_store.get_active() == "sandbox"  # adding auto-switches
     result = _run(["profile", "add", "prod", "--server", "myreserve"])
-    assert "Added profile 'prod' (myreserve.pamdas.org)." in result.stderr
+    assert "Added profile 'prod' (myreserve.pamdas.org); it is now the default." in result.stdout
+    assert config_store.get_active() == "prod"
     result = _run(["--profile", "sandbox", "profile", "list"])
     assert result.exit_code == 0
     lines = result.output.splitlines()
@@ -676,17 +677,58 @@ def test_profile_current():
     assert result.output == "sandbox\n"
 
 
-def test_profile_use_prints_export_line():
+def test_profile_use_persists_default():
     config_store.add_profile("prod", server="myreserve")
+    config_store.add_profile("sandbox", server="sandbox")
     result = _run(["profile", "use", "prod"])
     assert result.exit_code == 0
-    assert result.output == "export ER_PROFILE=prod\n"
+    assert result.stdout == "Default profile set to 'prod'.\n"
+    assert result.stderr == ""
+    assert config_store.get_active() == "prod"
+    # the next invocation sees it with no flag and no env var
+    result = _run(["profile", "current"])
+    assert result.output == "prod\n"
+    result = _run(["auth", "status"])
+    assert result.exit_code == 0
+    assert "prod (myreserve.pamdas.org): not authenticated" in result.output
 
 
-def test_profile_use_no_arg_prints_unset():
+def test_profile_use_no_arg_clears_default():
+    config_store.add_profile("prod", server="myreserve")
+    config_store.set_active("prod")
     result = _run(["profile", "use"])
     assert result.exit_code == 0
-    assert result.output == "unset ER_PROFILE\n"
+    assert result.stdout == "Default profile cleared.\n"
+    assert config_store.get_active() is None
+    result = _run(["profile", "current"])
+    assert result.exit_code == 1
+
+
+def test_profile_use_notes_env_override(monkeypatch):
+    # a shell with ER_PROFILE exported (e.g. a stale eval from the retired
+    # wrapper) keeps following the env var; say so instead of appearing to fail
+    config_store.add_profile("prod", server="myreserve")
+    config_store.add_profile("sandbox", server="sandbox")
+    monkeypatch.setenv("ER_PROFILE", "sandbox")
+    result = _run(["profile", "use", "prod"])
+    assert result.exit_code == 0
+    assert result.stdout == "Default profile set to 'prod'.\n"
+    assert "ER_PROFILE=sandbox is set in this shell and overrides the default" in result.stderr
+    assert config_store.get_active() == "prod"
+    # same env var naming the new default: nothing to warn about
+    monkeypatch.setenv("ER_PROFILE", "prod")
+    result = _run(["profile", "use", "prod"])
+    assert result.stderr == ""
+
+
+def test_profile_remove_clears_default():
+    config_store.add_profile("prod", server="myreserve")
+    config_store.set_active("prod")
+    result = _run(["profile", "remove", "prod"])
+    assert "Removed profile 'prod'." in result.output
+    result = _run(["profile", "current"])
+    assert result.exit_code == 1
+    assert result.output == ""
 
 
 def test_profile_use_unknown_errors():
