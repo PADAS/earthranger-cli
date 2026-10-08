@@ -187,7 +187,7 @@ def test_every_client_gets_the_get_only_read_retry_policy(make):
         assert set(retry.status_forcelist) == {429, 500, 502, 503, 504}
         assert retry.backoff_factor == 1
         assert retry.respect_retry_after_header is True
-        assert retry.retry_after_max == 30  # never the urllib3 default of 6 h
+        assert retry.other == 0  # the one category allowed_methods does not gate
         assert retry.raise_on_status is False  # erclient maps the final status itself
         # writes are never replayed: a timed-out POST may have landed
         assert retry.is_retry("GET", 503) is True
@@ -233,3 +233,16 @@ def test_retry_after_is_capped():
 
     resp = HTTPResponse(status=503, headers={"Retry-After": "3600"})
     assert _read_retry_policy().get_retry_after(resp) == 30
+
+
+@pytest.mark.parametrize("method", ["POST", "PATCH", "GET"])
+def test_other_errors_never_retry_so_writes_cannot_be_replayed(method, capsys):
+    from urllib3.exceptions import MaxRetryError, SSLError
+
+    from earthranger_cli.client import _read_retry_policy
+
+    # an SSL error after the request went out is urllib3's "other" category,
+    # which allowed_methods does not gate: it must be exhausted immediately
+    with pytest.raises(MaxRetryError):
+        _read_retry_policy().increment(method, "/api/v1.0/activity/events", error=SSLError("boom"))
+    assert capsys.readouterr().err == ""  # no retry happened, so no note

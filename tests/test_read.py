@@ -33,7 +33,11 @@ def test_follow_pages_walks_next_and_counts_pages():
     client = Mock()
     client._api_root.return_value = "https://x/api/v1.0"
     client._get.side_effect = [{"count": 3, "next": None, "results": [{"id": "c"}]}]
-    first = {"count": 3, "next": "https://x/subjects/?page=2", "results": [{"id": "a"}, {"id": "b"}]}
+    first = {
+        "count": 3,
+        "next": "https://x/subjects/?page=2",
+        "results": [{"id": "a"}, {"id": "b"}],
+    }
     recs, pages, count = follow_pages(client, first)
     assert [r["id"] for r in recs] == ["a", "b", "c"]
     assert pages == 2 and count == 3
@@ -112,11 +116,14 @@ def test_fetch_caps_default_page_size_at_limit():
     assert client._get.call_args.kwargs["params"] == {"page_size": 50}
 
 
-@pytest.mark.parametrize("next_url", [
-    "http://internal:8000/api/v2.0/subjects/?page=2&state=a&state=b",
-    "//internal:8000/api/v2.0/subjects/?page=2&state=a&state=b",
-    "https://public.example:8443/api/v2.0/subjects/?page=2&state=a&state=b",
-])
+@pytest.mark.parametrize(
+    "next_url",
+    [
+        "http://internal:8000/api/v2.0/subjects/?page=2&state=a&state=b",
+        "//internal:8000/api/v2.0/subjects/?page=2&state=a&state=b",
+        "https://public.example:8443/api/v2.0/subjects/?page=2&state=a&state=b",
+    ],
+)
 def test_pagination_uses_configured_origin_and_preserves_path_query(next_url):
     client = Mock()
     client._api_root.return_value = "https://public.example:8443/api/v1.0"
@@ -129,3 +136,86 @@ def test_pagination_uses_configured_origin_and_preserves_path_query(next_url):
         "https://public.example:8443/api/v2.0/subjects/?page=2&state=a&state=b",
         max_retries=0,
     )
+
+
+def _body_failure_client(failures, page):
+    """_get raises each exception in `failures` in turn, then returns `page`."""
+    client = Mock()
+    client._get.side_effect = list(failures) + [page]
+    return client
+
+
+def test_get_json_retries_a_body_read_failure_with_backoff(monkeypatch, capsys):
+    from requests.exceptions import ChunkedEncodingError, ConnectionError
+    from urllib3.exceptions import ProtocolError, ReadTimeoutError
+
+    from earthranger_cli import read
+
+    slept = []
+    monkeypatch.setattr(read, "_sleep", slept.append)
+    client = _body_failure_client(
+        [
+            ChunkedEncodingError(ProtocolError("Connection broken: IncompleteRead")),
+            ConnectionError(ReadTimeoutError(None, "/x", "Read timed out")),
+        ],
+        {"count": 1, "next": None, "results": [{"id": "a"}]},
+    )
+    page = read.get_json(client, "subjects", params={"page_size": 100})
+    assert page["results"] == [{"id": "a"}]
+    assert client._get.call_count == 3
+    assert slept == [0, 2]  # same schedule as the transport policy
+    err = capsys.readouterr().err.splitlines()
+    assert err == [
+        "note: ChunkedEncodingError while reading GET subjects; retrying (1 of 3)",
+        "note: ConnectionError while reading GET subjects; retrying (2 of 3)",
+    ]
+
+
+def test_get_json_does_not_retry_an_exhausted_transport(monkeypatch):
+    from requests.exceptions import ConnectionError
+    from urllib3.exceptions import MaxRetryError
+
+    from earthranger_cli import read
+
+    monkeypatch.setattr(read, "_sleep", lambda s: pytest.fail("must not sleep"))
+    # the adapter already retried 0/2/4 s and gave up; retrying here would double it
+    client = _body_failure_client([ConnectionError(MaxRetryError(None, "/x"))], {})
+    with pytest.raises(ConnectionError):
+        read.get_json(client, "subjects")
+    assert client._get.call_count == 1
+
+
+def test_get_json_gives_up_after_read_retries(monkeypatch):
+    from requests.exceptions import ChunkedEncodingError
+    from urllib3.exceptions import ProtocolError
+
+    from earthranger_cli import read
+
+    monkeypatch.setattr(read, "_sleep", lambda s: None)
+    client = _body_failure_client([ChunkedEncodingError(ProtocolError("x"))] * 4, {})
+    with pytest.raises(ChunkedEncodingError):
+        read.get_json(client, "subjects")
+    assert client._get.call_count == 4  # first try + READ_RETRIES
+
+
+def test_fetch_and_pagination_go_through_get_json(monkeypatch):
+    from earthranger_cli import read
+
+    seen = []
+
+    def fake_get_json(client, path, **kw):
+        seen.append(path)
+        if path == "subjects":
+            return {
+                "count": 2,
+                "next": "https://x/api/v1.0/subjects/?page=2",
+                "results": [{"id": "a"}],
+            }
+        return {"count": 2, "next": None, "results": [{"id": "b"}]}
+
+    monkeypatch.setattr(read, "get_json", fake_get_json)
+    client = Mock()
+    client._api_root.return_value = "https://x/api/v1.0"
+    records, _meta = read.fetch(client, "subjects", {}, paginate=True)
+    assert [r["id"] for r in records] == ["a", "b"]
+    assert seen == ["subjects", "https://x/api/v1.0/subjects/?page=2"]

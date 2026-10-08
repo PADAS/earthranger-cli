@@ -14,7 +14,7 @@ from erclient.er_errors import ERClientException
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
-from .read import follow_pages
+from .read import READ_RETRIES, follow_pages
 
 DEFAULT_CLIENT_ID = "das_web_client"
 CHOICES_PATH = "choices"
@@ -75,7 +75,6 @@ def normalize_server(server: str) -> str:
 # family, plus connection/read errors. Three retries with exponential backoff
 # (0 s, 2 s, 4 s); a Retry-After header is honoured up to a short cap.
 READ_RETRY_STATUSES = frozenset({429, 500, 502, 503, 504})
-READ_RETRIES = 3
 # urllib3 would otherwise sleep for up to 6 h on a server-supplied Retry-After
 READ_RETRY_AFTER_MAX = 30
 
@@ -84,6 +83,12 @@ class _NotingRetry(Retry):
     """urllib3 Retry that says so on stderr each time it retries, so a command
     that is waiting out a 503 doesn't look hung, and the eventual error
     (which erclient words as 'after 1 tries') isn't the whole story."""
+
+    def get_retry_after(self, response):
+        # capped here rather than via the `retry_after_max` constructor argument,
+        # which only exists from urllib3 2.6.3
+        wait = super().get_retry_after(response)
+        return None if wait is None else min(wait, READ_RETRY_AFTER_MAX)
 
     def increment(self, method=None, url=None, response=None, error=None, *args, **kwargs):
         new = super().increment(method, url, response, error, *args, **kwargs)
@@ -104,6 +109,11 @@ def _read_retry_policy() -> Retry:
         connect=1,
         read=READ_RETRIES,
         status=READ_RETRIES,
+        # urllib3 does NOT consult allowed_methods for its "other" error
+        # category (e.g. an SSL error while receiving headers after the
+        # request body went out), so a POST could be replayed through it.
+        # Disable that category entirely — those errors are rarely transient.
+        other=0,
         backoff_factor=1,
         status_forcelist=READ_RETRY_STATUSES,
         # GET only: a timed-out POST/PATCH may have landed, so writes are never
@@ -111,7 +121,6 @@ def _read_retry_policy() -> Retry:
         # too; this replaces it.)
         allowed_methods=frozenset({"GET"}),
         respect_retry_after_header=True,
-        retry_after_max=READ_RETRY_AFTER_MAX,
         # hand the final response back to erclient so its own status mapping
         # (401 -> ERClientBadCredentials, 404 -> ERClientNotFound, ...) applies
         raise_on_status=False,
