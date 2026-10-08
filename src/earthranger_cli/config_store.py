@@ -1,10 +1,11 @@
 """Named site profiles and the shared private config directory.
 
 Profiles map a name to {server, username?}, stored in ``<config>/config.json``
-— no secrets (tokens live in token_store). Profile selection is per invocation
-(--profile flag or ER_PROFILE env var); there is no global active pointer. The
-config directory defaults to ``~/.config/er-events`` and can be overridden
-with ``ER_EVENTS_CONFIG_DIR``.
+— no secrets (tokens live in token_store). The file also holds an optional
+``active`` pointer: the default profile that ``er profile use`` persists, used
+when an invocation names none (--profile flag or ER_PROFILE env var both
+override it). The config directory defaults to ``~/.config/er-events`` and
+can be overridden with ``ER_EVENTS_CONFIG_DIR``.
 """
 
 from __future__ import annotations
@@ -88,8 +89,13 @@ def _load() -> dict:
         return {"profiles": {}}  # corrupt config == empty
     if not isinstance(data, dict) or not isinstance(data.get("profiles"), dict):
         return {"profiles": {}}
-    # legacy files may carry an "active" pointer; selection is per-shell now
-    return {"profiles": data["profiles"]}
+    cfg = {"profiles": data["profiles"]}
+    # a pointer at a profile that no longer exists (stale or hand-edited) is
+    # no selection at all, same as a corrupt file is no config
+    active = data.get("active")
+    if isinstance(active, str) and active in cfg["profiles"]:
+        cfg["active"] = active
+    return cfg
 
 
 def _save(cfg: dict) -> None:
@@ -140,5 +146,25 @@ def remove_profile(name: str) -> bool:
         if name not in cfg["profiles"]:
             return False
         del cfg["profiles"][name]
+        if cfg.get("active") == name:
+            del cfg["active"]
         _save(cfg)
         return True
+
+
+def get_active() -> str | None:
+    """The persisted default profile name, or None (never a missing profile)."""
+    return _load().get("active")
+
+
+def set_active(name: str | None) -> None:
+    """Persist NAME as the default profile; None clears the default."""
+    with _config_lock():
+        cfg = _load()
+        if name is None:
+            cfg.pop("active", None)
+        elif name not in cfg["profiles"]:
+            raise ConfigError(f"no profile named {name!r}")
+        else:
+            cfg["active"] = name
+        _save(cfg)
