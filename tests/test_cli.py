@@ -737,6 +737,37 @@ def test_profile_add_notes_env_override(monkeypatch):
     assert result.stderr == ""
 
 
+def test_profile_use_clear_notes_env_override(monkeypatch):
+    config_store.add_profile("sandbox", server="sandbox")
+    config_store.set_active("sandbox")
+    monkeypatch.setenv("ER_PROFILE", "sandbox")
+    result = _run(["profile", "use"])
+    assert result.exit_code == 0
+    assert result.stdout == "Default profile cleared.\n"
+    assert "ER_PROFILE=sandbox is set in this shell" in result.stderr
+    assert config_store.get_active() is None
+
+
+def test_profile_add_overwrite_keeps_existing_default():
+    # editing a profile in place (e.g. fixing its server) must not redirect
+    # every other shell; only a new profile, or a first default, auto-switches
+    _run(["profile", "add", "sandbox", "--server", "sandbox"])
+    _run(["profile", "add", "prod", "--server", "myreserve"])
+    assert config_store.get_active() == "prod"
+    result = _run(["profile", "add", "sandbox", "--server", "sandbox2"])
+    assert result.exit_code == 0
+    assert (
+        result.stdout
+        == "Added profile 'sandbox' (sandbox2.pamdas.org); the default is still 'prod'.\n"
+    )
+    assert config_store.get_active() == "prod"
+    # with no default at all, overwriting still adopts the profile as default
+    config_store.set_active(None)
+    result = _run(["profile", "add", "sandbox", "--server", "sandbox"])
+    assert "it is now the default." in result.stdout
+    assert config_store.get_active() == "sandbox"
+
+
 def test_profile_remove_clears_default():
     config_store.add_profile("prod", server="myreserve")
     config_store.set_active("prod")

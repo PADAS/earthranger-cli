@@ -102,7 +102,11 @@ def _save(cfg: dict) -> None:
     write_private(config_file(), json.dumps(cfg, indent=2))
 
 
-def add_profile(name: str, *, server: str, username: str | None = None) -> None:
+def add_profile(
+    name: str, *, server: str, username: str | None = None, make_default: bool = False
+) -> None:
+    """Add or overwrite a profile; with make_default, also make it the default
+    in the same write."""
     if not isinstance(name, str) or not _PROFILE_NAME_RE.match(name):
         raise ConfigError(
             f"invalid profile name {name!r} (use lowercase letters, digits, '-', '_')"
@@ -113,6 +117,8 @@ def add_profile(name: str, *, server: str, username: str | None = None) -> None:
         if username:
             profile["username"] = username
         cfg["profiles"][name] = profile
+        if make_default:
+            cfg["active"] = name
         _save(cfg)
 
 
@@ -162,7 +168,9 @@ def set_active(name: str | None) -> None:
     with _config_lock():
         cfg = _load()
         if name is None:
-            cfg.pop("active", None)
+            if "active" not in cfg:
+                return  # nothing to clear; never rewrite a corrupt file as empty
+            del cfg["active"]
         elif name not in cfg["profiles"]:
             raise ConfigError(f"no profile named {name!r}")
         else:

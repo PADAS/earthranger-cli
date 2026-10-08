@@ -753,12 +753,19 @@ def profile_add(name, p_server, p_username):
                     "run 'er auth login'.",
                     err=True,
                 )
-        config_store.add_profile(name, server=p_server, username=p_username)
-        config_store.set_active(name)  # adding auto-switches
-    click.echo(
-        f"Added profile {name!r} ({token_store.server_host(p_server)}); it is now the default."
-    )
-    _note_env_profile_override(name)
+        # a new profile (or the first default) auto-switches; overwriting an
+        # existing one is an in-place edit and must not redirect every shell
+        current_default = config_store.get_active()
+        make_default = existing is None or current_default is None
+        config_store.add_profile(
+            name, server=p_server, username=p_username, make_default=make_default
+        )
+    host = token_store.server_host(p_server)
+    if make_default:
+        click.echo(f"Added profile {name!r} ({host}); it is now the default.")
+        _note_env_profile_override(name)
+    else:
+        click.echo(f"Added profile {name!r} ({host}); the default is still {current_default!r}.")
 
 
 @profile_group.command("list")
@@ -807,10 +814,11 @@ def profile_current(ctx):
     click.echo(name)
 
 
-def _note_env_profile_override(name: str) -> None:
-    """After changing the default, warn when this shell won't follow it:
-    an exported ER_PROFILE (e.g. left by the retired zsh wrapper) pins the
-    selection and would otherwise make the switch look like a no-op."""
+def _note_env_profile_override(name: str | None) -> None:
+    """After changing (or clearing, name=None) the default, warn when this
+    shell won't follow it: an exported ER_PROFILE (e.g. left by the retired
+    zsh wrapper) pins the selection and would otherwise make the change look
+    like a no-op."""
     pinned = os.environ.get("ER_PROFILE")
     if pinned and pinned != name:
         click.echo(
@@ -832,6 +840,7 @@ def profile_use(name):
     if name is None:
         config_store.set_active(None)
         click.echo("Default profile cleared.")
+        _note_env_profile_override(None)
         return
     config_store.set_active(name)  # rejects unknown names
     click.echo(f"Default profile set to {name!r}.")

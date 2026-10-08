@@ -45,6 +45,21 @@ def test_active_pointing_at_missing_profile_reads_as_none():
     assert config_store.list_profiles() == {"a": {"server": "a"}}
 
 
+def test_clearing_active_on_corrupt_config_does_not_rewrite_it():
+    # a no-op clear must never turn 'corrupt == empty' into an actual empty file
+    config_store.add_profile("a", server="a")
+    config_store.config_file().write_text("{broken")
+    config_store.set_active(None)
+    assert config_store.config_file().read_text() == "{broken"
+
+
+def test_add_profile_can_make_default_in_one_write():
+    config_store.add_profile("a", server="a", make_default=True)
+    assert config_store.get_active() == "a"
+    config_store.add_profile("b", server="b")
+    assert config_store.get_active() == "a"  # default only moves when asked
+
+
 def test_remove_profile_clears_active():
     config_store.add_profile("a", server="a")
     config_store.add_profile("b", server="b")

@@ -73,7 +73,7 @@ default, and a flag or env var overrides it per command or per shell:
 
 ```bash
 er profile add sandbox --server sandbox --username me
-er profile add prod --server myreserve --username me   # adding auto-switches the default
+er profile add prod --server myreserve --username me   # a new profile becomes the default
 er profile use sandbox                 # make sandbox the default (all shells)
 er profile set username me2           # edit a property on the selected profile
 er --profile sandbox events list categories   # one-off override
@@ -88,8 +88,10 @@ Selection order is `--profile`, then `ER_PROFILE`, then the default from
 username when you don't pass them; explicit `--server`/`--username` flags
 always win. The default is stored in `~/.config/er-events/config.json`
 and is shared by every shell, so pin a terminal with `ER_PROFILE` when you
-need it to stay on one site. `er profile use` tells you on stderr when the
-current shell has `ER_PROFILE` set and so won't follow the new default.
+need it to stay on one site. Whenever `er profile use` or `er profile add`
+changes the default, they tell you on stderr if the current shell has
+`ER_PROFILE` set and so won't follow it. Re-adding an existing profile (say,
+to fix its server) edits it in place and leaves the default alone.
 
 `auth login` requires a selected profile: it verifies your credentials
 and caches the access and refresh tokens (never your password) in
@@ -220,7 +222,7 @@ per profile; old `tokens/<host>.json` files are ignored.)
 | `spatial-feature-groups list\|get ID`, `spatial-features list\|get ID` | Read spatial feature groups and the features in them (geofences, roads, water points, boundaries) |
 | `featuresets list\|get ID`, `regions list` | Read featuresets and their GeoJSON boundaries, operational regions |
 | `auth login [--token T]/status/logout` | Cache (password session or static token), inspect, or clear the selected profile's credential |
-| `profile add/use/set/show/list/remove/current` | Named site profiles; `use` sets the default and `add` auto-switches to the new one; `set` edits the selected profile; `--profile NAME` / `ER_PROFILE` override per command or shell |
+| `profile add/use/set/show/list/remove/current` | Named site profiles; `use` sets the default and adding a new profile auto-switches to it; `set` edits the selected profile; `--profile NAME` / `ER_PROFILE` override per command or shell |
 
 Every paginated read command answers to both `list` and `search` (`er subjects list`
 and `er regions search` both work); the names above are the ones shown in `--help`.
