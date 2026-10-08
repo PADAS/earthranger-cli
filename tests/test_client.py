@@ -246,3 +246,33 @@ def test_other_errors_never_retry_so_writes_cannot_be_replayed(method, capsys):
     with pytest.raises(MaxRetryError):
         _read_retry_policy().increment(method, "/api/v1.0/activity/events", error=SSLError("boom"))
     assert capsys.readouterr().err == ""  # no retry happened, so no note
+
+
+def test_first_choices_page_body_failure_is_retried(monkeypatch, capsys):
+    from requests.exceptions import ChunkedEncodingError
+    from urllib3.exceptions import ProtocolError
+
+    from earthranger_cli import read
+
+    monkeypatch.setattr(read, "_sleep", lambda s: None)
+    client = Mock()
+    client._get.side_effect = [
+        ChunkedEncodingError(ProtocolError("Connection broken: IncompleteRead")),
+        {"results": [{"value": "a"}], "next": None},
+    ]
+    assert [c["value"] for c in get_choices(client, "t1_species")] == ["a"]
+    assert client._get.call_count == 2
+    assert "retrying (1 of 3)" in capsys.readouterr().err
+
+
+def test_get_me_body_failure_is_retried(monkeypatch):
+    from requests.exceptions import ChunkedEncodingError
+    from urllib3.exceptions import ProtocolError
+
+    from earthranger_cli import read
+
+    monkeypatch.setattr(read, "_sleep", lambda s: None)
+    client = Mock()
+    client._get.side_effect = [ChunkedEncodingError(ProtocolError("x")), {"username": "chris"}]
+    assert get_me(client) == {"username": "chris"}
+    assert client._get.call_count == 2

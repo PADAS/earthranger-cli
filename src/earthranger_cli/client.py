@@ -14,7 +14,7 @@ from erclient.er_errors import ERClientException
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
-from .read import READ_RETRIES, follow_pages
+from .read import READ_RETRIES, follow_pages, get_json
 
 DEFAULT_CLIENT_ID = "das_web_client"
 CHOICES_PATH = "choices"
@@ -199,7 +199,7 @@ def get_me(client) -> dict:
     read policy (see with_read_retries: 0/2/4 s, Retry-After capped) still
     applies, so a credential check against a struggling site fails within
     seconds rather than ~25 s."""
-    return client._get("user/me", max_retries=0)
+    return get_json(client, "user/me")
 
 
 def get_choices(client, field_name: str) -> list[dict]:
@@ -209,7 +209,8 @@ def get_choices(client, field_name: str) -> list[dict]:
     400s for a never-seen name; that means "no records for this field yet".
     """
     try:
-        page = client._get(
+        page = get_json(
+            client,
             CHOICES_PATH,
             params={
                 "model": CHOICE_MODEL,
@@ -217,7 +218,6 @@ def get_choices(client, field_name: str) -> list[dict]:
                 "include_inactive": True,
                 "page_size": 200,
             },
-            max_retries=0,
         )
     except ERClientException as e:
         if "is not one of the available choices" in str(e):
@@ -228,10 +228,10 @@ def get_choices(client, field_name: str) -> list[dict]:
 
 def get_all_choices(client) -> list[dict]:
     """All Choice records on model=activity.event, every field, inactive included."""
-    page = client._get(
+    page = get_json(
+        client,
         CHOICES_PATH,
         params={"model": CHOICE_MODEL, "include_inactive": True, "page_size": 200},
-        max_retries=0,
     )
     return _collect_pages(client, page)
 

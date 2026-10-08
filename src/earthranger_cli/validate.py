@@ -34,6 +34,8 @@ from urllib.parse import quote
 import jsonschema
 from erclient.er_errors import ERClientNotFound
 
+from .read import get_json
+
 _V2 = "v2.0"
 _UNEXPECTED_RE = re.compile(r"'([^']+)'")
 
@@ -95,9 +97,7 @@ def _v1_schema(client, value: str) -> dict | None:
     """The v1 rendered schema, or None when the type has no schema.
     Raises UnknownEventType on 404 — this is the last place a type can be."""
     try:
-        doc = client._get(
-            f"activity/events/schema/eventtype/{quote(value, safe='')}", max_retries=0
-        )
+        doc = get_json(client, f"activity/events/schema/eventtype/{quote(value, safe='')}")
     except ERClientNotFound:
         raise UnknownEventType(f"no event type with value {value!r}") from None
     schema = doc.get("schema") if isinstance(doc, dict) else None
@@ -115,16 +115,16 @@ def _fetch_json_schema(client, value: str) -> dict | None:
     """
     path = f"activity/eventtypes/{quote(value, safe='')}"
     try:
-        record = client._get(path, base_url=client._api_root(_V2), max_retries=0)
+        record = get_json(client, path, base_url=client._api_root(_V2))
     except ERClientNotFound:
         return _v1_schema(client, value)
     if not isinstance(record, dict) or str(record.get("version", "2")) != "2":
         return _v1_schema(client, value)
-    doc = client._get(
+    doc = get_json(
+        client,
         f"{path}/schema",
         base_url=client._api_root(_V2),
         params={"pre_render": "true", "s_format": "enum"},
-        max_retries=0,
     )
     schema = doc.get("json") if isinstance(doc, dict) else None
     if not isinstance(schema, dict) or not schema.get("properties"):
