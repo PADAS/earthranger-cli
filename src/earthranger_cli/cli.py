@@ -765,7 +765,8 @@ def profile_add(name, p_server, p_username):
 @connection_options
 @click.pass_context
 def profile_list(ctx):
-    """List profiles: selection marker (--profile/ER_PROFILE), server, username, auth state."""
+    """List profiles with server, username and auth state; '*' marks the selected
+    profile (--profile, ER_PROFILE, or the default from 'er profile use')."""
     profiles = config_store.list_profiles()
     if not profiles:
         click.echo("No profiles. Add one with 'er profile add NAME --server ...'.")
@@ -798,7 +799,8 @@ def profile_remove(name):
 @connection_options
 @click.pass_context
 def profile_current(ctx):
-    """Print this invocation's selected profile (--profile/ER_PROFILE); exit 1 if none."""
+    """Print the selected profile (--profile, ER_PROFILE, or the default from
+    'er profile use'); exit 1 if none."""
     name = ctx.obj.get("profile")
     if not name:
         sys.exit(1)
@@ -875,7 +877,7 @@ def profile_set(ctx, key, value):
 @click.pass_context
 @_api_errors
 def profile_show(ctx, name):
-    """Show one profile in full (defaults to this shell's selection)."""
+    """Show one profile in full (defaults to the selected profile)."""
     if name is None:
         name = ctx.obj.get("profile")
         if not name:

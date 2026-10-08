@@ -721,6 +721,22 @@ def test_profile_use_notes_env_override(monkeypatch):
     assert result.stderr == ""
 
 
+def test_profile_add_notes_env_override(monkeypatch):
+    # add auto-switches the default, so it carries the same note as use
+    config_store.add_profile("sandbox", server="sandbox")
+    monkeypatch.setenv("ER_PROFILE", "sandbox")
+    result = _run(["profile", "add", "prod", "--server", "myreserve"])
+    assert result.exit_code == 0
+    assert "it is now the default." in result.stdout
+    assert "ER_PROFILE=sandbox is set in this shell and overrides the default" in result.stderr
+    assert config_store.get_active() == "prod"
+    # re-adding the profile the env var already names: nothing to warn about
+    monkeypatch.setenv("ER_PROFILE", "prod")
+    result = _run(["profile", "add", "prod", "--server", "myreserve"])
+    assert result.exit_code == 0
+    assert result.stderr == ""
+
+
 def test_profile_remove_clears_default():
     config_store.add_profile("prod", server="myreserve")
     config_store.set_active("prod")
