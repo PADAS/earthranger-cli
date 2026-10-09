@@ -844,3 +844,58 @@ def test_where_filters_details_client_side_and_counts_the_matches(fake):
 
     result = _run(["events", "search", "--where", "species"])
     assert result.exit_code == 2 and "KEY=VALUE" in result.output
+
+
+def test_event_type_glob_matches_values_and_displays(fake):
+    fake.event_types = [
+        {"id": "t1", "value": "carcass_rep", "display": "Carcass Report"},
+        {"id": "t2", "value": "elephant_carcass", "display": "Carcass - Elephant"},
+        {"id": "t3", "value": "sighting", "display": "Sighting"},
+    ]
+    fake.responses["activity/events"] = {"count": 0, "next": None, "results": []}
+    result = _run(["events", "search", "--event-type", "*carcass*"])
+    assert result.exit_code == 0, result.output
+    assert sorted(_gets(fake)[0][2]["event_type"]) == ["t1", "t2"]
+    assert (
+        "note: --event-type '*carcass*' matched 2 type(s): carcass_rep, elephant_carcass"
+        in result.stderr
+    )
+    result = _run(["events", "search", "--event-type", "zebra*"])
+    assert result.exit_code == 2 and "matches no event type" in result.output
+
+
+def test_event_type_miss_suggests_close_matches(fake):
+    fake.event_types = [{"id": "t1", "value": "geofence_break", "display": "Geofence Break"}]
+    result = _run(["events", "search", "--event-type", "geofence_brake"])
+    assert result.exit_code == 2
+    assert "Did you mean: geofence_break" in result.output
+
+
+def test_events_post_event_type_is_never_resolved(fake):
+    # guardrail: posting takes the exact value; no pattern, no lookup
+    fake.event_types = [{"id": "t1", "value": "carcass_rep", "display": "Carcass Report"}]
+    result = _run(["events", "post", "--event-type", "carcass*", "--field", "a=1"])
+    posted = [c for c in fake.calls if c[0] == "post_event"]
+    assert posted, result.output
+    assert posted[0][1]["event_type"] == "carcass*"
+
+
+def test_subject_group_name_is_resolved_to_an_id(fake):
+    fake.responses["subjectgroups"] = {
+        "count": 2,
+        "next": None,
+        "results": [{"id": "g1", "name": "Rangers"}, {"id": "g2", "name": "Elephants"}],
+    }
+    fake.responses["subjects"] = {"count": 0, "next": None, "results": []}
+    result = _run(["subjects", "search", "--subject-group", "elephants"])
+    assert result.exit_code == 0, result.output
+    assert _gets(fake)[0][1:3] == (
+        "subjectgroups",
+        {"flat": "true", "include_inactive": "true", "page_size": 100},
+    )
+    assert _gets(fake)[1][2]["subject_group"] == "g2"
+    result = _run(["subjects", "search", "--subject-group", "elefants"])
+    assert result.exit_code == 2 and "Did you mean: Elephants" in result.output
+    fake.calls.clear()
+    _run(["subjects", "search", "--subject-group", "0b1a7c2e-1111-4222-8333-444455556666"])
+    assert _gets(fake)[0][1] == "subjects"  # a UUID needs no lookup

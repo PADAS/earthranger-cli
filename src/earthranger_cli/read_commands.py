@@ -11,6 +11,8 @@ output.emit) so agent skills can consume it unchanged.
 
 from __future__ import annotations
 
+import difflib
+import fnmatch
 import json
 import re
 from collections.abc import Callable
@@ -134,7 +136,14 @@ def _all_event_types(client) -> list[dict]:
     v1 = client.get_event_types(include_inactive=True)
     v2_page = client.get_event_types(include_inactive=True, version="v2.0")
     v2, _, _, _ = follow_pages(client, v2_page)
-    return [t for t in list(v1 or []) + list(v2) if isinstance(t, dict)]
+    seen: set = set()
+    types = []
+    for t in list(v1 or []) + list(v2):
+        # the same type must not count twice when a listing repeats it
+        if isinstance(t, dict) and t.get("id") not in seen:
+            seen.add(t.get("id"))
+            types.append(t)
+    return types
 
 
 def _resolve_event_types(client, params: dict) -> dict:
@@ -162,6 +171,29 @@ def _resolve_event_types(client, params: dict) -> dict:
         if _UUID_RE.match(w):
             resolved.append(w)
             continue
+        if any(ch in w for ch in "*?["):
+            # a pattern: every type whose value or display matches, named on stderr
+            pat = w.casefold()
+            hits = [
+                t
+                for t in types
+                if t.get("id")
+                and (
+                    fnmatch.fnmatchcase(str(t.get("value") or "").casefold(), pat)
+                    or fnmatch.fnmatchcase(str(t.get("display") or "").casefold(), pat)
+                )
+            ]
+            if not hits:
+                raise click.UsageError(
+                    f"--event-type {w!r} matches no event type on this server; "
+                    f"values: {', '.join(sorted(by_value))}"
+                )
+            resolved.extend(t["id"] for t in hits)
+            matched = ", ".join(sorted(str(t.get("value")) for t in hits))
+            click.echo(
+                f"note: --event-type {w!r} matched {len(hits)} type(s): {matched}.", err=True
+            )
+            continue
         if w in by_value:
             resolved.append(by_value[w])
             continue
@@ -176,12 +208,46 @@ def _resolve_event_types(client, params: dict) -> dict:
                 "Pass the value or id instead."
             )
         available = ", ".join(sorted(by_value))
+        displays = [str(t["display"]) for t in types if t.get("display")]
+        close = difflib.get_close_matches(w, list(by_value) + displays, n=3, cutoff=0.6)
+        hint = f" Did you mean: {', '.join(close)}?" if close else ""
         raise click.UsageError(
-            f"unknown event type {w!r}. Pass a value, display name or id; "
+            f"unknown event type {w!r}.{hint} Pass a value, display name or id; "
             f"values on this server: {available}"
         )
     params["event_type"] = resolved
     return params
+
+
+def _resolve_subject_group(client, params: dict) -> dict:
+    """Let --subject-group take a group name as well as an id."""
+    wanted = params.get("subject_group")
+    if not wanted or _UUID_RE.match(wanted):
+        return params
+    groups, _ = fetch(
+        client, "subjectgroups", {"flat": "true", "include_inactive": "true"}, paginate=True
+    )
+    hits = [
+        g
+        for g in groups
+        if isinstance(g, dict)
+        and g.get("id")
+        and str(g.get("name") or "").casefold() == wanted.casefold()
+    ]
+    if len(hits) == 1:
+        params["subject_group"] = hits[0]["id"]
+        return params
+    if hits:
+        options = ", ".join(sorted(f"{g['name']} ({g['id']})" for g in hits))
+        raise click.UsageError(
+            f"subject group {wanted!r} matches {len(hits)} groups: {options}. Pass the id."
+        )
+    names = sorted(str(g.get("name")) for g in groups if isinstance(g, dict) and g.get("name"))
+    close = difflib.get_close_matches(wanted, names, n=3, cutoff=0.6)
+    hint = f" Did you mean: {', '.join(close)}?" if close else ""
+    raise click.UsageError(
+        f"unknown subject group {wanted!r}.{hint} Groups on this server: {', '.join(names)}"
+    )
 
 
 def _merge_filter(params: dict, **fields) -> None:
@@ -238,7 +304,7 @@ COMMANDS: tuple[ReadCommand, ...] = (
         "Search subjects.",
         flags=(
             Flag("name", "Filter by subject name."),
-            Flag("subject_group", "Subject group id."),
+            Flag("subject_group", "Subject group name or id."),
             Flag("subject_subtypes", "Comma-separated subject subtypes."),
             _INCLUDE_INACTIVE,
             Flag("updated_since", "ISO-8601; subjects updated after this time."),
@@ -250,6 +316,7 @@ COMMANDS: tuple[ReadCommand, ...] = (
             Flag("bbox", "Bounding box: west,south,east,north."),
             _PAGE_SIZE,
         ),
+        resolve=_resolve_subject_group,
     ),
     ReadCommand(
         "subjects", "get", "subject/{id}", "Retrieve one subject.", "get", arg="subject_id"
