@@ -9,3 +9,5 @@ read-only.
 Full comparison, design decisions, open questions, and the prioritized
 todo live in the spec:
 `docs/superpowers/specs/2026-09-02-er-cli-parity-design.md`.
+
+Follow-ups left after that work: `docs/backlog/read-surface-followups.md`.
