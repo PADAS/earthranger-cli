@@ -347,6 +347,21 @@ Declined (recorded so they are not re-proposed): temp-file spill of large
 stdout, argv leniency beyond the existing aliases, workspace extensions,
 read-only client, errors on both streams.
 
+Guardrails for the authoring surface (the DSL, `apply`, `pull`, and the
+human output of `events list`/`events show` stay exactly as they are):
+
+- `--fields` / `--format` on `events list event-types`, `events list
+  categories` and `events show event-type` act only under `--json` or
+  `-o`; the default human output is untouched, and `pull`'s YAML is not a
+  read-command output and never gains them.
+- Glob matching and nearest-match suggestions apply to `events search
+  --event-type` (and `subjects search --subject-group`) only. `events post
+  --event-type` keeps passing the exact value to ER; `apply` and `pull`
+  take values from the spec and never resolve patterns.
+- The README-examples test only parses each `er …` example against the
+  click command tree. It never connects or runs `apply`/`pull`;
+  placeholder file names in examples are fine.
+
 ## Testing
 
 - Every new read command: offline test with a mocked client asserting
