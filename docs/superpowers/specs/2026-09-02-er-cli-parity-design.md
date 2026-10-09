@@ -1,7 +1,9 @@
 # er-cli parity — absorbing the agent-facing read surface
 
 Date: 2026-09-02
-Status: P0 implemented 2026-09-23; P1/P2 open.
+Status: P0 implemented 2026-09-23; P1 done 2026-10-07; P2 closed 2026-10-08.
+P3 (parity with the otus er-cli, which superseded tusker's) proposed
+2026-10-09 — see §Comparison with otus er-cli and §P3.
 
 ## Overview
 
@@ -66,6 +68,52 @@ scope; *writing* them is still out.
 
 Everything this repo has that er-cli lacks (password login + refresh,
 profile locking, DSL apply/pull, posting, choices) stays as-is.
+
+## Comparison with otus er-cli (as of 2026-10-09)
+
+Tusker's `packages/er-cli` (one commit, 2026-07-22) was replaced by
+`~/padas/otus/packages/er-cli`: same package name and `er` entry point,
+same registry-over-OpenAPI design, but 29 commits through 2026-09-25,
+~4k lines of implementation (vs ~270), 366 offline tests (vs 8), and
+about 20 `SKILL.md` files in `otus/agents/otus/skills/` that call it.
+Its extras were driven by evaluation runs of those agents, so they are
+the best available signal of what agents actually need from an ER CLI.
+This section records what it adds over the table above and whether this
+repo should follow.
+
+**Unchanged from tusker, and already at parity here:** the resource set
+(subjects, tracks, observations, events, patrols, sources, subject
+groups, subject-sources, spatial feature groups and features, regions,
+status, whoami), the `{records, meta}` envelope, `-o PATH`, following
+`next` with `--limit` and `page_size=100`, three retries with backoff on
+429/5xx/network, exit codes 0/1/2, event-type name → id resolution.
+
+**Auth:** still bearer-token only (`--token`/`ER_TOKEN`, or
+`~/.earthranger/config.json` with `default_profile`), no login, no
+refresh. Our auth is a strict superset; nothing to take.
+
+**What otus adds, and the call for this repo:**
+
+| Otus capability | Here? | Adopt? | Notes |
+|---|---|---|---|
+| `--fields a,b.c,list.1` projection; `--format json\|tsv\|csv` (tsv/csv require `--fields`) | No | **Yes — highest value** | Shrinks what an agent reads back; the main reason their skills shell out instead of calling the API. Dotted paths, list indexes. |
+| Site-timezone windows: `--today`, `--yesterday`, `--last 7d`, `er now`; `meta.server_utc` / `site_now` / `site_tz` on every response (one extra `/status/` call) | No (`--since` defaults to 24 h on observations only) | **Yes** | Agents get the site's "today" wrong without it. Apply to events, patrols, observations, tracks. |
+| `--count_only` (one `page_size=1` request, reads `count`; walks pages and reports a floor if the endpoint has none); `--group_by day\|week\|month\|FIELD` | No | **Yes** | Counts without paging the whole result. |
+| `events export`, `observations export`: ER's own CSV from `/activity/events/export/` and `/trackingdata/export/`, unchanged; on 403 falls back to JSON records and says so | No | **Yes** | Bulk pulls without paging JSON. Flags are hand-added because the spec declares none. |
+| `--where KEY=VALUE` (repeatable) client-side filter on `event_details` | No | **Yes, small** | Cheap given we already fetch and understand the type schema. |
+| 200-page cap and repeated-`next` URL detection, result marked `truncated` with a `note` | No | **Yes, trivial** | Safety net; we page until `next` is null. |
+| Glob patterns in event-type names (`*carcass*`); subject-group name → id; subtype miss retried as subject type; nearest-match suggestion on a name miss | Partial (exact values/display names) | Probably | Natural extension of the P1 resolver. |
+| `link event\|patrol <uuid>` web-app deep link (`--no-lnglat`); `analyzers subject\|spatial`; `patrols --with_distance` (from the leader's track); `--status` validated locally | No | Maybe | Low cost, modest value; take if a skill asks. |
+| `event-types list --api_version v1\|v2`, merging the v1 and v2 lists; `event-categories list` | Partial (`events list event-types --json`, categories) | No new command | Covered by existing commands plus `--json`. |
+| Output over 16 KB spilled to a temp file `er-*.json` by default; `-o -` forces stdout; `Done.` line and read hints on **stdout** | No | **No** (or opt-in) | Breaks `er … \| jq`. Our `-o` convention already covers it; `Done.` stays on stderr (§Output contract). |
+| argv leniency layer: fills in a missing action, swaps `list`/`search`, `event_types`→`event-types`, `--sort-by`→`--sort_by`, joins negative values to flags, `er get <path>` hint | Partial (list/search aliases, both flag spellings) | **No** | The rest hides typos from the agent; what we have is enough. |
+| Workspace extensions: `skills/*/er-<name>.py` under `$OPENCLAW_STATE_DIR/workspace` become `er <name>` | No | **No** | Tied to the OpenClaw workspace layout. |
+| Read-only enforcement: GET-only spec index, `_ReadOnlyClient` refusing non-GET | No | **No** | This tool writes by design (§Non-goals). |
+| Errors and usage errors mirrored to both stdout and stderr | No | **No** | Settled in §Output contract. |
+| `tests/test_cli.py` checks the README's usage examples against the real parser | No | **Yes** | Would have caught the stale `profile use` wrapper docs fixed in PR 34. Process, not feature. |
+
+Otus also dropped `featuresets get` from its registry (used internally
+only); we keep ours.
 
 ## Design decisions
 
@@ -270,6 +318,50 @@ so the phases above don't suggest the repo was idle between P0 and P1.
       spec's P0/P1), so the retirement is a one-PR change on their side when
       they choose to make it.
 
+### P3 — otus parity (proposed 2026-10-09, see §Comparison with otus er-cli)
+
+Ordered by value to an agent skill. Each item is additive to the read
+surface; none touches the DSL or writes.
+
+- [ ] `--fields` projection and `--format json|tsv|csv` on every read
+      command (tsv/csv require `--fields`). Dotted paths and list indexes
+      as otus spells them, so skills port unchanged.
+- [ ] Site-timezone windows: `--today`, `--yesterday`, `--last <N>d|h` on
+      events, patrols, observations, tracks; `er now`; `server_utc`,
+      `site_now`, `site_tz` in `meta` (one `/status/` call per invocation,
+      cached).
+- [ ] `--count-only` and `--group-by day|week|month|FIELD` on list commands.
+- [ ] `events export` and `observations export` (server CSV, pass-through;
+      403 → JSON fallback with a `note:`).
+- [ ] `--where KEY=VALUE` on `events search`.
+- [ ] Page cap (200) and repeated-`next` detection in `read.follow_pages`,
+      surfaced as `meta.truncated` + `meta.note`.
+- [ ] Glob matching in `--event-type`; subject-group name resolution on
+      `subjects search --subject-group`; nearest-match suggestion on misses.
+- [ ] Test that every `er …` example in README.md parses against the real
+      click command tree.
+- [ ] Maybe: `link event|patrol ID`, `analyzers subject|spatial`,
+      `patrols --with-distance`.
+
+Declined (recorded so they are not re-proposed): temp-file spill of large
+stdout, argv leniency beyond the existing aliases, workspace extensions,
+read-only client, errors on both streams.
+
+Guardrails for the authoring surface (the DSL, `apply`, `pull`, and the
+human output of `events list`/`events show` stay exactly as they are):
+
+- `--fields` / `--format` on `events list event-types`, `events list
+  categories` and `events show event-type` act only under `--json` or
+  `-o`; the default human output is untouched, and `pull`'s YAML is not a
+  read-command output and never gains them.
+- Glob matching and nearest-match suggestions apply to `events search
+  --event-type` (and `subjects search --subject-group`) only. `events post
+  --event-type` keeps passing the exact value to ER; `apply` and `pull`
+  take values from the spec and never resolve patterns.
+- The README-examples test only parses each `er …` example against the
+  click command tree. It never connects or runs `apply`/`pull`;
+  placeholder file names in examples are fine.
+
 ## Testing
 
 - Every new read command: offline test with a mocked client asserting
@@ -281,7 +373,12 @@ so the phases above don't suggest the repo was idle between P0 and P1.
 
 ## References
 
-- er-cli source: `~/padas/tusker/packages/er-cli/src/er/cli/` —
+- otus er-cli source (current target): `~/padas/otus/packages/er-cli/src/er/cli/`
+  — `resources.py` (registry), `main.py` (flag derivation, windows,
+  counting, leniency), `http.py` (pagination, retries, exports, name
+  resolution), `output.py` (`--fields`, formats), `config.py`; skills that
+  call it: `~/padas/otus/agents/otus/skills/*/SKILL.md`.
+- tusker er-cli source (superseded): `~/padas/tusker/packages/er-cli/src/er/cli/` —
   `resources.py` (registry), `spec.py` (OpenAPI index), `http.py`
   (pagination, retries, name resolution), `output.py`, `config.py`.
 - Prior design: `docs/superpowers/specs/2026-08-31-er-events-cli-design.md`.
