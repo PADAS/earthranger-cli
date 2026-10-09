@@ -180,3 +180,12 @@ def test_default_window_is_elapsed_24_hours_across_dst(until, expected_since):
         naive_tz=ZoneInfo("America/Los_Angeles"),
     )
     assert since == expected_since
+
+
+def test_is_naive_decides_from_the_parsed_datetime():
+    assert windows.is_naive("2026-08-01T00:00:00+03") is False  # hour-only offset is aware
+    assert windows.is_naive("2026-08-01T00:00:00+03:00") is False
+    assert windows.is_naive("2026-08-01T00:00:00Z") is False
+    assert windows.is_naive("2026-08-01T00:00:00") is True
+    assert windows.is_naive("2026-08-01") is True
+    assert windows.is_naive("garbage") is False and windows.is_naive(None) is False

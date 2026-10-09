@@ -186,22 +186,16 @@ def fetch(
 
 
 def fetch_count(
-    client,
-    path: str,
-    params: dict | None = None,
-    *,
-    version: str | None = None,
-    unwrap: Callable[[Any], Any] | None = None,
+    client, path: str, params: dict | None = None, *, version: str | None = None
 ) -> int | None:
     """The server's own total for a query in one request: DRF reports `count`
     beside the first page, so ask for one record and read the envelope. None
-    when the endpoint is a bare list or a single object (no count to read)."""
+    when the endpoint is a bare list or a single object (no count to read);
+    callers skip this for endpoints with their own envelope."""
     params = {k: v for k, v in (params or {}).items() if v is not None}
     params["page_size"] = 1
     base_url = client._api_root(version) if version else None
     page = get_json(client, path, base_url=base_url, params=params)
-    if unwrap is not None:
-        page = unwrap(page)
     if isinstance(page, dict) and "results" in page:
         return page.get("count")
     return None

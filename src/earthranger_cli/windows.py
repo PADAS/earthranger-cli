@@ -204,10 +204,10 @@ def apply_window(kind: str, params: dict, since, until, naive_tz=None) -> None:
 
 
 def is_naive(value: str | None) -> bool:
-    """A parseable timestamp with no Z and no offset."""
-    if not value or clock.parse_ts(value) is None:
-        return False
-    return not (value.strip()[-1] in "Zz" or re.search(r"[+-]\d{2}:?\d{2}$", value.strip()))
+    """A parseable timestamp that carries no zone (decided from the parse, so
+    an hour-only offset like +03, which fromisoformat accepts, counts as aware)."""
+    parsed = clock.parse_ts(value, None) if value else None  # None keeps a naive value naive
+    return parsed is not None and parsed.tzinfo is None
 
 
 def _aware(value: str, naive_tz) -> str:

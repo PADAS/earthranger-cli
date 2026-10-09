@@ -649,7 +649,7 @@ def _grouped(
     out_meta = {
         k: v
         for k, v in meta.items()
-        if k in ("pages", "count_reported", "truncated", "note", "where")
+        if k in ("pages", "count_reported", "server_count", "truncated", "note", "where")
     }
     out_meta["group_by"] = group_by
     out_meta["fetched"] = fetched
@@ -763,7 +763,7 @@ def _emit_raw(
     if output:
         target = Path(output)
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(body, encoding="utf-8")
+        target.write_text(body, encoding="utf-8", newline="")  # the server's CRLF as sent
         rows = _csv_row_count(body)
         kind = content_type or "text/csv"
         if rows is None:
@@ -887,6 +887,10 @@ def _apply_where(records: list, meta: dict, where, limit: int | None, fetched: i
     meta["fetched"] = fetched
     meta["total"] = len(records)
     meta["where"] = aggregate.where_summary(where)
+    if "count_reported" in meta:
+        # the server's count answers the unfiltered query; keep it, but not under
+        # the name every other document uses for "how many answer this query"
+        meta["server_count"] = meta.pop("count_reported")
     if limit is not None:
         append_note(
             meta,

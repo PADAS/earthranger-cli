@@ -1380,3 +1380,43 @@ def test_mixed_timezone_window_rejects_inverted_site_local_bounds(fake, group, s
     assert result.exit_code == 2, result.output
     assert "--since must not be after --until" in result.output
     assert _gets(fake) == []
+
+
+def test_where_renames_the_servers_count_so_it_is_not_read_as_the_answer(fake):
+    fake.responses["activity/events"] = {
+        "count": 5000,
+        "next": None,
+        "results": [
+            {"id": "e1", "event_type": "c", "event_details": {"species": "buffalo"}},
+            {"id": "e2", "event_type": "c", "event_details": {"species": "lion"}},
+        ],
+    }
+    meta = json.loads(_run(["events", "search", "--where", "species=buffalo"]).stdout)["meta"]
+    assert meta["total"] == 1 and meta["fetched"] == 2
+    assert "count_reported" not in meta and meta["server_count"] == 5000
+    meta = json.loads(
+        _run(["events", "search", "--where", "species=buffalo", "--group-by", "id"]).stdout
+    )["meta"]
+    assert "count_reported" not in meta and meta["server_count"] == 5000
+
+
+def test_export_writes_the_body_without_newline_translation(fake, tmp_path, monkeypatch):
+    import pathlib
+
+    from conftest import FakeResponse
+
+    seen = {}
+    real = pathlib.Path.write_text
+
+    def spy(self, data, *args, **kwargs):
+        seen["newline"] = kwargs.get("newline", "missing")
+        return real(self, data, *args, **kwargs)
+
+    monkeypatch.setattr(pathlib.Path, "write_text", spy)
+    fake.responses["activity/events/export"] = FakeResponse(
+        None, content_type="text/csv", text_override="id\r\ne1\r\n"
+    )
+    result = _run(["events", "export", "-o", str(tmp_path / "e.csv")])
+    assert result.exit_code == 0, result.output
+    assert seen["newline"] == ""  # the server's CRLF reaches the disk untouched on every OS
+    assert (tmp_path / "e.csv").read_bytes() == b"id\r\ne1\r\n"
