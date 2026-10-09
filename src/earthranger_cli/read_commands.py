@@ -19,7 +19,10 @@ from typing import Any
 from urllib.parse import quote
 
 import click
+import requests
+from erclient.er_errors import ERClientException
 
+from . import clock as _clock
 from .output import check_format, emit, output_options, parse_fields
 from .read import fetch, follow_pages
 
@@ -416,6 +419,23 @@ COMMANDS: tuple[ReadCommand, ...] = (
 _TYPES = {"str": str, "int": int, "float": float, "positive_int": click.IntRange(min=1)}
 
 
+def get_clock(ctx, client, *, required: bool) -> dict | None:
+    """The site clock, fetched once per invocation. Passive callers (meta
+    enrichment) get None when /status fails; a window flag that needs the
+    clock passes required=True and lets the error surface."""
+    cached = ctx.obj.get("clock")
+    if cached is not None:
+        return cached
+    try:
+        info = _clock.fetch_clock(client)
+    except (ERClientException, requests.exceptions.RequestException):
+        if required:
+            raise
+        return None
+    ctx.obj["clock"] = info
+    return info
+
+
 def _option_names(param: str) -> list[str]:
     """`--updated-since` plus er-cli's `--updated_since`; the last entry is the
     Python destination name click passes to the callback."""
@@ -466,6 +486,9 @@ def _make_command(spec: ReadCommand, deps: Deps) -> click.Command:
             version=spec.version,
             unwrap=spec.unwrap,
         )
+        info = get_clock(ctx, client, required=False)
+        if info:
+            meta.update(_clock.clock_meta(info))
         emit(records, meta, output, fields=fields, fmt=fmt)
 
     callback.__name__ = f"{spec.group}_{spec.name}".replace("-", "_")
@@ -512,3 +535,35 @@ def register(main: click.Group, deps: Deps) -> None:
         alias = _LIST_ALIASES.get(spec.name) if spec.kind == "list" else None
         if alias and alias not in group.commands:
             group.add_command(cmd, name=alias)
+    main.add_command(_make_now(deps))
+
+
+def _make_now(deps: Deps) -> click.Command:
+    """`er now`: the clock every window flag is computed from, so an agent
+    never does timezone arithmetic by hand."""
+
+    def now(ctx, output, fields=None, fmt="json"):
+        fields = parse_fields(fields)
+        check_format(fields, fmt)
+        client = deps.connect(ctx)
+        info = get_clock(ctx, client, required=True)
+        record = {
+            "utc": info["utc"],
+            "site_now": info["local"],
+            "site_tz": info.get("timezone_name") or info.get("timezone"),
+            "today": info["today"],
+        }
+        emit([record], {"total": 1, "pages": 1}, output, fields=fields, fmt=fmt)
+
+    fn = deps.api_errors(now)
+    fn = click.pass_context(fn)
+    fn = click.option(
+        "-o", "--output", type=click.Path(dir_okay=False), help="Write JSON here instead of stdout."
+    )(fn)
+    fn = output_options(fn)
+    fn = deps.connection_options(fn)
+    return click.command(
+        "now",
+        help="The server's current time (UTC), the site's local time and timezone, and "
+        "today's --since/--until bounds in site time.\n\n[GET /api/v1.0/status]",
+    )(fn)

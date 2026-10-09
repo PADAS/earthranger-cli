@@ -25,6 +25,14 @@ def _gets(fake):
     return [c for c in fake.calls if c[0] == "_get"]
 
 
+# what FakeER's default GET /status puts in every records document's meta
+CLOCK_META = {
+    "server_utc": "2026-10-09T09:00:00Z",
+    "site_now": "2026-10-09T12:00:00+03:00",
+    "site_tz": "Africa/Nairobi",
+}
+
+
 def test_every_command_is_registered_with_output_option():
     for spec in COMMANDS:
         group = main.commands[spec.group]
@@ -107,7 +115,7 @@ def test_featuresets_list_unwraps_the_features_envelope(fake):
     assert _gets(fake)[0][1:3] == ("featureset", {"include_hidden": "true"})  # no page_size
     doc = json.loads(result.output)
     assert [r["id"] for r in doc["records"]] == ["f1", "f2"]
-    assert doc["meta"] == {"total": 2, "pages": 1, "count_reported": 2}
+    assert doc["meta"] == {"total": 2, "pages": 1, "count_reported": 2, **CLOCK_META}
 
     result = _run(["featuresets", "list", "--limit", "1"])
     assert [r["id"] for r in json.loads(result.output)["records"]] == ["f1"]
@@ -116,7 +124,7 @@ def test_featuresets_list_unwraps_the_features_envelope(fake):
     result = _run(["featuresets", "list"])
     assert json.loads(result.output) == {
         "records": [],
-        "meta": {"total": 0, "pages": 1, "count_reported": 0},
+        "meta": {"total": 0, "pages": 1, "count_reported": 0, **CLOCK_META},
     }
 
 
@@ -152,7 +160,7 @@ def test_list_paginates_and_emits_records_meta(fake):
     assert result.exit_code == 0, result.output
     doc = json.loads(result.output)
     assert [r["id"] for r in doc["records"]] == ["a", "b", "c"]
-    assert doc["meta"] == {"total": 3, "pages": 2, "count_reported": 3}
+    assert doc["meta"] == {"total": 3, "pages": 2, "count_reported": 3, **CLOCK_META}
     first = _gets(fake)[0]
     assert first[1] == "subjects"
     assert first[2] == {"name": "Najin", "render_last_location": "true", "page_size": 100}
@@ -184,7 +192,7 @@ def test_get_substitutes_positional_into_path(fake):
     result = _run(["subjects", "get", "s-1"])
     doc = json.loads(result.output)
     assert doc["records"] == [{"id": "s-1", "name": "Najin"}]
-    assert doc["meta"] == {"total": 1, "pages": 1, "count_reported": 1}
+    assert doc["meta"] == {"total": 1, "pages": 1, "count_reported": 1, **CLOCK_META}
     assert _gets(fake)[0][2] == {}  # no page_size on a get
 
 
@@ -239,7 +247,12 @@ def test_output_writes_file_and_summarizes_on_stderr(fake, tmp_path):
     assert result.exit_code == 0, result.output
     assert result.stdout == ""
     assert result.stderr == f"Done. 2 record(s) written to {target} (1 page(s)).\n"
-    assert json.loads(target.read_text())["meta"] == {"total": 2, "pages": 1, "count_reported": 2}
+    assert json.loads(target.read_text())["meta"] == {
+        "total": 2,
+        "pages": 1,
+        "count_reported": 2,
+        **CLOCK_META,
+    }
 
 
 def test_api_error_is_reported_cleanly(fake):
@@ -588,3 +601,56 @@ def test_fields_and_format_on_a_read_command(fake):
     result = _run(["subjects", "search", "--format", "tsv"])
     assert result.exit_code == 2
     assert "--format tsv needs --fields" in result.output
+
+
+def test_meta_carries_the_site_clock(fake):
+    fake.responses["regions"] = [{"id": "r1"}]
+    doc = json.loads(_run(["regions", "list"]).output)
+    assert doc["meta"]["server_utc"] == "2026-10-09T09:00:00Z"
+    assert doc["meta"]["site_now"] == "2026-10-09T12:00:00+03:00"
+    assert doc["meta"]["site_tz"] == "Africa/Nairobi"
+    # the clock is one extra request, after the data request
+    assert [c[0] for c in fake.calls if c[0] in ("_get", "_get_response")] == [
+        "_get",
+        "_get_response",
+    ]
+
+
+def test_meta_clock_is_best_effort(fake, monkeypatch):
+    from erclient.er_errors import ERClientException
+
+    fake.responses["regions"] = [{"id": "r1"}]
+
+    def boom(*a, **k):
+        raise ERClientException("status down")
+
+    monkeypatch.setattr("earthranger_cli.clock.fetch_clock", boom)
+    result = _run(["regions", "list"])
+    assert result.exit_code == 0, result.output
+    doc = json.loads(result.output)
+    assert "server_utc" not in doc["meta"] and doc["records"] == [{"id": "r1"}]
+
+
+def test_meta_clock_omits_site_fields_without_a_usable_timezone(fake):
+    fake.status = {"server_timezone": "EAT"}  # Review Focus 3
+    fake.responses["regions"] = []
+    meta = json.loads(_run(["regions", "list"]).output)["meta"]
+    assert meta["server_utc"] == "2026-10-09T09:00:00Z"
+    assert "site_now" not in meta and meta["site_tz"] == "EAT"
+
+
+def test_now_prints_the_site_clock_as_one_record(fake):
+    result = _run(["now"])
+    assert result.exit_code == 0, result.output
+    doc = json.loads(result.output)
+    assert doc["records"] == [
+        {
+            "utc": "2026-10-09T09:00:00Z",
+            "site_now": "2026-10-09T12:00:00+03:00",
+            "site_tz": "Africa/Nairobi",
+            "today": {"since": "2026-10-09T00:00:00+03:00", "until": "2026-10-09T23:59:59+03:00"},
+        }
+    ]
+    assert doc["meta"]["total"] == 1
+    result = _run(["now", "--fields", "today.since", "--format", "tsv"])
+    assert result.output == "today.since\n2026-10-09T00:00:00+03:00\n"
