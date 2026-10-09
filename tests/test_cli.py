@@ -545,10 +545,11 @@ from earthranger_cli import config_store
 def test_profile_add_use_list_remove():
     result = _run(["profile", "add", "sandbox", "--server", "sandbox", "--username", "chris"])
     assert result.exit_code == 0
-    assert "Added profile 'sandbox' (sandbox.pamdas.org)." in result.stderr
-    assert result.stdout == "export ER_PROFILE=sandbox\n"  # eval-able: auto-switch
+    assert result.stdout == "Added profile 'sandbox' (sandbox.pamdas.org); it is now the default.\n"
+    assert config_store.get_active() == "sandbox"  # adding auto-switches
     result = _run(["profile", "add", "prod", "--server", "myreserve"])
-    assert "Added profile 'prod' (myreserve.pamdas.org)." in result.stderr
+    assert "Added profile 'prod' (myreserve.pamdas.org); it is now the default." in result.stdout
+    assert config_store.get_active() == "prod"
     result = _run(["--profile", "sandbox", "profile", "list"])
     assert result.exit_code == 0
     lines = result.output.splitlines()
@@ -615,6 +616,51 @@ def test_explicit_server_flag_overrides_profile_server(monkeypatch):
     assert seen["server"] == "other"
 
 
+def test_default_profile_supplies_server(monkeypatch):
+    # 'er profile use' persisted a default; a bare command resolves it with
+    # no --profile flag and no ER_PROFILE in the environment
+    config_store.add_profile("prod", server="myreserve", username="ops")
+    config_store.set_active("prod")
+    token_store.save_token("prod", AUTH, FUTURE, "ops")
+    seen = {}
+
+    def fake_token_client(*, server):
+        seen["server"] = server
+        return FakeER()
+
+    monkeypatch.setattr(cli_mod, "make_token_client", fake_token_client)
+    result = _run(["events", "list", "categories"])
+    assert result.exit_code == 0
+    assert seen["server"] == "myreserve"
+
+
+def test_env_profile_overrides_default_profile(monkeypatch):
+    config_store.add_profile("prod", server="myreserve")
+    config_store.add_profile("sandbox", server="sandbox")
+    config_store.set_active("prod")
+    monkeypatch.setenv("ER_PROFILE", "sandbox")
+    result = _run(["profile", "current"])
+    assert result.output == "sandbox\n"
+
+
+def test_profile_flag_overrides_env_and_default(monkeypatch):
+    config_store.add_profile("prod", server="myreserve")
+    config_store.add_profile("sandbox", server="sandbox")
+    config_store.add_profile("dev", server="dev")
+    config_store.set_active("prod")
+    monkeypatch.setenv("ER_PROFILE", "sandbox")
+    result = _run(["--profile", "dev", "profile", "current"])
+    assert result.output == "dev\n"
+    result = _run(["profile", "current", "--profile", "dev"])  # trailing flag too
+    assert result.output == "dev\n"
+
+
+def test_missing_server_error_names_profile_use():
+    result = _run(["events", "list", "categories"])
+    assert result.exit_code != 0
+    assert "er profile use" in result.output
+
+
 def test_unknown_profile_flag_is_usage_error():
     result = _run(["--profile", "zzz", "events", "list", "categories"])
     assert result.exit_code != 0
@@ -631,17 +677,156 @@ def test_profile_current():
     assert result.output == "sandbox\n"
 
 
-def test_profile_use_prints_export_line():
+def test_profile_use_persists_default():
     config_store.add_profile("prod", server="myreserve")
+    config_store.add_profile("sandbox", server="sandbox")
     result = _run(["profile", "use", "prod"])
     assert result.exit_code == 0
-    assert result.output == "export ER_PROFILE=prod\n"
+    assert result.stdout == "Default profile set to 'prod'.\n"
+    assert result.stderr == ""
+    assert config_store.get_active() == "prod"
+    # the next invocation sees it with no flag and no env var
+    result = _run(["profile", "current"])
+    assert result.output == "prod\n"
+    result = _run(["auth", "status"])
+    assert result.exit_code == 0
+    assert "prod (myreserve.pamdas.org): not authenticated" in result.output
 
 
-def test_profile_use_no_arg_prints_unset():
+def test_profile_use_no_arg_clears_default():
+    config_store.add_profile("prod", server="myreserve")
+    config_store.set_active("prod")
     result = _run(["profile", "use"])
     assert result.exit_code == 0
-    assert result.output == "unset ER_PROFILE\n"
+    assert result.stdout == "Default profile cleared.\n"
+    assert config_store.get_active() is None
+    result = _run(["profile", "current"])
+    assert result.exit_code == 1
+
+
+def test_profile_use_notes_env_override(monkeypatch):
+    # a shell with ER_PROFILE exported (e.g. a stale eval from the retired
+    # wrapper) keeps following the env var; say so instead of appearing to fail
+    config_store.add_profile("prod", server="myreserve")
+    config_store.add_profile("sandbox", server="sandbox")
+    monkeypatch.setenv("ER_PROFILE", "sandbox")
+    result = _run(["profile", "use", "prod"])
+    assert result.exit_code == 0
+    assert result.stdout == "Default profile set to 'prod'.\n"
+    assert "ER_PROFILE=sandbox is set in this shell and overrides the default" in result.stderr
+    assert config_store.get_active() == "prod"
+    # same env var naming the new default: nothing to warn about
+    monkeypatch.setenv("ER_PROFILE", "prod")
+    result = _run(["profile", "use", "prod"])
+    assert result.stderr == ""
+
+
+def test_profile_add_notes_env_override(monkeypatch):
+    # add auto-switches the default, so it carries the same note as use
+    config_store.add_profile("sandbox", server="sandbox")
+    monkeypatch.setenv("ER_PROFILE", "sandbox")
+    result = _run(["profile", "add", "prod", "--server", "myreserve"])
+    assert result.exit_code == 0
+    assert "it is now the default." in result.stdout
+    assert "ER_PROFILE=sandbox is set in this shell and overrides the default" in result.stderr
+    assert config_store.get_active() == "prod"
+    # re-adding the profile the env var already names: nothing to warn about
+    monkeypatch.setenv("ER_PROFILE", "prod")
+    result = _run(["profile", "add", "prod", "--server", "myreserve"])
+    assert result.exit_code == 0
+    assert result.stderr == ""
+
+
+def test_profile_use_clear_notes_env_override(monkeypatch):
+    config_store.add_profile("sandbox", server="sandbox")
+    config_store.set_active("sandbox")
+    monkeypatch.setenv("ER_PROFILE", "sandbox")
+    result = _run(["profile", "use"])
+    assert result.exit_code == 0
+    assert result.stdout == "Default profile cleared.\n"
+    assert "ER_PROFILE=sandbox is set in this shell and still selects it" in result.stderr
+    assert "follow the default" not in result.stderr  # there is no default to follow
+    assert config_store.get_active() is None
+
+
+def test_profile_add_overwrite_keeps_existing_default():
+    # editing a profile in place (e.g. fixing its server) must not redirect
+    # every other shell; only a new profile, or a first default, auto-switches
+    _run(["profile", "add", "sandbox", "--server", "sandbox"])
+    _run(["profile", "add", "prod", "--server", "myreserve"])
+    assert config_store.get_active() == "prod"
+    result = _run(["profile", "add", "sandbox", "--server", "sandbox2"])
+    assert result.exit_code == 0
+    assert (
+        result.stdout
+        == "Added profile 'sandbox' (sandbox2.pamdas.org); the default is still 'prod'.\n"
+    )
+    assert config_store.get_active() == "prod"
+    # with no default at all, overwriting still adopts the profile as default
+    config_store.set_active(None)
+    result = _run(["profile", "add", "sandbox", "--server", "sandbox"])
+    assert "it is now the default." in result.stdout
+    assert config_store.get_active() == "sandbox"
+
+
+def test_bare_command_survives_unreadable_config_dir(monkeypatch, tmp_path):
+    # main() reads the default profile on every run; a config dir it can't
+    # stat must not turn an explicit --server/--token command into a traceback
+    import os
+
+    d = tmp_path / "locked"
+    d.mkdir()
+    monkeypatch.setenv("ER_EVENTS_CONFIG_DIR", str(d))
+    monkeypatch.setattr(cli_mod, "make_static_token_client", lambda **kw: FakeER())
+    os.chmod(d, 0)
+    try:
+        result = _run(["--server", "sandbox", "--token", "t", "events", "list", "categories"])
+    finally:
+        os.chmod(d, 0o700)
+    assert result.exit_code == 0
+
+
+def test_prompted_password_401_is_not_blamed_on_default_profile(monkeypatch):
+    from erclient.er_errors import ERClientBadCredentials
+
+    config_store.add_profile("prod", server="myreserve", username="ops")
+    config_store.set_active("prod")
+    token_store.save_token("prod", AUTH, FUTURE, "ops")
+    fake = FakeER()
+
+    def bad(include_inactive=False):
+        raise ERClientBadCredentials("Invalid credentials given.")
+
+    fake.get_event_categories = bad
+    monkeypatch.setattr(cli_mod, "make_client", lambda **kw: fake)
+    # --server differs from prod, so prod's cached token is never sent; the
+    # password typed at the prompt is what the server refused
+    result = _run(
+        ["--server", "sandbox", "--username", "me", "events", "list", "categories"], input="pw\n"
+    )
+    assert result.exit_code == 1
+    assert "stored on profile 'prod'" not in result.output
+    assert "check the username and password you entered" in result.output
+
+
+def test_auth_login_server_mismatch_offers_profile_flag(monkeypatch):
+    config_store.add_profile("prod", server="myreserve", username="ops")
+    config_store.set_active("prod")
+    result = _run(["auth", "login", "--server", "sandbox", "--password", "pw"])
+    assert result.exit_code != 0
+    out = result.output + result.stderr
+    assert "differs from profile 'prod'" in out
+    assert "--profile" in out and "er profile add" in out
+
+
+def test_profile_remove_clears_default():
+    config_store.add_profile("prod", server="myreserve")
+    config_store.set_active("prod")
+    result = _run(["profile", "remove", "prod"])
+    assert "Removed profile 'prod'." in result.output
+    result = _run(["profile", "current"])
+    assert result.exit_code == 1
+    assert result.output == ""
 
 
 def test_profile_use_unknown_errors():

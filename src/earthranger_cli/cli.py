@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import functools
 import json
+import os
 import sys
 
 import click
@@ -74,17 +75,31 @@ def _is_unauthorized(e: BaseException | None) -> bool:
 
 
 def _credential_remedy() -> str:
-    """Which credential this invocation used, and how to fix it; "" if unknown."""
+    """Which credential this invocation used, and how to fix it; "" if unknown.
+
+    Read from what _connect recorded, not from the flags: a selected profile
+    (now usually the persisted default) is present on nearly every run, but
+    its stored credential is only sent when the server matches — blaming it
+    for a 401 against another server, or for a mistyped prompted password,
+    would send the user to re-login to the wrong place."""
     ctx = click.get_current_context(silent=True)
     obj = (ctx.obj if ctx is not None else None) or {}
-    if obj.get("token"):
+    used = obj.get("credential_used")
+    if used is None:
+        # an explicit flag is unambiguous even when _connect didn't run
+        if obj.get("token"):
+            used = "token"
+        elif obj.get("password"):
+            used = "password"
+    if used == "token":
         return "check --token / ER_TOKEN."
-    if obj.get("password"):
+    if used == "password":
         return "check --username / --password."
-    name = obj.get("profile")
-    if name:
+    if used == "prompt":
+        return "check the username and password you entered."
+    if isinstance(used, tuple) and used[0] == "profile":
         return (
-            f"the credential stored on profile {name!r} is expired or revoked; "
+            f"the credential stored on profile {used[1]!r} is expired or revoked; "
             "run 'er auth login' (or 'er auth login --token')."
         )
     return ""
@@ -142,10 +157,10 @@ def connection_options(f):
 
 
 def _resolve_connection(ctx) -> tuple[str, str | None]:
-    """Resolve (server, username) from flags/env or a selected profile.
-    Explicit --server/--username always win; a profile named with --profile
-    (or ER_PROFILE, e.g. via the er-use shell helper) supplies the defaults.
-    Profile selection is per invocation — there is no global active profile."""
+    """Resolve (server, username) from flags/env or the selected profile.
+    Explicit --server/--username always win; the selected profile (--profile,
+    ER_PROFILE, or the default persisted by 'er profile use', in that order)
+    supplies the defaults."""
     server = ctx.obj["server"]
     username = ctx.obj["username"]
     profile = None
@@ -160,7 +175,7 @@ def _resolve_connection(ctx) -> tuple[str, str | None]:
     if not server:
         raise click.UsageError(
             "Missing server: pass --server, set ER_SERVER, or select a profile "
-            "(--profile NAME / ER_PROFILE)."
+            "('er profile use NAME', --profile NAME, or ER_PROFILE)."
         )
     return server, username
 
@@ -177,6 +192,7 @@ def _connect(ctx):
     token = ctx.obj.get("token")
     if token:
         # the token is the identity: no username, no cache, no refresh
+        ctx.obj["credential_used"] = "token"
         return make_static_token_client(server=server, token=token)
     password = ctx.obj["password"]
     name = ctx.obj.get("profile")
@@ -192,11 +208,15 @@ def _connect(ctx):
         if profile is not None and cached:
             server_matches = _same_server(server, profile.get("server") or "")
             if server_matches and (not username or cached.get("username") == username):
+                ctx.obj["credential_used"] = ("profile", name)
                 return _connect_with_cached_token(ctx, name, profile, server, cached)
     if not username:
         raise click.UsageError("Missing username: pass --username or set ER_USERNAME.")
-    if not password:
+    if password:
+        ctx.obj["credential_used"] = "password"
+    else:
         password = click.prompt("Password", hide_input=True)
+        ctx.obj["credential_used"] = "prompt"
     return make_client(server=server, username=username, password=password)
 
 
@@ -284,7 +304,11 @@ def _connect_with_cached_token(ctx, name: str, profile: dict, server: str, cache
     envvar="ER_TOKEN",
     help="Pre-issued OAuth bearer token (wins over --password and cached sessions).",
 )
-@click.option("--profile", envvar="ER_PROFILE", help="Named profile to use (see 'er profile').")
+@click.option(
+    "--profile",
+    envvar="ER_PROFILE",
+    help="Named profile to use (see 'er profile'); defaults to the one set by 'er profile use'.",
+)
 @click.pass_context
 def main(ctx, server, username, password, token, profile):
     """EarthRanger site management CLI."""
@@ -293,7 +317,9 @@ def main(ctx, server, username, password, token, profile):
         "username": username,
         "password": password,
         "token": token,
-        "profile": profile,
+        # --profile / ER_PROFILE pin this invocation; otherwise the persisted
+        # default (er profile use) applies
+        "profile": profile or config_store.get_active(),
     }
 
 
@@ -535,7 +561,8 @@ def auth_login(ctx):
             stored_desc = f"invalid stored server {stored!r}"
         raise click.UsageError(
             f"server {normalize_server(server)!r} differs from profile {name!r} "
-            f"({stored_desc}); update it first with 'er profile set server ...'."
+            f"({stored_desc}); update it first with 'er profile set server ...', or log "
+            "in to another profile with --profile NAME (create one with 'er profile add')."
         )
     host = token_store.server_host(server)
     token = ctx.obj.get("token")
@@ -746,18 +773,27 @@ def profile_add(name, p_server, p_username):
                     "run 'er auth login'.",
                     err=True,
                 )
-        config_store.add_profile(name, server=p_server, username=p_username)
-    # confirmation to stderr; stdout stays eval-able so the shell wrapper can
-    # auto-switch this shell to the new profile (same pattern as profile use)
-    click.echo(f"Added profile {name!r} ({token_store.server_host(p_server)}).", err=True)
-    click.echo(f"export ER_PROFILE={name}")
+        # a new profile (or the first default) auto-switches; overwriting an
+        # existing one is an in-place edit and must not redirect every shell.
+        # The store decides under its own lock so a concurrent 'profile use'
+        # can't be overwritten by a decision made from a stale read.
+        switched, default = config_store.add_profile(
+            name, server=p_server, username=p_username, default_if_new=True
+        )
+    host = token_store.server_host(p_server)
+    if switched:
+        click.echo(f"Added profile {name!r} ({host}); it is now the default.")
+        _note_env_profile_override(name)
+    else:
+        click.echo(f"Added profile {name!r} ({host}); the default is still {default!r}.")
 
 
 @profile_group.command("list")
 @connection_options
 @click.pass_context
 def profile_list(ctx):
-    """List profiles: selection marker (--profile/ER_PROFILE), server, username, auth state."""
+    """List profiles with server, username and auth state; '*' marks the selected
+    profile (--profile, ER_PROFILE, or the default from 'er profile use')."""
     profiles = config_store.list_profiles()
     if not profiles:
         click.echo("No profiles. Add one with 'er profile add NAME --server ...'.")
@@ -790,29 +826,46 @@ def profile_remove(name):
 @connection_options
 @click.pass_context
 def profile_current(ctx):
-    """Print this invocation's selected profile (--profile/ER_PROFILE); exit 1 if none."""
+    """Print the selected profile (--profile, ER_PROFILE, or the default from
+    'er profile use'); exit 1 if none."""
     name = ctx.obj.get("profile")
     if not name:
         sys.exit(1)
     click.echo(name)
 
 
+def _note_env_profile_override(name: str | None) -> None:
+    """After changing (or clearing, name=None) the default, warn when this
+    shell won't follow it: an exported ER_PROFILE (e.g. left by the retired
+    zsh wrapper) pins the selection and would otherwise make the change look
+    like a no-op."""
+    pinned = os.environ.get("ER_PROFILE")
+    if not pinned or pinned == name:
+        return
+    if name is None:
+        tail = "still selects it; unset it to run with no profile here."
+    else:
+        tail = "overrides the default; unset it to follow the default here."
+    click.echo(f"note: ER_PROFILE={pinned} is set in this shell and {tail}", err=True)
+
+
 @profile_group.command("use")
 @click.argument("name", required=False)
 @_api_errors
 def profile_use(name):
-    """Select a profile for the current shell.
+    """Make NAME the default profile for every shell (no NAME clears it).
 
-    A subprocess cannot modify its parent shell's environment, so this prints
-    the `export ER_PROFILE=...` line (or `unset` with no NAME) for the shell
-    to eval — the `er` wrapper function from the README does that for you.
+    Pin a single invocation or shell with --profile or ER_PROFILE instead;
+    both override the default.
     """
     if name is None:
-        click.echo("unset ER_PROFILE")
+        config_store.set_active(None)
+        click.echo("Default profile cleared.")
+        _note_env_profile_override(None)
         return
-    if config_store.get_profile(name) is None:
-        raise config_store.ConfigError(f"no profile named {name!r}")
-    click.echo(f"export ER_PROFILE={name}")
+    config_store.set_active(name)  # rejects unknown names
+    click.echo(f"Default profile set to {name!r}.")
+    _note_env_profile_override(name)
 
 
 @profile_group.command("set")
@@ -854,7 +907,7 @@ def profile_set(ctx, key, value):
 @click.pass_context
 @_api_errors
 def profile_show(ctx, name):
-    """Show one profile in full (defaults to this shell's selection)."""
+    """Show one profile in full (defaults to the selected profile)."""
     if name is None:
         name = ctx.obj.get("profile")
         if not name:

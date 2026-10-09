@@ -1,10 +1,11 @@
 """Named site profiles and the shared private config directory.
 
 Profiles map a name to {server, username?}, stored in ``<config>/config.json``
-— no secrets (tokens live in token_store). Profile selection is per invocation
-(--profile flag or ER_PROFILE env var); there is no global active pointer. The
-config directory defaults to ``~/.config/er-events`` and can be overridden
-with ``ER_EVENTS_CONFIG_DIR``.
+— no secrets (tokens live in token_store). The file also holds an optional
+``active`` pointer: the default profile that ``er profile use`` persists, used
+when an invocation names none (--profile flag or ER_PROFILE env var both
+override it). The config directory defaults to ``~/.config/er-events`` and
+can be overridden with ``ER_EVENTS_CONFIG_DIR``.
 """
 
 from __future__ import annotations
@@ -78,36 +79,66 @@ def _config_lock():
             fcntl.flock(f, fcntl.LOCK_UN)
 
 
-def _load() -> dict:
+def _load(*, for_write: bool = False) -> dict:
+    """Read config.json. A missing file is empty config. An unreadable or
+    unparseable one is empty config for readers (every command reads this at
+    startup, so it must never crash them) but a ConfigError for writers, so
+    a mutation never replaces the user's profiles with that emptiness."""
     path = config_file()
-    if not path.exists():
+    try:
+        text = path.read_text()
+    except FileNotFoundError:
+        return {"profiles": {}}
+    except OSError as e:
+        if for_write:
+            raise ConfigError(f"could not read {path}: {e}") from e
         return {"profiles": {}}
     try:
-        data = json.loads(path.read_text())
-    except (OSError, ValueError):
-        return {"profiles": {}}  # corrupt config == empty
+        data = json.loads(text)
+    except ValueError:
+        data = None
     if not isinstance(data, dict) or not isinstance(data.get("profiles"), dict):
-        return {"profiles": {}}
-    # legacy files may carry an "active" pointer; selection is per-shell now
-    return {"profiles": data["profiles"]}
+        if for_write:
+            raise ConfigError(
+                f"{path} is not a valid config file; fix or delete it before changing profiles."
+            )
+        return {"profiles": {}}  # corrupt config == empty
+    cfg = {"profiles": data["profiles"]}
+    # a pointer at a profile that no longer exists (stale or hand-edited) is
+    # no selection at all, same as a corrupt file is no config
+    active = data.get("active")
+    if isinstance(active, str) and active in cfg["profiles"]:
+        cfg["active"] = active
+    return cfg
 
 
 def _save(cfg: dict) -> None:
     write_private(config_file(), json.dumps(cfg, indent=2))
 
 
-def add_profile(name: str, *, server: str, username: str | None = None) -> None:
+def add_profile(
+    name: str, *, server: str, username: str | None = None, default_if_new: bool = False
+) -> tuple[bool, str | None]:
+    """Add or overwrite a profile. With default_if_new, a profile that did not
+    exist yet (or the first default ever) becomes the default in the same
+    write; overwriting an existing one leaves the default alone. Returns
+    (switched, default after the write), decided from the locked read."""
     if not isinstance(name, str) or not _PROFILE_NAME_RE.match(name):
         raise ConfigError(
             f"invalid profile name {name!r} (use lowercase letters, digits, '-', '_')"
         )
     with _config_lock():
-        cfg = _load()
+        cfg = _load(for_write=True)
+        is_new = name not in cfg["profiles"]
         profile: dict = {"server": server}
         if username:
             profile["username"] = username
         cfg["profiles"][name] = profile
+        switched = default_if_new and (is_new or "active" not in cfg)
+        if switched:
+            cfg["active"] = name
         _save(cfg)
+        return switched, cfg.get("active")
 
 
 def get_profile(name: str) -> dict | None:
@@ -127,7 +158,7 @@ def set_profile_property(name: str, key: str, value: str) -> None:
     if not isinstance(value, str) or not value:
         raise ConfigError(f"{key}: a non-empty value is required")
     with _config_lock():
-        cfg = _load()
+        cfg = _load(for_write=True)
         if name not in cfg["profiles"]:
             raise ConfigError(f"no profile named {name!r}")
         cfg["profiles"][name][key] = value
@@ -136,9 +167,29 @@ def set_profile_property(name: str, key: str, value: str) -> None:
 
 def remove_profile(name: str) -> bool:
     with _config_lock():
-        cfg = _load()
+        cfg = _load(for_write=True)
         if name not in cfg["profiles"]:
             return False
         del cfg["profiles"][name]
+        if cfg.get("active") == name:
+            del cfg["active"]
         _save(cfg)
         return True
+
+
+def get_active() -> str | None:
+    """The persisted default profile name, or None (never a missing profile)."""
+    return _load().get("active")
+
+
+def set_active(name: str | None) -> None:
+    """Persist NAME as the default profile; None clears the default."""
+    with _config_lock():
+        cfg = _load(for_write=True)
+        if name is None:
+            cfg.pop("active", None)  # a valid file is rewritten: this also drops a stale pointer
+        elif name not in cfg["profiles"]:
+            raise ConfigError(f"no profile named {name!r}")
+        else:
+            cfg["active"] = name
+        _save(cfg)

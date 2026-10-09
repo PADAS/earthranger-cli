@@ -18,16 +18,97 @@ def test_remove_profile():
     assert config_store.remove_profile("a") is False
 
 
-def test_legacy_active_key_is_ignored():
+def test_active_round_trip():
+    config_store.add_profile("a", server="a")
+    assert config_store.get_active() is None
+    config_store.set_active("a")
+    assert config_store.get_active() == "a"
+    config_store.set_active(None)
+    assert config_store.get_active() is None
+
+
+def test_set_active_unknown_profile_raises():
+    with pytest.raises(config_store.ConfigError):
+        config_store.set_active("nope")
+
+
+def test_active_pointing_at_missing_profile_reads_as_none():
     import json
 
     config_store.add_profile("a", server="a")
-    # old config files carried a global "active" pointer; it is now ignored
+    # a hand-edited or stale pointer must not surface as a selection
     f = config_store.config_file()
     data = json.loads(f.read_text())
-    data["active"] = "a"
+    data["active"] = "gone"
     f.write_text(json.dumps(data))
+    assert config_store.get_active() is None
     assert config_store.list_profiles() == {"a": {"server": "a"}}
+
+
+def test_mutations_refuse_a_corrupt_config():
+    # reads treat an unparseable file as empty; writes must never turn that
+    # emptiness into the file's new contents
+    config_store.add_profile("a", server="a")
+    config_store.config_file().write_text("{broken")
+    for mutate in (
+        lambda: config_store.add_profile("b", server="b"),
+        lambda: config_store.add_profile("b", server="b", default_if_new=True),
+        lambda: config_store.set_active("a"),
+        lambda: config_store.set_active(None),
+        lambda: config_store.set_profile_property("a", "username", "u"),
+        lambda: config_store.remove_profile("a"),
+    ):
+        with pytest.raises(config_store.ConfigError, match="not a valid config file"):
+            mutate()
+    assert config_store.config_file().read_text() == "{broken"
+
+
+def test_clearing_active_removes_a_stale_pointer():
+    import json
+
+    config_store.add_profile("a", server="a")
+    f = config_store.config_file()
+    data = json.loads(f.read_text())
+    data["active"] = "gone"
+    f.write_text(json.dumps(data))
+    config_store.set_active(None)
+    assert "active" not in json.loads(f.read_text())
+
+
+def test_add_profile_default_if_new_decides_under_the_lock():
+    # the switch decision is made from the locked read, in the same write
+    add = config_store.add_profile
+    assert add("a", server="a", default_if_new=True) == (True, "a")
+    assert add("b", server="b", default_if_new=True) == (True, "b")  # new: switches
+    assert add("a", server="a2", default_if_new=True) == (False, "b")  # edit: stays
+    assert add("c", server="c") == (False, "b")  # not asked: never switches
+    config_store.set_active(None)
+    assert add("a", server="a3", default_if_new=True) == (True, "a")  # no default yet
+    assert config_store.get_profile("a") == {"server": "a3"}
+
+
+def test_unreadable_config_dir_reads_as_empty(tmp_path, monkeypatch):
+    import os
+
+    d = tmp_path / "locked"
+    d.mkdir()
+    monkeypatch.setenv("ER_EVENTS_CONFIG_DIR", str(d))
+    os.chmod(d, 0)
+    try:
+        assert config_store.list_profiles() == {}
+        assert config_store.get_active() is None
+    finally:
+        os.chmod(d, 0o700)
+
+
+def test_remove_profile_clears_active():
+    config_store.add_profile("a", server="a")
+    config_store.add_profile("b", server="b")
+    config_store.set_active("a")
+    config_store.remove_profile("b")
+    assert config_store.get_active() == "a"  # removing another profile leaves it
+    config_store.remove_profile("a")
+    assert config_store.get_active() is None
 
 
 def test_invalid_profile_name_rejected():
