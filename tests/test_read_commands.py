@@ -1070,3 +1070,21 @@ def test_export_done_line_counts_csv_records_not_newlines(fake, tmp_path):
     result = _run(["events", "export", "-o", str(target)])
     assert result.exit_code == 0, result.output
     assert result.stderr.strip() == f"Done. 2 data row(s) written to {target} (text/csv)."
+
+
+def test_export_with_a_huge_csv_field_still_succeeds(fake, tmp_path):
+    # review: csv.reader's default 131,072-character field limit must not fail an
+    # export that was already written; das aggregates an event's notes into one field
+    from conftest import FakeResponse
+
+    body = "id,notes\ne1," + "x" * 131_073 + "\ne2,plain\n"
+    fake.responses["activity/events/export"] = FakeResponse(
+        None, content_type="text/csv", text_override=body
+    )
+    target = tmp_path / "events.csv"
+    result = _run(["events", "export", "-o", str(target)])
+    assert result.exit_code == 0, result.output
+    assert target.read_text() == body
+    assert result.stdout == ""
+    assert f"written to {target}" in result.stderr
+    assert "row count unavailable" in result.stderr

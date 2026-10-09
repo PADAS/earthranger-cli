@@ -659,6 +659,19 @@ def _grouped(
     return rows, out_meta
 
 
+def _csv_row_count(body: str) -> int | None:
+    """Data rows in a CSV body — records, not newlines, since the server quotes
+    multi-line notes. None when the parser refuses a field (its default limit
+    is 131,072 characters, and das puts all of an event's notes in one field):
+    the export itself is fine, only the count is unavailable."""
+    if not body.strip():
+        return 0
+    try:
+        return max(sum(1 for _ in csv.reader(io.StringIO(body))) - 1, 0)
+    except csv.Error:
+        return None
+
+
 def _emit_raw(
     client, spec: ReadCommand, path: str, params: dict, output: str | None, extra_meta: dict
 ) -> None:
@@ -697,12 +710,17 @@ def _emit_raw(
         target = Path(output)
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(body)
-        # CSV records, not newlines: the server quotes multi-line notes
-        rows = max(sum(1 for _ in csv.reader(io.StringIO(body))) - 1, 0) if body.strip() else 0
-        click.echo(
-            f"Done. {rows} data row(s) written to {output} ({content_type or 'text/csv'}).",
-            err=True,
-        )
+        rows = _csv_row_count(body)
+        kind = content_type or "text/csv"
+        if rows is None:
+            # the file is complete; only the count is missing, so say exactly that
+            click.echo(
+                f"Done. File written to {output} ({kind}); row count unavailable "
+                "(a field exceeded the CSV parser's limit).",
+                err=True,
+            )
+        else:
+            click.echo(f"Done. {rows} data row(s) written to {output} ({kind}).", err=True)
     else:
         click.echo(body, nl=False)
 
