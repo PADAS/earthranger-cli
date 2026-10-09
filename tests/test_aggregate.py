@@ -196,3 +196,8 @@ def test_where_matches_numbers_numerically():
     assert aggregate.details_match(rec, "count", "5.0") is True
     assert aggregate.details_match(rec, "count", "6") is False
     assert aggregate.details_match(rec, "code", "007") is True  # strings still compare as text
+
+
+def test_group_counts_tells_blank_from_null():
+    rows, _ = aggregate.group_counts([{"t": ""}, {"t": None}, {"t": "x"}], "t")
+    assert sorted(r["group"] for r in rows) == ["(blank)", "(none)", "x"]

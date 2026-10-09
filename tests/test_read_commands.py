@@ -428,7 +428,10 @@ def test_observations_rejects_unparseable_until_before_requesting(fake):
     [
         ("2026-01-02T00:00:00+03:00", "2025-12-31T21:00:00Z"),  # positive offset
         ("2026-01-02T00:00:00-05:00", "2026-01-01T05:00:00Z"),  # negative offset
-        ("2026-01-02T00:00:00", "2026-01-01T00:00:00Z"),  # naive: treated as UTC
+        (
+            "2026-01-02T00:00:00",
+            "2025-12-31T21:00:00Z",
+        ),  # naive = site day (+03:00),  # naive: treated as UTC
     ],
 )
 def test_observations_default_since_converts_until_offset_to_utc(fake, until, expected_since):
@@ -1107,7 +1110,7 @@ def test_export_with_a_huge_csv_field_still_succeeds(fake, tmp_path):
     assert target.read_text() == body
     assert result.stdout == ""
     assert f"written to {target}" in result.stderr
-    assert "row count unavailable" in result.stderr
+    assert "row count not computed" in result.stderr
 
 
 def test_group_by_field_with_all_null_values_is_one_none_row(fake):
@@ -1269,3 +1272,63 @@ def test_looping_event_type_listing_is_refused(fake):
     assert result.exit_code == 1
     assert "event-type listing did not end" in result.output
     assert not any(c[0] == "_get" and c[1] == "activity/events" for c in fake.calls)
+
+
+def test_observations_default_window_is_24h_before_the_localized_until(fake):
+    # the bare --until is the site's end of day; the default since must be 24 h before *that*
+    fake.responses["observations"] = {"count": 0, "next": None, "results": []}
+    result = _run(["observations", "search", "--subject-id", "s1", "--until", "2026-08-31"])
+    assert result.exit_code == 0, result.output
+    sent = _gets(fake)[0][2]
+    assert sent["until"] == "2026-08-31T23:59:59.999999+03:00"
+    assert sent["since"] == "2026-08-30T20:59:59Z"
+    meta = json.loads(result.stdout)["meta"]
+    assert meta["window"] == {
+        "since": "2026-08-30T20:59:59Z",
+        "until": "2026-08-31T23:59:59.999999+03:00",
+    }
+
+
+def test_observations_walk_has_a_higher_page_cap(fake, monkeypatch):
+    from earthranger_cli import read
+
+    monkeypatch.setattr(read, "MAX_PAGES", 2)
+    fake.responses["observations"] = {"count": 3, "next": "p2", "results": [{"i": 1}]}
+    fake.responses["p2"] = {"count": 3, "next": "p3", "results": [{"i": 2}]}
+    fake.responses["p3"] = {"count": 3, "next": None, "results": [{"i": 3}]}
+    doc = json.loads(
+        _run(
+            ["observations", "search", "--subject-id", "s1", "--since", "2026-01-01T00:00:00Z"]
+        ).stdout
+    )
+    assert [r["i"] for r in doc["records"]] == [1, 2, 3] and "truncated" not in doc["meta"]
+    fake.responses["activity/events"] = {"count": 3, "next": "p2", "results": [{"i": 1}]}
+    doc = json.loads(_run(["events", "search"]).stdout)
+    assert doc["meta"]["truncated"] is True  # events keep the default cap
+
+
+def test_inverted_window_is_a_usage_error_before_connecting(fake, monkeypatch):
+    monkeypatch.setattr(cli_mod, "_connect", lambda ctx: pytest.fail("connected"))
+    result = _run(["events", "search", "--since", "2026-09-01", "--until", "2026-08-01"])
+    assert result.exit_code == 2 and "--since must not be after --until" in result.output
+
+
+def test_count_only_skips_the_count_request_on_unwrapped_endpoints(fake):
+    fake.responses["featureset"] = {"features": [{"id": "f1"}, {"id": "f2"}]}
+    doc = json.loads(_run(["featuresets", "list", "--count-only"]).stdout)
+    assert doc["records"] == [{"count": 2}]
+    assert len(_gets(fake)) == 1 and "page_size" not in _gets(fake)[0][2]
+
+
+def test_export_done_line_skips_the_count_for_huge_bodies(fake, tmp_path, monkeypatch):
+    import earthranger_cli.read_commands as rc
+    from conftest import FakeResponse
+
+    monkeypatch.setattr(rc, "CSV_COUNT_LIMIT", 10)
+    fake.responses["activity/events/export"] = FakeResponse(
+        None, content_type="text/csv", text_override="id,notes\ne1,x\ne2,y\n"
+    )
+    target = tmp_path / "e.csv"
+    result = _run(["events", "export", "-o", str(target)])
+    assert result.exit_code == 0 and "row count not computed" in result.stderr
+    assert target.read_text() == "id,notes\ne1,x\ne2,y\n"

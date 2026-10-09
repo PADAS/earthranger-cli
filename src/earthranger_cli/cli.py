@@ -33,7 +33,7 @@ from .events import (
     parse_field_args,
     post_events,
 )
-from .output import check_format, emit, output_options, parse_fields
+from .output import emit, output_options, parse_output
 from .pull import PullError, pull_category, render_spec_yaml
 from .validate import UnknownEventType, validate_events
 
@@ -461,8 +461,7 @@ def _table_options(json_, output, fields, fmt) -> list[str] | None:
     """Validate --fields/--format once and return the parsed fields. The human
     listing is unchanged by them (by design); say so on stderr rather than let
     the flags vanish without a trace."""
-    parsed = parse_fields(fields)
-    check_format(parsed, fmt)  # the same usage error with or without --json
+    parsed = parse_output(fields, fmt)  # the same usage error with or without --json
     if (fields or fmt != "json") and not (json_ or output):
         click.echo(
             "note: --fields/--format apply to the JSON document; add --json or -o. "

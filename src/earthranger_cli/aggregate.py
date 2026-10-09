@@ -29,8 +29,14 @@ def group_counts(records: list, field: str) -> tuple[list[dict], int]:
         found, value = lookup(record, field)
         if found:
             matched += 1
-        # a record without the key is not the same as one where it is null
-        key = (cell(value) or "(none)") if found else "(missing)"
+        # a record without the key, one where it is null, and one where it is
+        # blank are three different facts
+        if not found:
+            key = "(missing)"
+        elif value is None:
+            key = "(none)"
+        else:
+            key = cell(value) or "(blank)"
         counts[key] = counts.get(key, 0) + 1
     rows = [{"group": key, "count": n} for key, n in counts.items()]
     rows.sort(key=lambda row: (-row["count"], str(row["group"])))

@@ -133,3 +133,12 @@ def test_table_formats_echo_meta_notes_to_stderr(capsys, tmp_path):
     emit([{"id": "a"}], meta, None, fields=["id"], fmt="json")
     _, err = capsys.readouterr()
     assert err == ""  # JSON carries meta itself
+
+
+def test_parse_output_validates_once():
+    from earthranger_cli.output import parse_output
+
+    assert parse_output("id, name", "tsv") == ["id", "name"]
+    assert parse_output(None, "json") is None
+    with pytest.raises(click.UsageError):
+        parse_output(None, "csv")

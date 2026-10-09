@@ -112,6 +112,13 @@ def check_format(fields: list[str] | None, fmt: str) -> None:
         raise click.UsageError(f"--format {fmt} needs --fields to say which columns to write.")
 
 
+def parse_output(fields: str | None, fmt: str) -> list[str] | None:
+    """The one place --fields/--format are parsed and validated together."""
+    parsed = parse_fields(fields)
+    check_format(parsed, fmt)
+    return parsed
+
+
 def emit(
     records: list,
     meta: dict,

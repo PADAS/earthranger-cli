@@ -71,6 +71,8 @@ def parse_window(kwargs: dict) -> WindowRequest:
     for flag, value in (("--since", since), ("--until", until)):
         if value is not None and clock.parse_ts(value) is None:
             raise click.UsageError(f"{flag} must be an ISO-8601 timestamp, got {value!r}.")
+    if since and until and clock.parse_ts(since) > clock.parse_ts(until):
+        raise click.UsageError(f"--since must not be after --until ({since} > {until}).")
     mode = chosen[0][2:] if chosen else None
     return WindowRequest(since, until, mode, span)
 
@@ -89,10 +91,13 @@ def resolve_window(
     get_info: Callable[[], dict] | None,
     default_window: timedelta | None,
     note: Callable[[str], None] | None,
+    naive_tz=None,
 ) -> tuple[str | None, str | None, dict | None]:
     """Turn the request into concrete bounds. Returns (since, until, meta);
     meta is None when no window applies. A clock-based mode on a site with no
-    usable timezone refuses (exit 1) rather than answering in UTC."""
+    usable timezone refuses (exit 1) rather than answering in UTC. `naive_tz`
+    is the zone a naive --until will be *sent* in, so the default window is
+    measured from the instant the server will actually see."""
     since, until = req.since, req.until
     meta: dict | None = None
     if req.mode:
@@ -115,7 +120,7 @@ def resolve_window(
             "mode": req.mode,
         }
     elif since is None and default_window is not None:
-        end = clock.parse_ts(until) if until else None
+        end = clock.parse_ts(until, naive_tz or UTC) if until else None
         end = end or datetime.now(UTC)
         since = (end - default_window).astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
         hours = int(default_window.total_seconds() // 3600)

@@ -140,3 +140,23 @@ def test_apply_window_localizes_naive_since_until_bounds():
     params = {}
     windows.apply_window("filter", params, "2026-08-01", None)
     assert json.loads(params["filter"]) == {"date_range": {"lower": "2026-08-01"}}
+
+
+def test_parse_window_rejects_an_inverted_window():
+    with pytest.raises(click.UsageError, match="--since must not be after --until"):
+        windows.parse_window(_kw(since="2026-09-01", until="2026-08-01"))
+    windows.parse_window(_kw(since="2026-08-01", until="2026-08-01"))  # same day is fine
+
+
+def test_resolve_window_default_uses_the_zone_the_until_will_be_sent_in():
+    from zoneinfo import ZoneInfo
+
+    req = windows.WindowRequest(None, "2026-08-31T23:59:59.999999", None, None)
+    since, _until, _ = windows.resolve_window(
+        req,
+        get_info=None,
+        default_window=timedelta(hours=24),
+        note=None,
+        naive_tz=ZoneInfo("Africa/Nairobi"),
+    )
+    assert since == "2026-08-30T20:59:59Z"

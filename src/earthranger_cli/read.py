@@ -87,7 +87,8 @@ def normalize_page(data: Any) -> tuple[list, str | None, int | None]:
     return [data], None, 1
 
 
-MAX_PAGES = 200  # otus's ceiling; ER's largest sites page far below this
+MAX_PAGES = 200  # otus's ceiling; right for events/subjects, raised per row where not
+DEFAULT_CAP = object()  # "use MAX_PAGES as it is at call time" (tests patch MAX_PAGES)
 
 
 def _page_keys(records: list) -> tuple | None:
@@ -96,7 +97,7 @@ def _page_keys(records: list) -> tuple | None:
 
 
 def follow_pages(
-    client, page: Any, *, limit: int | None = None, cap: bool = True
+    client, page: Any, *, limit: int | None = None, max_pages=DEFAULT_CAP
 ) -> tuple[list, int, int | None, bool]:
     """Collect `page` and every page reachable through its `next` link.
 
@@ -104,17 +105,19 @@ def follow_pages(
     trims any overshoot from the last page. Absolute `next` links use the
     configured API origin, preserving the server-provided path and query.
     Returns (records, pages_fetched, count_reported, truncated); `truncated`
-    is True when the walk stopped at MAX_PAGES (unless `cap` is False) or
-    because a `next` link repeated or led back to the first page (a server
-    bug that would otherwise loop forever), and the caller says so in meta.
+    is True when the walk stopped at `max_pages` (MAX_PAGES by default; None
+    means no cap) or because a `next` link repeated or led back to the first
+    page (a server bug that would otherwise loop forever), and the caller says
+    so in meta.
     """
+    cap = MAX_PAGES if max_pages is DEFAULT_CAP else max_pages
     records, next_url, count = normalize_page(page)
     first_keys = _page_keys(records)  # page 1's URL is unknown here; its records are not
     pages = 1
     seen: set[str] = set()
     truncated = False
     while next_url and (limit is None or len(records) < limit):
-        if (cap and pages >= MAX_PAGES) or next_url in seen:
+        if (cap is not None and pages >= cap) or next_url in seen:
             truncated = True
             break
         seen.add(next_url)
@@ -142,6 +145,7 @@ def fetch(
     limit: int | None = None,
     version: str | None = None,
     unwrap: Callable[[Any], Any] | None = None,
+    max_pages=DEFAULT_CAP,
 ) -> tuple[list, dict]:
     """GET `path` (relative to the API root) and return (records, meta).
 
@@ -163,7 +167,9 @@ def fetch(
         page = unwrap(page)
     truncated = False
     if paginate:
-        records, pages, count, truncated = follow_pages(client, page, limit=limit)
+        records, pages, count, truncated = follow_pages(
+            client, page, limit=limit, max_pages=max_pages
+        )
     else:
         records, _, count = normalize_page(page)
         pages = 1

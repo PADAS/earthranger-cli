@@ -29,8 +29,8 @@ from erclient.er_errors import ERClientException, ERClientPermissionDenied
 from . import aggregate
 from . import clock as _clock
 from . import windows as _windows
-from .output import append_note, check_format, emit, output_options, parse_fields
-from .read import fetch, fetch_count, fetch_text, follow_pages
+from .output import append_note, emit, output_options, parse_output
+from .read import DEFAULT_CAP, fetch, fetch_count, fetch_text, follow_pages
 
 
 @dataclass(frozen=True)
@@ -84,6 +84,9 @@ class ReadCommand:
     # Query params a `--where` filter needs the server to include (the detail
     # it reads), declared on the row rather than assumed by the shared callback.
     where_params: dict = field(default_factory=dict)
+    # Pages a walk may follow before it is reported truncated; None = the
+    # read surface default (read.MAX_PAGES). Observations need far more.
+    max_pages: int | None = None
 
 
 @dataclass(frozen=True)
@@ -140,7 +143,7 @@ def _all_event_types(client) -> list[dict]:
     """
     v1 = client.get_event_types(include_inactive=True)
     v2_page = client.get_event_types(include_inactive=True, version="v2.0")
-    v2, pages, _, truncated = follow_pages(client, v2_page, cap=False)
+    v2, pages, _, truncated = follow_pages(client, v2_page, max_pages=None)
     if truncated:
         # a partial listing would resolve names against half the types
         raise ERClientException(
@@ -359,6 +362,7 @@ COMMANDS: tuple[ReadCommand, ...] = (
         window="since_until",
         default_window=OBSERVATIONS_DEFAULT_WINDOW,
         time_field="recorded_at",
+        max_pages=2000,  # a collar fixing every minute is ~20k rows a fortnight
     ),
     ReadCommand(
         "observations",
@@ -689,13 +693,19 @@ def _grouped(
     return rows, out_meta
 
 
+CSV_COUNT_LIMIT = 8_000_000  # characters; beyond this the count is not worth a second parse
+
+
 def _csv_row_count(body: str) -> int | None:
     """Data rows in a CSV body — records, not newlines, since the server quotes
-    multi-line notes. None when the parser refuses a field (its default limit
-    is 131,072 characters, and das puts all of an event's notes in one field):
-    the export itself is fine, only the count is unavailable."""
+    multi-line notes. None when the body is too large to parse twice just for
+    a number, or when the parser refuses a field (its default limit is 131,072
+    characters, and das puts all of an event's notes in one field): the export
+    itself is fine, only the count is unavailable."""
     if not body.strip():
         return 0
+    if len(body) > CSV_COUNT_LIMIT:
+        return None
     try:
         return max(sum(1 for _ in csv.reader(io.StringIO(body))) - 1, 0)
     except csv.Error:
@@ -759,8 +769,8 @@ def _emit_raw(
         if rows is None:
             # the file is complete; only the count is missing, so say exactly that
             click.echo(
-                f"Done. File written to {output} ({kind}); row count unavailable "
-                "(a field exceeded the CSV parser's limit).",
+                f"Done. File written to {output} ({kind}); row count not computed "
+                "(large body or an oversized field).",
                 err=True,
             )
         else:
@@ -769,10 +779,130 @@ def _emit_raw(
         click.echo(body, nl=False)
 
 
+def _query_params(spec: ReadCommand, kwargs: dict) -> dict:
+    """The flags a row declares, as the query params ER expects."""
+    params: dict = {}
+    for flag in spec.flags:
+        value = kwargs.get(flag.param)
+        if flag.kind == "multi":
+            continue  # the CLI's own, not a query param
+        if flag.kind == "bool":
+            if value:
+                params[flag.param] = "true"
+        elif flag.kind == "list":
+            if value is not None:
+                params[flag.param] = [v.strip() for v in value.split(",") if v.strip()]
+        elif value is not None:
+            params[flag.param] = value
+    return params
+
+
+def _check_period_grouping(spec: ReadCommand, win, group_by: str) -> None:
+    """Both facts are known before connecting; failing after a full walk would waste it."""
+    if win is None:
+        raise click.UsageError(
+            f"--group-by {group_by} needs a window, and {spec.group} records have "
+            "none to divide; group by a field instead."
+        )
+    if not (win.since or win.mode or spec.default_window):
+        raise click.UsageError(
+            f"--group-by {group_by} needs a window to divide: "
+            "pass --since/--until, --today, or --last."
+        )
+    if not spec.time_field:
+        raise click.UsageError(
+            f"{spec.group} records have no timestamp to bucket by {group_by}; "
+            "group by a field instead."
+        )
+
+
+def _apply_window(ctx, client, spec: ReadCommand, win, params: dict) -> dict | None:
+    """Resolve the window and write it into params; returns the window meta."""
+    naive_tz = None
+    if spec.window != "filter" and (_windows.is_naive(win.since) or _windows.is_naive(win.until)):
+        # a bare date is the site's calendar day on every command; these
+        # endpoints need it spelled with the site's offset, so this is the
+        # one plain read that fetches the clock — before the default window
+        # is measured, so "24 hours before --until" is 24 hours before the
+        # instant the server will see
+        naive_tz = _clock.site_tz(get_clock(ctx, client))
+        if naive_tz is None:
+            click.echo(
+                "note: the site reported no usable timezone; bare --since/--until "
+                "dates are read as UTC.",
+                err=True,
+            )
+            naive_tz = UTC
+    since, until, window_meta = _windows.resolve_window(
+        win,
+        get_info=lambda: get_clock(ctx, client),
+        default_window=spec.default_window,
+        note=lambda text: click.echo(text, err=True),
+        naive_tz=naive_tz,
+    )
+    _windows.apply_window(spec.window, params, since, until, naive_tz=naive_tz)
+    if window_meta and spec.window != "filter":
+        lower, upper = _windows.bound_params(spec.window)
+        window_meta["since"] = params.get(lower, window_meta.get("since"))
+        window_meta["until"] = params.get(upper, window_meta.get("until"))
+    return window_meta
+
+
+def _count_only(client, spec: ReadCommand, path: str, params: dict, limit: int | None):
+    """One count request where the server will say; a walk reported honestly where not."""
+    n = None if spec.unwrap else fetch_count(client, path, params, version=spec.version)
+    if n is not None:
+        return [{"count": n}], {"total": 1, "pages": 1, "count_reported": n, "exact": True}
+    _records, walked = fetch(
+        client,
+        path,
+        params,
+        paginate=True,
+        limit=limit,
+        version=spec.version,
+        unwrap=spec.unwrap,
+        max_pages=spec.max_pages or DEFAULT_CAP,
+    )
+    n, pages = walked["total"], walked["pages"]
+    exact = _walk_exact(walked, limit, n)  # a --limit stop is a floor too
+    meta = {"total": 1, "pages": pages, "count_reported": n, "exact": exact}
+    if walked.get("note"):
+        meta["note"] = walked["note"]
+    if not exact and not walked.get("truncated"):
+        append_note(meta, f"--limit stopped the walk at {n}; the count is a floor, not the total.")
+    return [{"count": n}], meta
+
+
+def _apply_where(records: list, meta: dict, where, limit: int | None, fetched: int):
+    """Filter event_details in the CLI and say what that did to the numbers."""
+    records, note = aggregate.filter_details(records, where)
+    meta["fetched"] = fetched
+    meta["total"] = len(records)
+    meta["where"] = aggregate.where_summary(where)
+    if limit is not None:
+        append_note(
+            meta,
+            f"--limit bounds the records fetched ({fetched}), not the matches; "
+            "raise it or narrow the window for more.",
+        )
+    append_note(meta, note)
+    return records, meta
+
+
+def _count_matches(records: list, meta: dict, limit: int | None, fetched: int):
+    """--count-only after --where: the server's count is meaningless, count what matched."""
+    n = len(records)
+    return [{"count": n}], {
+        **meta,
+        "total": 1,
+        "count_reported": n,
+        "exact": _walk_exact(meta, limit, fetched),
+    }
+
+
 def _make_command(spec: ReadCommand, deps: Deps) -> click.Command:
     def callback(ctx, output, fields=None, fmt="json", limit=None, **kwargs):
-        fields = parse_fields(fields)
-        check_format(fields, fmt)
+        fields = parse_output(fields, fmt)
         count_only = kwargs.pop("count_only", False)
         group_by = kwargs.pop("group_by", None)
         if count_only and group_by:
@@ -784,19 +914,7 @@ def _make_command(spec: ReadCommand, deps: Deps) -> click.Command:
         path = spec.path
         if spec.arg:
             path = path.replace("{id}", quote(kwargs.pop(spec.arg), safe=""))
-        params: dict = {}
-        for flag in spec.flags:
-            value = kwargs.get(flag.param)
-            if flag.kind == "multi":
-                continue  # the CLI's own, not a query param
-            if flag.kind == "bool":
-                if value:
-                    params[flag.param] = "true"
-            elif flag.kind == "list":
-                if value is not None:
-                    params[flag.param] = [v.strip() for v in value.split(",") if v.strip()]
-            elif value is not None:
-                params[flag.param] = value
+        params = _query_params(spec, kwargs)
         if spec.window == "filter" and "filter" in params:
             # events/patrols take a JSON filter: malformed is a usage error, not a login
             # (the observations --filter is an exclusion-flag integer, not JSON)
@@ -805,51 +923,11 @@ def _make_command(spec: ReadCommand, deps: Deps) -> click.Command:
         if where:
             params.update(spec.where_params)  # e.g. include_details, which the filter reads
         if group_by in _clock.PERIODS:
-            # both facts are known now; failing after a full walk would waste it
-            if win is None:
-                raise click.UsageError(
-                    f"--group-by {group_by} needs a window, and {spec.group} records have "
-                    "none to divide; group by a field instead."
-                )
-            if not (win.since or win.mode or spec.default_window):
-                raise click.UsageError(
-                    f"--group-by {group_by} needs a window to divide: "
-                    "pass --since/--until, --today, or --last."
-                )
-            if not spec.time_field:
-                raise click.UsageError(
-                    f"{spec.group} records have no timestamp to bucket by {group_by}; "
-                    "group by a field instead."
-                )
+            _check_period_grouping(spec, win, group_by)
         if spec.prepare is not None:
             params = spec.prepare(params)
         client = deps.connect(ctx)
-        window_meta = None
-        if win is not None:
-            since, until, window_meta = _windows.resolve_window(
-                win,
-                get_info=lambda: get_clock(ctx, client),
-                default_window=spec.default_window,
-                note=lambda text: click.echo(text, err=True),
-            )
-            naive_tz = None
-            if spec.window != "filter" and (_windows.is_naive(since) or _windows.is_naive(until)):
-                # a bare date is the site's calendar day on every command; these
-                # endpoints need it spelled with the site's offset, so this is the
-                # one plain read that fetches the clock
-                naive_tz = _clock.site_tz(get_clock(ctx, client))
-                if naive_tz is None:
-                    click.echo(
-                        "note: the site reported no usable timezone; bare --since/--until "
-                        "dates are read as UTC.",
-                        err=True,
-                    )
-                    naive_tz = UTC
-            _windows.apply_window(spec.window, params, since, until, naive_tz=naive_tz)
-            if window_meta and spec.window != "filter":
-                lower, upper = _windows.bound_params(spec.window)
-                window_meta["since"] = params.get(lower, window_meta.get("since"))
-                window_meta["until"] = params.get(upper, window_meta.get("until"))
+        window_meta = _apply_window(ctx, client, spec, win, params) if win is not None else None
         if spec.resolve is not None:
             params = spec.resolve(client, params)
         # the site zone decides where buckets begin; refuse before the walk, not after
@@ -864,32 +942,7 @@ def _make_command(spec: ReadCommand, deps: Deps) -> click.Command:
             _emit_raw(client, spec, path, params, output, extra)
             return
         if count_only and not where:
-            n = fetch_count(client, path, params, version=spec.version, unwrap=spec.unwrap)
-            if n is None:
-                # a bare list or an envelope with no count: walk it and say how far we got
-                _records, walked = fetch(
-                    client,
-                    path,
-                    params,
-                    paginate=True,
-                    limit=limit,
-                    version=spec.version,
-                    unwrap=spec.unwrap,
-                )
-                n, pages = walked["total"], walked["pages"]
-                # a walk cut short by --limit is a floor too, not just a truncated one
-                exact = _walk_exact(walked, limit, n)
-                floor_note = walked.get("note")
-                if not exact and not walked.get("truncated"):
-                    floor_note = (
-                        f"--limit stopped the walk at {n}; the count is a floor, not the total."
-                    )
-            else:
-                pages, exact, floor_note = 1, True, None
-            records = [{"count": n}]
-            meta = {"total": 1, "pages": pages, "count_reported": n, "exact": exact}
-            if floor_note:
-                meta["note"] = floor_note
+            records, meta = _count_only(client, spec, path, params, limit)
         else:
             records, meta = fetch(
                 client,
@@ -899,26 +952,13 @@ def _make_command(spec: ReadCommand, deps: Deps) -> click.Command:
                 limit=limit,
                 version=spec.version,
                 unwrap=spec.unwrap,
+                max_pages=spec.max_pages or DEFAULT_CAP,
             )
             fetched = meta["total"]
             if where:
-                records, note = aggregate.filter_details(records, where)
-                meta["fetched"] = fetched
-                meta["total"] = len(records)
-                meta["where"] = aggregate.where_summary(where)
-                if limit is not None:
-                    append_note(
-                        meta,
-                        f"--limit bounds the records fetched ({fetched}), not the matches; "
-                        "raise it or narrow the window for more.",
-                    )
-                append_note(meta, note)
+                records, meta = _apply_where(records, meta, where, limit, fetched)
             if count_only:
-                # --where made the server count meaningless: count what matched
-                n = len(records)
-                records = [{"count": n}]
-                exact = _walk_exact(meta, limit, fetched)
-                meta = {**meta, "total": 1, "count_reported": n, "exact": exact}
+                records, meta = _count_matches(records, meta, limit, fetched)
             elif group_by:
                 records, meta = _grouped(
                     ctx, client, spec, records, meta, group_by, window_meta, limit, fetched
@@ -1006,8 +1046,7 @@ def _make_now(deps: Deps) -> click.Command:
     never does timezone arithmetic by hand."""
 
     def now(ctx, output, fields=None, fmt="json"):
-        fields = parse_fields(fields)
-        check_format(fields, fmt)
+        fields = parse_output(fields, fmt)
         client = deps.connect(ctx)
         info = get_clock(ctx, client)
         record = {
