@@ -73,7 +73,12 @@ def _parse_in(value, tz) -> datetime | None:
 
 
 def _iso(dt: datetime) -> str:
-    return dt.isoformat(timespec="seconds")
+    """Whole seconds, unless the instant carries a fraction (a period's last
+    microsecond), which must survive so inclusive comparisons stay gapless."""
+    return dt.isoformat(timespec="microseconds" if dt.microsecond else "seconds")
+
+
+_LAST_INSTANT = timedelta(microseconds=1)  # a period ends one microsecond before the next
 
 
 def last_bounds(info: dict, span: timedelta) -> tuple[str, str] | None:
@@ -87,14 +92,14 @@ def last_bounds(info: dict, span: timedelta) -> tuple[str, str] | None:
 
 
 def day_bounds(info: dict, days_ago: int = 0) -> tuple[str, str] | None:
-    """The site-local calendar day, ending 23:59:59 so two days never both
-    claim an event filed exactly at midnight."""
+    """The site-local calendar day, ending 23:59:59.999999 so two days never
+    both claim an event filed exactly at midnight and nothing falls between."""
     tz, now = site_tz(info), parse_ts(info.get("utc"))
     if tz is None or now is None:
         return None
     start = now.astimezone(tz).replace(hour=0, minute=0, second=0, microsecond=0)
     start -= timedelta(days=days_ago)
-    return _iso(start), _iso(start + timedelta(days=1) - timedelta(seconds=1))
+    return _iso(start), _iso(start + timedelta(days=1) - _LAST_INSTANT)
 
 
 def fetch_clock(client) -> dict:
@@ -137,13 +142,18 @@ def clock_meta(info: dict) -> dict:
     return {k: v for k, v in meta.items() if v}
 
 
-def bucket_window(since: str, until: str, period: str, tz) -> list[tuple[str, str, str]]:
+def bucket_window(
+    since: str, until: str, period: str, tz, naive_tz=None
+) -> list[tuple[str, str, str]]:
     """Calendar buckets covering [since, until] in site time: (label, lo, hi)
-    with hi = next start − 1 s. Days label YYYY-MM-DD, weeks their Monday,
-    months YYYY-MM."""
+    with hi = next start − 1 µs. Days label YYYY-MM-DD, weeks their Monday,
+    months YYYY-MM. A naive bound is read in `naive_tz` — the zone the
+    *endpoint* applies to it (das reads event/patrol filter dates in the site
+    zone but observation bounds in UTC) — defaulting to the site zone."""
     if period not in PERIODS:
         raise ValueError(f"period must be one of {', '.join(PERIODS)}, not {period!r}")
-    lo, hi = _parse_in(since, tz), _parse_in(until, tz)
+    naive_tz = naive_tz or tz
+    lo, hi = _parse_in(since, naive_tz), _parse_in(until, naive_tz)
     if lo is None or hi is None:
         raise ValueError("--since/--until must be ISO-8601 timestamps to bucket by period")
     cur = lo.astimezone(tz).replace(hour=0, minute=0, second=0, microsecond=0)
@@ -161,6 +171,6 @@ def bucket_window(since: str, until: str, period: str, tz) -> list[tuple[str, st
         else:
             nxt = (cur.replace(day=28) + timedelta(days=4)).replace(day=1)
             label = cur.strftime("%Y-%m")
-        buckets.append((label, _iso(cur), _iso(nxt - timedelta(seconds=1))))
+        buckets.append((label, _iso(cur), _iso(nxt - _LAST_INSTANT)))
         cur = nxt
     return buckets

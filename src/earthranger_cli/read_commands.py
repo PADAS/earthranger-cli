@@ -17,7 +17,7 @@ import json
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import UTC, timedelta
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
@@ -603,13 +603,33 @@ def _endpoint(spec: ReadCommand) -> str:
     return f"[GET /api/{spec.version or 'v1.0'}/{path}]"
 
 
-def _grouped(ctx, client, spec: ReadCommand, records: list, meta: dict, group_by: str, window_meta):
+def _grouped(
+    ctx,
+    client,
+    spec: ReadCommand,
+    records: list,
+    meta: dict,
+    group_by: str,
+    window_meta,
+    limit: int | None,
+    fetched: int,
+):
     """Rows of counts in place of records: per field value, or per site-local
-    period over the command's window."""
+    period over the command's window. `fetched` is how many records the walk
+    returned before any --where filter; the breakdown is exact only when that
+    walk exhausted the query (no truncation, no --limit stop)."""
     out_meta = {
-        k: v for k, v in meta.items() if k in ("pages", "count_reported", "truncated", "note")
+        k: v
+        for k, v in meta.items()
+        if k in ("pages", "count_reported", "truncated", "note", "where")
     }
     out_meta["group_by"] = group_by
+    out_meta["fetched"] = fetched
+    out_meta["exact"] = not meta.get("truncated") and (limit is None or fetched < limit)
+    if not out_meta["exact"] and not meta.get("truncated"):
+        out_meta["note"] = (
+            f"grouped only the {fetched} record(s) --limit allowed; counts are a floor, not totals."
+        )
     if group_by in _clock.PERIODS:
         if not window_meta or not window_meta.get("since"):
             raise click.UsageError(
@@ -628,6 +648,9 @@ def _grouped(ctx, client, spec: ReadCommand, records: list, meta: dict, group_by
                 "the site reported no usable timezone, so --group-by cannot say where a day begins."
             )
         until = window_meta.get("until") or info.get("local") or info["utc"]
+        # das reads a naive date inside an events/patrols filter in the site zone,
+        # but a naive observations since/until in UTC; bucket the way it windowed
+        naive_tz = tz if spec.window == "filter" else UTC
         rows = aggregate.group_by_period(
             records,
             period=group_by,
@@ -635,6 +658,7 @@ def _grouped(ctx, client, spec: ReadCommand, records: list, meta: dict, group_by
             until=until,
             tz=tz,
             time_field=spec.time_field,
+            naive_tz=naive_tz,
         )
     else:
         rows, matched = aggregate.group_counts(records, group_by)
@@ -771,9 +795,10 @@ def _make_command(spec: ReadCommand, deps: Deps) -> click.Command:
                 version=spec.version,
                 unwrap=spec.unwrap,
             )
+            fetched = meta["total"]
             if where:
                 records, note = aggregate.filter_details(records, where)
-                meta["fetched"] = meta["total"]
+                meta["fetched"] = fetched
                 meta["total"] = len(records)
                 meta["where"] = dict(where)
                 meta["note"] = f"{meta['note']} {note}" if meta.get("note") else note
@@ -781,10 +806,12 @@ def _make_command(spec: ReadCommand, deps: Deps) -> click.Command:
                 # --where made the server count meaningless: count what matched
                 n = len(records)
                 records = [{"count": n}]
-                exact = not meta.get("truncated") and (limit is None or meta["fetched"] < limit)
+                exact = not meta.get("truncated") and (limit is None or fetched < limit)
                 meta = {**meta, "total": 1, "count_reported": n, "exact": exact}
             elif group_by:
-                records, meta = _grouped(ctx, client, spec, records, meta, group_by, window_meta)
+                records, meta = _grouped(
+                    ctx, client, spec, records, meta, group_by, window_meta, limit, fetched
+                )
         if window_meta:
             meta["window"] = window_meta
         if ctx.obj.get("clock"):

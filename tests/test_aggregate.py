@@ -34,7 +34,7 @@ def test_group_by_period_counts_into_site_buckets():
         recs,
         period="day",
         since="2026-10-07T00:00:00+03:00",
-        until="2026-10-09T23:59:59+03:00",
+        until="2026-10-09T23:59:59.999999+03:00",
         tz=tz,
         time_field="time",
     )
@@ -61,7 +61,7 @@ def test_group_by_period_uses_dotted_time_field():
         {
             "period": "2026-10",
             "since": "2026-10-01T00:00:00+00:00",
-            "until": "2026-10-31T23:59:59+00:00",
+            "until": "2026-10-31T23:59:59.999999+00:00",
             "count": 1,
         }
     ]
@@ -99,3 +99,17 @@ def test_filter_details_keeps_matches_and_names_silent_types():
     assert [r["event_details"]["species"] for r in kept] == ["buffalo"]
     assert "1 of 3 event(s) matched" in note
     assert "1 event(s) have no 'species' detail" in note and "elephant_carcass (1)" in note
+
+
+def test_group_by_period_counts_the_last_fractional_second_of_a_day():
+    tz = ZoneInfo("Africa/Nairobi")
+    recs = [{"time": "2026-10-08T23:59:59.500000+03:00"}, {"time": "2026-10-09T00:00:00+03:00"}]
+    rows = aggregate.group_by_period(
+        recs,
+        period="day",
+        since="2026-10-08T00:00:00+03:00",
+        until="2026-10-09T23:59:59.999999+03:00",
+        tz=tz,
+        time_field="time",
+    )
+    assert [(r["period"], r["count"]) for r in rows] == [("2026-10-08", 1), ("2026-10-09", 1)]

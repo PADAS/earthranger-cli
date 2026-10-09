@@ -46,11 +46,19 @@ def scalar_keys(records: list, limit: int = 25) -> list[str]:
 
 
 def group_by_period(
-    records: list, *, period: str, since: str, until: str, tz, time_field: str
+    records: list,
+    *,
+    period: str,
+    since: str,
+    until: str,
+    tz,
+    time_field: str,
+    naive_tz=None,
 ) -> list[dict]:
     """Count records into site-local day/week/month buckets over [since, until],
-    reading each record's timestamp from the dotted `time_field`."""
-    buckets = clock.bucket_window(since, until, period, tz)
+    reading each record's timestamp from the dotted `time_field`. `naive_tz`
+    is the zone the endpoint applies to a naive bound (see clock.bucket_window)."""
+    buckets = clock.bucket_window(since, until, period, tz, naive_tz=naive_tz)
     rows = [{"period": label, "since": lo, "until": hi, "count": 0} for label, lo, hi in buckets]
     edges = [
         (clock.parse_ts(lo), clock.parse_ts(hi), row) for row, (_, lo, hi) in zip(rows, buckets)

@@ -614,7 +614,10 @@ def test_now_prints_the_site_clock_as_one_record(fake):
             "utc": "2026-10-09T09:00:00Z",
             "site_now": "2026-10-09T12:00:00+03:00",
             "site_tz": "Africa/Nairobi",
-            "today": {"since": "2026-10-09T00:00:00+03:00", "until": "2026-10-09T23:59:59+03:00"},
+            "today": {
+                "since": "2026-10-09T00:00:00+03:00",
+                "until": "2026-10-09T23:59:59.999999+03:00",
+            },
         }
     ]
     assert doc["meta"]["total"] == 1
@@ -629,12 +632,15 @@ def test_events_search_today_folds_into_filter_and_reports_window(fake):
     sent = json.loads(_gets(fake)[0][2]["filter"])
     assert sent == {
         "text": "lion",
-        "date_range": {"lower": "2026-10-09T00:00:00+03:00", "upper": "2026-10-09T23:59:59+03:00"},
+        "date_range": {
+            "lower": "2026-10-09T00:00:00+03:00",
+            "upper": "2026-10-09T23:59:59.999999+03:00",
+        },
     }
     meta = json.loads(result.output)["meta"]
     assert meta["window"] == {
         "since": "2026-10-09T00:00:00+03:00",
-        "until": "2026-10-09T23:59:59+03:00",
+        "until": "2026-10-09T23:59:59.999999+03:00",
         "tz": "Africa/Nairobi",
         "mode": "today",
     }
@@ -662,7 +668,7 @@ def test_tracks_and_observations_take_the_window_as_params(fake):
     assert result.exit_code == 0, result.output
     assert _gets(fake)[0][2] == {
         "since": "2026-10-08T00:00:00+03:00",
-        "until": "2026-10-08T23:59:59+03:00",
+        "until": "2026-10-08T23:59:59.999999+03:00",
     }
     fake.responses["observations"] = {"count": 0, "next": None, "results": []}
     result = _run(["observations", "search", "--subject-id", "s1", "--last", "24h"])
@@ -951,3 +957,51 @@ def test_export_fallback_document_carries_a_note_and_the_window(fake, tmp_path):
     meta = json.loads(target.read_text())["meta"]
     assert "may not export" in meta["note"]
     assert meta["window"]["mode"] == "today" and meta["site_tz"] == "Africa/Nairobi"
+
+
+def test_group_by_field_reports_completeness_under_limit(fake):
+    fake.responses["activity/events"] = {
+        "count": 1000,
+        "next": None,
+        "results": [{"priority": 300}, {"priority": 0}, {"priority": 0}],
+    }
+    doc = json.loads(_run(["events", "search", "--group-by", "priority", "--limit", "1"]).output)
+    assert doc["records"] == [{"group": "300", "count": 1}]
+    assert doc["meta"]["exact"] is False and doc["meta"]["fetched"] == 1
+    assert "--limit" in doc["meta"]["note"]
+    doc = json.loads(_run(["events", "search", "--group-by", "priority"]).output)
+    assert doc["meta"]["exact"] is True and doc["meta"]["fetched"] == 3
+    # --where: fetched is the pre-filter count, where is carried
+    doc = json.loads(
+        _run(["events", "search", "--group-by", "priority", "--where", "species=x"]).output
+    )
+    assert doc["meta"]["fetched"] == 3 and doc["meta"]["where"] == {"species": "x"}
+
+
+def test_observations_group_by_day_buckets_a_utc_window_in_site_time(fake):
+    # das reads naive observation bounds as UTC; Oct 8 UTC reaches 02:59 on Oct 9 in Nairobi
+    fake.responses["observations"] = {
+        "count": 1,
+        "next": None,
+        "results": [{"recorded_at": "2026-10-08T22:00:00Z"}],
+    }
+    doc = json.loads(
+        _run(
+            [
+                "observations",
+                "search",
+                "--subject-id",
+                "s1",
+                "--since",
+                "2026-10-08",
+                "--until",
+                "2026-10-08",
+                "--group-by",
+                "day",
+            ]
+        ).output
+    )
+    assert [(r["period"], r["count"]) for r in doc["records"]] == [
+        ("2026-10-08", 0),
+        ("2026-10-09", 1),
+    ]

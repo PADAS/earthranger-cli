@@ -37,10 +37,13 @@ def test_parse_duration_refuses_other_forms(raw):
 
 def test_day_bounds_are_the_site_calendar_day():
     info = {"utc": "2026-10-09T02:30:00Z", "timezone_name": "America/Los_Angeles"}
-    assert clock.day_bounds(info) == ("2026-10-08T00:00:00-07:00", "2026-10-08T23:59:59-07:00")
+    assert clock.day_bounds(info) == (
+        "2026-10-08T00:00:00-07:00",
+        "2026-10-08T23:59:59.999999-07:00",
+    )
     assert clock.day_bounds(info, 1) == (
         "2026-10-07T00:00:00-07:00",
-        "2026-10-07T23:59:59-07:00",
+        "2026-10-07T23:59:59.999999-07:00",
     )
     assert clock.day_bounds({"utc": "2026-10-09T02:30:00Z", "timezone": "EAT"}) is None
 
@@ -62,7 +65,7 @@ def test_fetch_clock_reads_date_header_and_status_body():
     assert info["local"] == "2026-10-09T12:00:00+03:00"
     assert info["today"] == {
         "since": "2026-10-09T00:00:00+03:00",
-        "until": "2026-10-09T23:59:59+03:00",
+        "until": "2026-10-09T23:59:59.999999+03:00",
     }
     assert fake.calls == [("_get_response", "status", None)]
     assert clock.clock_meta(info) == {
@@ -85,7 +88,7 @@ def test_bucket_window_days_weeks_months():
     tz = ZoneInfo("Africa/Nairobi")
     days = clock.bucket_window("2026-10-07T10:00:00+03:00", "2026-10-09T12:00:00+03:00", "day", tz)
     assert [b[0] for b in days] == ["2026-10-07", "2026-10-08", "2026-10-09"]
-    assert days[0][1:] == ("2026-10-07T00:00:00+03:00", "2026-10-07T23:59:59+03:00")
+    assert days[0][1:] == ("2026-10-07T00:00:00+03:00", "2026-10-07T23:59:59.999999+03:00")
     weeks = clock.bucket_window(
         "2026-10-07T00:00:00+03:00", "2026-10-13T00:00:00+03:00", "week", tz
     )
@@ -94,7 +97,7 @@ def test_bucket_window_days_weeks_months():
         "2026-08-20T00:00:00+03:00", "2026-10-01T00:00:00+03:00", "month", tz
     )
     assert [b[0] for b in months] == ["2026-08", "2026-09", "2026-10"]
-    assert months[1][1:] == ("2026-09-01T00:00:00+03:00", "2026-09-30T23:59:59+03:00")
+    assert months[1][1:] == ("2026-09-01T00:00:00+03:00", "2026-09-30T23:59:59.999999+03:00")
     with pytest.raises(ValueError, match="period"):
         clock.bucket_window(
             "2026-10-07T00:00:00+03:00", "2026-10-08T00:00:00+03:00", "fortnight", tz
@@ -116,3 +119,26 @@ def test_bucket_window_reads_naive_bounds_in_site_time():
     assert [b[0] for b in months] == ["2026-07", "2026-08", "2026-09"]
     days = clock.bucket_window("2026-10-08", "2026-10-08T23:59:59.999999", "day", tz)
     assert [b[0] for b in days] == ["2026-10-08"]
+
+
+def test_bucket_window_naive_tz_follows_the_endpoint():
+    # review: das parses naive observation bounds as UTC (observations.utils.dateparse),
+    # so a UTC day on a +03:00 site spans two site-local days
+    from datetime import UTC
+
+    tz = ZoneInfo("Africa/Nairobi")
+    utc_day = clock.bucket_window(
+        "2026-10-08", "2026-10-08T23:59:59.999999", "day", tz, naive_tz=UTC
+    )
+    assert [b[0] for b in utc_day] == ["2026-10-08", "2026-10-09"]
+    site_day = clock.bucket_window("2026-10-08", "2026-10-08T23:59:59.999999", "day", tz)
+    assert [b[0] for b in site_day] == ["2026-10-08"]
+
+
+def test_period_ends_keep_the_final_fractional_second():
+    # review: a one-second gap between buckets dropped records stamped in the last 999 ms
+    info = {"utc": "2026-10-09T02:30:00Z", "timezone_name": "America/Los_Angeles"}
+    assert clock.day_bounds(info)[1] == "2026-10-08T23:59:59.999999-07:00"
+    tz = ZoneInfo("Africa/Nairobi")
+    (_label, lo, hi), *_ = clock.bucket_window("2026-10-08", "2026-10-08", "day", tz)
+    assert (lo, hi) == ("2026-10-08T00:00:00+03:00", "2026-10-08T23:59:59.999999+03:00")

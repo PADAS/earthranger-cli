@@ -39,7 +39,7 @@ def test_resolve_window_today_and_last_use_the_clock():
     since, until, meta = windows.resolve_window(
         req, get_info=lambda: CLOCK, default_window=None, note=None
     )
-    assert (since, until) == ("2026-10-09T00:00:00+03:00", "2026-10-09T23:59:59+03:00")
+    assert (since, until) == ("2026-10-09T00:00:00+03:00", "2026-10-09T23:59:59.999999+03:00")
     assert meta == {"since": since, "until": until, "tz": "Africa/Nairobi", "mode": "today"}
     req = windows.WindowRequest(None, None, "last", timedelta(hours=2))
     since, until, meta = windows.resolve_window(
