@@ -14,15 +14,14 @@ from __future__ import annotations
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 from typing import Any
 from urllib.parse import quote
 
 import click
-import requests
-from erclient.er_errors import ERClientException
 
 from . import clock as _clock
+from . import windows as _windows
 from .output import check_format, emit, output_options, parse_fields
 from .read import fetch, follow_pages
 
@@ -58,6 +57,11 @@ class ReadCommand:
     # server (e.g. turning event-type names into the ids the API filters on).
     # Raise click.UsageError to refuse; return the (possibly amended) params.
     resolve: Callable[[Any, dict], dict] | None = None
+    # How --since/--until (and --today/--yesterday/--last) reach this endpoint:
+    # one of windows.KINDS, or None for commands without a time window.
+    window: str | None = None
+    # Fill --since this far before --until (or now) when no window flag is given.
+    default_window: timedelta | None = None
 
 
 @dataclass(frozen=True)
@@ -165,22 +169,13 @@ def _resolve_event_types(client, params: dict) -> dict:
     return params
 
 
-def _parse_iso(value: str, flag: str) -> datetime:
-    try:
-        parsed = datetime.fromisoformat(value)  # Python 3.11+ accepts a trailing Z
-    except ValueError:
-        raise click.UsageError(f"{flag} must be an ISO-8601 timestamp, got {value!r}.") from None
-    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
-
-
 def _prepare_observations(params: dict) -> dict:
     """Keep `observations search` bounded.
 
     With no selector ER falls through to "every observation on the site up to
     now", which the CLI would then page through in full; das itself rejects
-    more than one selector. With a selector but no `since`, ER defaults the
-    start to a day before `until` — we do the same client-side so the window
-    is visible in the request and in the stderr note.
+    more than one selector. (The 24-hour default for `since` is the row's
+    `default_window`, applied by the window machinery.)
     """
     chosen = [p for p in OBSERVATION_SELECTORS if params.get(p)]
     flags = ", ".join("--" + p.replace("_", "-") for p in OBSERVATION_SELECTORS)
@@ -191,18 +186,6 @@ def _prepare_observations(params: dict) -> dict:
         )
     if len(chosen) > 1:
         raise click.UsageError(f"pass only one of {flags} (got {', '.join(chosen)}).")
-    if not params.get("since"):
-        until = params.get("until")
-        end = _parse_iso(until, "--until") if until else datetime.now(UTC)
-        # `end` keeps whatever offset --until carried; convert before stamping a Z
-        start = (end - OBSERVATIONS_DEFAULT_WINDOW).astimezone(UTC)
-        params["since"] = start.strftime("%Y-%m-%dT%H:%M:%SZ")
-        anchor = f"--until {until}" if until else "now"
-        click.echo(
-            f"note: no --since given; defaulting to the 24 hours before {anchor} "
-            f"({params['since']}).",
-            err=True,
-        )
     return params
 
 
@@ -241,14 +224,13 @@ COMMANDS: tuple[ReadCommand, ...] = (
         "Retrieve a subject's track (GeoJSON) for a time window.",
         "get",
         flags=(
-            Flag("since", "ISO-8601 start."),
-            Flag("until", "ISO-8601 end."),
             Flag("show_excluded", "Include points ER excluded as outliers.", "bool"),
             Flag("max_speed_kmh", "Drop segments faster than this.", "float"),
             Flag("max_gap_minutes", "Break the track at gaps longer than this.", "int"),
         ),
         version="v2.0",
         arg="subject_id",
+        window="since_until",
     ),
     ReadCommand(
         "observations",
@@ -261,8 +243,6 @@ COMMANDS: tuple[ReadCommand, ...] = (
             Flag("source_id", "Source id (selector)."),
             Flag("subjectsource_id", "Subject-source assignment id (selector)."),
             Flag("sourceprovider_id", "Source provider id (selector)."),
-            Flag("since", "ISO-8601 start (default: 24 hours ago)."),
-            Flag("until", "ISO-8601 end (default: now)."),
             Flag("filter", "ER observation filter (e.g. 0 = exclusion flags off)."),
             Flag("include_details", "Include observation details.", "bool"),
             Flag("bbox", "Bounding box: west,south,east,north."),
@@ -270,6 +250,8 @@ COMMANDS: tuple[ReadCommand, ...] = (
             _PAGE_SIZE,
         ),
         prepare=_prepare_observations,
+        window="since_until",
+        default_window=OBSERVATIONS_DEFAULT_WINDOW,
     ),
     ReadCommand(
         "events",
@@ -299,6 +281,7 @@ COMMANDS: tuple[ReadCommand, ...] = (
             _PAGE_SIZE,
         ),
         resolve=_resolve_event_types,
+        window="filter",
     ),
     ReadCommand(
         "events", "get", "activity/event/{id}", "Retrieve one event.", "get", arg="event_id"
@@ -314,6 +297,7 @@ COMMANDS: tuple[ReadCommand, ...] = (
             Flag("exclude_empty_patrols", "Skip patrols with no segments.", "bool"),
             _PAGE_SIZE,
         ),
+        window="filter",
     ),
     ReadCommand(
         "patrols", "get", "activity/patrols/{id}", "Retrieve one patrol.", "get", arg="patrol_id"
@@ -419,21 +403,14 @@ COMMANDS: tuple[ReadCommand, ...] = (
 _TYPES = {"str": str, "int": int, "float": float, "positive_int": click.IntRange(min=1)}
 
 
-def get_clock(ctx, client, *, required: bool) -> dict | None:
-    """The site clock, fetched once per invocation. Passive callers (meta
-    enrichment) get None when /status fails; a window flag that needs the
-    clock passes required=True and lets the error surface."""
+def get_clock(ctx, client) -> dict:
+    """The site clock, fetched once per invocation and only when something
+    needs it (--today/--yesterday/--last, a period --group-by, `er now`):
+    a plain read never pays for the extra GET /status."""
     cached = ctx.obj.get("clock")
-    if cached is not None:
-        return cached
-    try:
-        info = _clock.fetch_clock(client)
-    except (ERClientException, requests.exceptions.RequestException):
-        if required:
-            raise
-        return None
-    ctx.obj["clock"] = info
-    return info
+    if cached is None:
+        cached = ctx.obj["clock"] = _clock.fetch_clock(client)
+    return cached
 
 
 def _option_names(param: str) -> list[str]:
@@ -456,8 +433,9 @@ def _make_command(spec: ReadCommand, deps: Deps) -> click.Command:
         fields = parse_fields(fields)
         check_format(fields, fmt)
         # Build and validate the request before connecting: a usage error (a
-        # missing selector, an unparseable --until) must not first demand a
+        # missing selector, conflicting window flags) must not first demand a
         # server or prompt for a password.
+        win = _windows.parse_window(kwargs) if spec.window else None
         path = spec.path
         if spec.arg:
             path = path.replace("{id}", quote(kwargs.pop(spec.arg), safe=""))
@@ -475,6 +453,15 @@ def _make_command(spec: ReadCommand, deps: Deps) -> click.Command:
         if spec.prepare is not None:
             params = spec.prepare(params)
         client = deps.connect(ctx)
+        window_meta = None
+        if win is not None:
+            since, until, window_meta = _windows.resolve_window(
+                win,
+                get_info=lambda: get_clock(ctx, client),
+                default_window=spec.default_window,
+                note=lambda text: click.echo(text, err=True),
+            )
+            _windows.apply_window(spec.window, params, since, until)
         if spec.resolve is not None:
             params = spec.resolve(client, params)
         records, meta = fetch(
@@ -486,9 +473,11 @@ def _make_command(spec: ReadCommand, deps: Deps) -> click.Command:
             version=spec.version,
             unwrap=spec.unwrap,
         )
-        info = get_clock(ctx, client, required=False)
-        if info:
-            meta.update(_clock.clock_meta(info))
+        if window_meta:
+            meta["window"] = window_meta
+        if ctx.obj.get("clock"):
+            # only when a window flag already fetched it; never an extra request
+            meta.update(_clock.clock_meta(ctx.obj["clock"]))
         emit(records, meta, output, fields=fields, fmt=fmt)
 
     callback.__name__ = f"{spec.group}_{spec.name}".replace("-", "_")
@@ -501,6 +490,8 @@ def _make_command(spec: ReadCommand, deps: Deps) -> click.Command:
             fn = click.option(
                 *_option_names(flag.param), type=_TYPES.get(flag.kind, str), help=flag.help
             )(fn)
+    if spec.window:
+        fn = _windows.window_options(fn)
     if spec.kind == "list":
         fn = click.option(
             "--limit", type=click.IntRange(min=1), metavar="N", help="Cap total records returned."
@@ -546,7 +537,7 @@ def _make_now(deps: Deps) -> click.Command:
         fields = parse_fields(fields)
         check_format(fields, fmt)
         client = deps.connect(ctx)
-        info = get_clock(ctx, client, required=True)
+        info = get_clock(ctx, client)
         record = {
             "utc": info["utc"],
             "site_now": info["local"],
