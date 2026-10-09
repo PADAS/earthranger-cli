@@ -35,6 +35,7 @@ def test_every_command_is_registered_with_output_option():
         paginated = spec.kind == "list" and spec.unwrap is None
         assert ("page_size" in names) == paginated, (spec.group, spec.name)
         assert ("since" in names) == (spec.window is not None), (spec.group, spec.name)
+        assert ("fields" in names) == (spec.kind != "raw"), (spec.group, spec.name)
         assert ("today" in names) == (spec.window is not None), (spec.group, spec.name)
         assert cmd.help and spec.help in cmd.help
         assert ("{id}" in spec.path) == (spec.arg is not None), (spec.group, spec.name)
@@ -750,3 +751,67 @@ def test_group_by_month_needs_a_window(fake):
 def test_count_only_and_group_by_are_exclusive(fake):
     result = _run(["events", "search", "--count-only", "--group-by", "priority"])
     assert result.exit_code == 2 and "either --count-only or --group-by" in result.output
+
+
+def test_events_export_writes_the_servers_csv(fake, tmp_path):
+    from conftest import FakeResponse
+
+    fake.event_types = [{"id": "t-carcass", "value": "carcass", "display": "Carcass"}]
+    fake.responses["activity/events/export"] = FakeResponse(
+        None, content_type="text/csv", text_override="id,Species\ne1,Elephant\ne2,Lion\n"
+    )
+    target = tmp_path / "events.csv"
+    result = _run(["events", "export", "--today", "--event-type", "carcass", "-o", str(target)])
+    assert result.exit_code == 0, result.output
+    assert target.read_text() == "id,Species\ne1,Elephant\ne2,Lion\n"
+    assert result.stdout == ""
+    assert result.stderr.strip() == f"Done. 2 data row(s) written to {target} (text/csv)."
+    sent = next(
+        c for c in fake.calls if c[0] == "_get_response" and c[1] == "activity/events/export"
+    )[2]
+    f = json.loads(sent["filter"])
+    assert f["date_range"]["lower"] == "2026-10-09T00:00:00+03:00"
+    assert f["event_type"] == ["t-carcass"]  # resolved id folded into filter
+    assert "event_type" not in sent
+
+
+def test_events_export_to_stdout(fake):
+    from conftest import FakeResponse
+
+    fake.responses["activity/events/export"] = FakeResponse(
+        None, content_type="text/csv", text_override="id\n"
+    )
+    result = _run(["events", "export"])
+    assert result.output == "id\n"
+
+
+def test_export_403_falls_back_to_records(fake):
+    from erclient.er_errors import ERClientPermissionDenied
+
+    def denied(path, **kwargs):
+        raise ERClientPermissionDenied("no export permission")
+
+    fake.responses["activity/events/export"] = denied
+    fake.responses["activity/events"] = {"count": 1, "next": None, "results": [{"id": "e1"}]}
+    result = _run(["events", "export", "--since", "2026-10-01"])
+    assert result.exit_code == 0, result.output
+    assert "note: this account may not export" in result.stderr
+    doc = json.loads(result.stdout)
+    assert doc["records"] == [{"id": "e1"}]
+    sent = _gets(fake)[0][2]
+    assert sent["include_details"] == "true"
+    assert json.loads(sent["filter"])["date_range"]["lower"] == "2026-10-01"
+
+
+def test_export_403_with_an_untranslatable_flag_stays_a_403(fake):
+    from erclient.er_errors import ERClientPermissionDenied
+
+    def denied(path, **kwargs):
+        raise ERClientPermissionDenied("no export permission")
+
+    fake.responses["trackingdata/export"] = denied
+    # Review Focus 5: --current-status has no records-endpoint equivalent
+    result = _run(["observations", "export", "--subject-id", "s1", "--current-status"])
+    assert result.exit_code == 1
+    assert "no export permission" in result.output
+    assert _gets(fake) == []

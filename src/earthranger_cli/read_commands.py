@@ -11,20 +11,23 @@ output.emit) so agent skills can consume it unchanged.
 
 from __future__ import annotations
 
+import json
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import timedelta
+from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
 import click
+from erclient.er_errors import ERClientPermissionDenied
 
 from . import aggregate
 from . import clock as _clock
 from . import windows as _windows
 from .output import check_format, emit, output_options, parse_fields
-from .read import fetch, fetch_count, follow_pages
+from .read import fetch, fetch_count, fetch_text, follow_pages
 
 
 @dataclass(frozen=True)
@@ -43,7 +46,9 @@ class ReadCommand:
     name: str  # action, e.g. "search"
     path: str  # relative to the API root; "{id}" is replaced by the positional
     help: str
-    kind: str = "list"  # "list" (paginated, has --limit) | "get" (single object)
+    # "list" (paginated, has --limit) | "get" (single object) | "raw" (the body
+    # is written as the server sent it — the CSV exports)
+    kind: str = "list"
     flags: tuple[Flag, ...] = ()
     version: str | None = None  # e.g. "v2.0"; None = erclient default (v1.0)
     arg: str | None = None  # positional name shown in help, e.g. "subject_id"
@@ -65,6 +70,12 @@ class ReadCommand:
     default_window: timedelta | None = None
     # Dotted path to a record's timestamp, for --group-by day|week|month.
     time_field: str | None = None
+    # For "raw" exports: how to answer with the records endpoint instead when
+    # the account may not export (403). {"path", "keep": {export_param:
+    # records_param}, "drop": {params that mean nothing there}, "add": {...}}.
+    # A sent param in neither keep nor drop means the fallback cannot carry the
+    # question, and the 403 stands rather than widening it.
+    fallback: dict | None = None
 
 
 @dataclass(frozen=True)
@@ -172,6 +183,28 @@ def _resolve_event_types(client, params: dict) -> dict:
     return params
 
 
+def _merge_filter(params: dict, **fields) -> None:
+    """Set keys inside the `filter` JSON object, keeping whatever else it holds."""
+    raw = params.get("filter")
+    try:
+        current = json.loads(raw) if raw else {}
+    except json.JSONDecodeError as e:
+        raise click.UsageError(f"--filter is not valid JSON ({e}).") from None
+    if not isinstance(current, dict):
+        raise click.UsageError("--filter must be a JSON object.")
+    current.update(fields)
+    params["filter"] = json.dumps(current, separators=(",", ":"))
+
+
+def _resolve_export_event_types(client, params: dict) -> dict:
+    """The export view reads event types only from inside `filter`."""
+    params = _resolve_event_types(client, params)
+    ids = params.pop("event_type", None)
+    if ids:
+        _merge_filter(params, event_type=list(ids))
+    return params
+
+
 def _prepare_observations(params: dict) -> dict:
     """Keep `observations search` bounded.
 
@@ -258,6 +291,32 @@ COMMANDS: tuple[ReadCommand, ...] = (
         time_field="recorded_at",
     ),
     ReadCommand(
+        "observations",
+        "export",
+        "trackingdata/export",
+        "Export raw observations as the server's CSV (ER's own column names).",
+        "raw",
+        flags=(
+            Flag("subject_id", "Subject id."),
+            Flag("source_provider", "Source provider key."),
+            Flag("subject_chronofile", "Subject chronofile number."),
+            Flag("filter", "ER observation filter (e.g. 0 = exclusion flags off)."),
+            _INCLUDE_INACTIVE,
+            Flag(
+                "current_status", "One row per subject: its current status, not its track.", "bool"
+            ),
+            Flag("record_serial_base", "Serial base for record numbering.", "int"),
+            Flag("max_records", "Stop after this many records.", "int"),
+        ),
+        window="after_before",
+        fallback={
+            "path": "observations",
+            "keep": {"after_date": "since", "before_date": "until", "subject_id": "subject_id"},
+            "drop": set(),
+            "add": {"include_details": "true"},
+        },
+    ),
+    ReadCommand(
         "events",
         "search",
         "activity/events",
@@ -290,6 +349,37 @@ COMMANDS: tuple[ReadCommand, ...] = (
     ),
     ReadCommand(
         "events", "get", "activity/event/{id}", "Retrieve one event.", "get", arg="event_id"
+    ),
+    ReadCommand(
+        "events",
+        "export",
+        "activity/events/export",
+        "Export events as the server's own CSV: columns and values are the site's display "
+        "names (what the form shows), which the JSON records do not carry.",
+        "raw",
+        flags=(
+            Flag("filter", "ER events JSON filter; --since/--until merge into it."),
+            Flag(
+                "event_type",
+                "Event type value(s), display name(s) or id(s), comma-separated; "
+                "resolved to ids and folded into the filter.",
+                "list",
+            ),
+            Flag("state", "new | active | resolved."),
+            Flag("bbox", "Bounding box: west,south,east,north."),
+            Flag("value_cols", "Also write each field's internal value column.", "bool"),
+            Flag(
+                "display_cols", "Write fields under their display names (server default).", "bool"
+            ),
+        ),
+        window="filter",
+        resolve=_resolve_export_event_types,
+        fallback={
+            "path": "activity/events",
+            "keep": {"filter": "filter", "state": "state", "bbox": "bbox"},
+            "drop": {"value_cols", "display_cols"},
+            "add": {"include_details": "true"},
+        },
     ),
     ReadCommand(
         "patrols",
@@ -477,6 +567,44 @@ def _grouped(ctx, client, spec: ReadCommand, records: list, meta: dict, group_by
     return rows, out_meta
 
 
+def _emit_raw(client, spec: ReadCommand, path: str, params: dict, output: str | None) -> None:
+    """Write the server's body as sent; on 403 answer with the records instead."""
+    try:
+        body, content_type = fetch_text(client, path, params)
+    except ERClientPermissionDenied as e:
+        plan = spec.fallback
+        mapped = dict(plan["add"]) if plan else None
+        if plan:
+            for name, value in params.items():
+                if name in plan["drop"]:
+                    continue
+                if name not in plan["keep"]:
+                    mapped = None
+                    break
+                mapped[plan["keep"][name]] = value
+        if mapped is None:
+            raise
+        click.echo(
+            f"note: this account may not export ({e}); returning the matching records as "
+            f"JSON from GET /api/v1.0/{plan['path']} instead.",
+            err=True,
+        )
+        records, meta = fetch(client, plan["path"], mapped, paginate=True)
+        emit(records, meta, output)
+        return
+    if output:
+        target = Path(output)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(body)
+        rows = max(body.count("\n") - 1, 0) if body.strip() else 0
+        click.echo(
+            f"Done. {rows} data row(s) written to {output} ({content_type or 'text/csv'}).",
+            err=True,
+        )
+    else:
+        click.echo(body, nl=False)
+
+
 def _make_command(spec: ReadCommand, deps: Deps) -> click.Command:
     def callback(ctx, output, fields=None, fmt="json", limit=None, **kwargs):
         fields = parse_fields(fields)
@@ -517,6 +645,9 @@ def _make_command(spec: ReadCommand, deps: Deps) -> click.Command:
             _windows.apply_window(spec.window, params, since, until)
         if spec.resolve is not None:
             params = spec.resolve(client, params)
+        if spec.kind == "raw":
+            _emit_raw(client, spec, path, params, output)
+            return
         if count_only:
             n = fetch_count(client, path, params, version=spec.version, unwrap=spec.unwrap)
             if n is None:
@@ -582,9 +713,13 @@ def _make_command(spec: ReadCommand, deps: Deps) -> click.Command:
             "--limit", type=click.IntRange(min=1), metavar="N", help="Cap total records returned."
         )(fn)
     fn = click.option(
-        "-o", "--output", type=click.Path(dir_okay=False), help="Write JSON here instead of stdout."
+        "-o",
+        "--output",
+        type=click.Path(dir_okay=False),
+        help="Write the output here instead of stdout.",
     )(fn)
-    fn = output_options(fn)
+    if spec.kind != "raw":
+        fn = output_options(fn)
     if spec.arg:
         fn = click.argument(spec.arg)(fn)
     fn = deps.connection_options(fn)
