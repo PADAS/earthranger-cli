@@ -129,29 +129,37 @@ def resolve_window(
     return since, until, meta
 
 
+def load_filter(params: dict) -> dict:
+    """The `filter` query param as a dict (empty when absent); a usage error
+    when it is not a JSON object, since other flags merge keys into it."""
+    raw = params.get("filter")
+    try:
+        current = json.loads(raw) if raw else {}
+    except json.JSONDecodeError as e:
+        raise click.UsageError(f"--filter is not valid JSON ({e}).") from None
+    if not isinstance(current, dict):
+        raise click.UsageError("--filter must be a JSON object.")
+    return current
+
+
+def merge_filter(params: dict, **fields) -> None:
+    """Set keys inside the `filter` JSON object, keeping whatever else it holds."""
+    current = load_filter(params)
+    current.update(fields)
+    params["filter"] = json.dumps(current, separators=(",", ":"))
+
+
 def apply_window(kind: str, params: dict, since, until) -> None:
     """Write the bounds into the request the way this endpoint spells them."""
     if since is None and until is None:
         return
     if kind == "filter":
-        raw = params.get("filter")
-        try:
-            current = json.loads(raw) if raw else {}
-        except json.JSONDecodeError as e:
-            raise click.UsageError(
-                f"--filter is not valid JSON ({e}); --since/--until merge into it."
-            ) from None
-        if not isinstance(current, dict):
-            raise click.UsageError(
-                "--filter must be a JSON object for --since/--until to merge into."
-            )
-        window = dict(current.get("date_range") or {})
+        window = dict(load_filter(params).get("date_range") or {})
         if since is not None:
             window["lower"] = since
         if until is not None:
             window["upper"] = until
-        current["date_range"] = window
-        params["filter"] = json.dumps(current, separators=(",", ":"))
+        merge_filter(params, date_range=window)
         return
     lower, upper = ("since", "until") if kind == "since_until" else ("after_date", "before_date")
     if since is not None:
