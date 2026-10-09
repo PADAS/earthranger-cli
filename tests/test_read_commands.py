@@ -815,3 +815,32 @@ def test_export_403_with_an_untranslatable_flag_stays_a_403(fake):
     assert result.exit_code == 1
     assert "no export permission" in result.output
     assert _gets(fake) == []
+
+
+def test_where_filters_details_client_side_and_counts_the_matches(fake):
+    fake.responses["activity/events"] = {
+        "count": 3,
+        "next": None,
+        "results": [
+            {"id": "e1", "event_type": "carcass", "event_details": {"species": "buffalo"}},
+            {"id": "e2", "event_type": "carcass", "event_details": {"species": "lion"}},
+            {"id": "e3", "event_type": "elephant_carcass", "event_details": {}},
+        ],
+    }
+    result = _run(["events", "search", "--where", "species=Buffalo"])
+    assert result.exit_code == 0, result.output
+    assert _gets(fake)[0][2]["include_details"] == "true"
+    doc = json.loads(result.output)
+    assert [r["id"] for r in doc["records"]] == ["e1"]
+    assert doc["meta"]["total"] == 1 and doc["meta"]["fetched"] == 3
+    assert doc["meta"]["where"] == {"species": "Buffalo"}
+    assert "1 of 3 event(s) matched" in doc["meta"]["note"]
+
+    doc = json.loads(
+        _run(["events", "search", "--where", "species=buffalo", "--count-only"]).output
+    )
+    assert doc["records"] == [{"count": 1}]
+    assert _gets(fake)[1][2]["page_size"] == 100  # walked, not the one-record count
+
+    result = _run(["events", "search", "--where", "species"])
+    assert result.exit_code == 2 and "KEY=VALUE" in result.output

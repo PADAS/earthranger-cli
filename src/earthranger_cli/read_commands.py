@@ -34,7 +34,8 @@ from .read import fetch, fetch_count, fetch_text, follow_pages
 class Flag:
     param: str  # ER query parameter name, e.g. "updated_since"
     help: str
-    kind: str = "str"  # "str" | "int" | "float" | "bool" | "list" | "positive_int"
+    kind: str = "str"  # "str" | "int" | "float" | "bool" | "list" | "positive_int" | "multi"
+    # "multi": a repeatable option handled by the CLI itself, never sent as a query param
     # "list": a comma-separated value split into repeated query parameters
     # (?state=a&state=b), which is how DRF's getlist() expects multi-values;
     # a single "a,b" string would be matched literally and return nothing.
@@ -341,6 +342,13 @@ COMMANDS: tuple[ReadCommand, ...] = (
             Flag("include_related_events", "Include related events.", "bool"),
             Flag("is_collection", "Only incident collections.", "bool"),
             Flag("exclude_contained", "Exclude events contained in a collection.", "bool"),
+            Flag(
+                "where",
+                "Keep events whose event_details say KEY is VALUE (repeatable), e.g. "
+                "--where species=buffalo. Applied by the CLI after fetching; with "
+                "--count-only or --group-by the CLI counts the matches.",
+                "multi",
+            ),
             _PAGE_SIZE,
         ),
         resolve=_resolve_event_types,
@@ -623,6 +631,8 @@ def _make_command(spec: ReadCommand, deps: Deps) -> click.Command:
         params: dict = {}
         for flag in spec.flags:
             value = kwargs.get(flag.param)
+            if flag.kind == "multi":
+                continue  # the CLI's own, not a query param
             if flag.kind == "bool":
                 if value:
                     params[flag.param] = "true"
@@ -631,6 +641,9 @@ def _make_command(spec: ReadCommand, deps: Deps) -> click.Command:
                     params[flag.param] = [v.strip() for v in value.split(",") if v.strip()]
             elif value is not None:
                 params[flag.param] = value
+        where = aggregate.parse_where(kwargs.get("where")) if "where" in kwargs else []
+        if where:
+            params["include_details"] = "true"  # the filter reads event_details
         if spec.prepare is not None:
             params = spec.prepare(params)
         client = deps.connect(ctx)
@@ -648,7 +661,7 @@ def _make_command(spec: ReadCommand, deps: Deps) -> click.Command:
         if spec.kind == "raw":
             _emit_raw(client, spec, path, params, output)
             return
-        if count_only:
+        if count_only and not where:
             n = fetch_count(client, path, params, version=spec.version, unwrap=spec.unwrap)
             if n is None:
                 # a bare list or an envelope with no count: walk it and say how far we got
@@ -676,7 +689,18 @@ def _make_command(spec: ReadCommand, deps: Deps) -> click.Command:
                 version=spec.version,
                 unwrap=spec.unwrap,
             )
-            if group_by:
+            if where:
+                records, note = aggregate.filter_details(records, where)
+                meta["fetched"] = meta["total"]
+                meta["total"] = len(records)
+                meta["where"] = dict(where)
+                meta["note"] = f"{meta['note']} {note}" if meta.get("note") else note
+            if count_only:
+                # --where made the server count meaningless: count what matched
+                n = len(records)
+                records = [{"count": n}]
+                meta = {**meta, "total": 1, "count_reported": n, "exact": not meta.get("truncated")}
+            elif group_by:
                 records, meta = _grouped(ctx, client, spec, records, meta, group_by, window_meta)
         if window_meta:
             meta["window"] = window_meta
@@ -691,6 +715,10 @@ def _make_command(spec: ReadCommand, deps: Deps) -> click.Command:
     for flag in reversed(spec.flags):
         if flag.kind == "bool":
             fn = click.option(*_option_names(flag.param), is_flag=True, help=flag.help)(fn)
+        elif flag.kind == "multi":
+            fn = click.option(
+                *_option_names(flag.param), multiple=True, metavar="KEY=VALUE", help=flag.help
+            )(fn)
         else:
             fn = click.option(
                 *_option_names(flag.param), type=_TYPES.get(flag.kind, str), help=flag.help

@@ -1,5 +1,8 @@
 from zoneinfo import ZoneInfo
 
+import click
+import pytest
+
 from earthranger_cli import aggregate
 
 
@@ -62,3 +65,37 @@ def test_group_by_period_uses_dotted_time_field():
             "count": 1,
         }
     ]
+
+
+def test_parse_where_and_details_match():
+    assert aggregate.parse_where(("species=Buffalo", " cause = poached ")) == [
+        ("species", "Buffalo"),
+        ("cause", "poached"),
+    ]
+    with pytest.raises(click.UsageError, match="KEY=VALUE"):
+        aggregate.parse_where(("species",))
+    rec = {
+        "event_details": {
+            "species": "buffalo",
+            "tags": ["a", "B"],
+            "who": {"name": "Ann", "value": "ann"},
+        }
+    }
+    assert aggregate.details_match(rec, "species", "BUFFALO") is True
+    assert aggregate.details_match(rec, "tags", "b") is True
+    assert aggregate.details_match(rec, "who", "ann") is True
+    assert aggregate.details_match(rec, "species", "lion") is False
+    assert aggregate.details_match(rec, "cause", "x") is None
+    assert aggregate.details_match({"event_details": None}, "species", "x") is None
+
+
+def test_filter_details_keeps_matches_and_names_silent_types():
+    recs = [
+        {"event_type": "carcass", "event_details": {"species": "buffalo"}},
+        {"event_type": "carcass", "event_details": {"species": "lion"}},
+        {"event_type": "elephant_carcass", "event_details": {}},
+    ]
+    kept, note = aggregate.filter_details(recs, [("species", "buffalo")])
+    assert [r["event_details"]["species"] for r in kept] == ["buffalo"]
+    assert "1 of 3 event(s) matched" in note
+    assert "1 event(s) have no 'species' detail" in note and "elephant_carcass (1)" in note

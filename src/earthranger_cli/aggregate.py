@@ -7,6 +7,8 @@ caller counting; a caller adding up a table is where sums go wrong.
 
 from __future__ import annotations
 
+import click
+
 from . import clock
 from .output import cell, pluck
 
@@ -62,3 +64,72 @@ def group_by_period(
                 row["count"] += 1
                 break
     return rows
+
+
+def parse_where(items) -> list[tuple[str, str]]:
+    """`--where species=buffalo` -> [("species", "buffalo")]; malformed is a usage error."""
+    pairs = []
+    for item in items or ():
+        key, sep, value = str(item).partition("=")
+        if not sep or not key.strip() or not value.strip():
+            raise click.UsageError(
+                f"--where takes KEY=VALUE, e.g. --where species=buffalo; got {item!r}."
+            )
+        pairs.append((key.strip(), value.strip()))
+    return pairs
+
+
+def _matches(value, wanted: str) -> bool:
+    if isinstance(value, dict):
+        return any(_matches(value.get(k), wanted) for k in ("name", "value", "display"))
+    if isinstance(value, list):
+        return any(_matches(v, wanted) for v in value)
+    if value is None:
+        return False
+    return str(value).casefold() == wanted.casefold()
+
+
+def details_match(record: dict, key: str, value: str) -> bool | None:
+    """Case-insensitive match against event_details[key]; a choice dict matches
+    on its name, value or display; a list matches if any element does. None
+    when the record carries no such detail at all."""
+    details = record.get("event_details") if isinstance(record, dict) else None
+    if not isinstance(details, dict) or key not in details:
+        return None
+    return _matches(details[key], value)
+
+
+def filter_details(records: list, where: list[tuple[str, str]]) -> tuple[list, str]:
+    """Records whose event_details match every KEY=VALUE, and a note that names
+    the event types carrying no such detail at all (a type can say "elephant"
+    in its name instead of in a species field; those cannot match and should
+    be counted by type, not as none)."""
+    kept = []
+    silent: dict[str, dict[str, int]] = {k: {} for k, _ in where}
+    for r in records:
+        ok = True
+        for key, value in where:
+            m = details_match(r, key, value)
+            if m is None:
+                t = str(r.get("event_type") or "?") if isinstance(r, dict) else "?"
+                silent[key][t] = silent[key].get(t, 0) + 1
+            if not m:
+                ok = False
+        if ok:
+            kept.append(r)
+    spec = ", ".join(f"{k}={v}" for k, v in where)
+    parts = [
+        (
+            f"--where {spec} was applied here, to event_details: "
+            f"{len(kept)} of {len(records)} event(s) matched."
+        )
+    ]
+    for key, types in silent.items():
+        if types:
+            top = sorted(types.items(), key=lambda kv: -kv[1])[:6]
+            named = ", ".join(f"{t} ({n})" for t, n in top)
+            parts.append(
+                f"{sum(types.values())} event(s) have no {key!r} detail at all ({named}); "
+                "they cannot match it, so count those by event type instead."
+            )
+    return kept, " ".join(parts)
