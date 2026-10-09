@@ -53,7 +53,7 @@ scope; *writing* them is still out.
 |---|---|---|
 | Purpose | Author categories / types / choices via YAML DSL (`apply`, `pull`); post events | Agent-facing wrapper over ER read endpoints; deterministic JSON output |
 | Command tree | Hand-written click commands | Generated: `resources.py` registry maps `<resource> <action>` → OpenAPI `operationId`; flags derived at runtime from the bundled 14k-line `openapi.yaml` (one `--flag` per query param, one positional per path param) |
-| Auth | Username/password → OAuth session cached per profile, auto-refresh, file locking, `ER_PROFILE` + zsh wrapper | Bearer token only: `--token` / `ER_TOKEN` / profile in `~/.earthranger/config.json` with `default_profile`; no refresh |
+| Auth | Username/password → OAuth session cached per profile, auto-refresh, file locking, persisted default profile (`er profile use`), overridable per command/shell by `--profile` / `ER_PROFILE` (zsh wrapper retired in #33) | Bearer token only: `--token` / `ER_TOKEN` / profile in `~/.earthranger/config.json` with `default_profile`; no refresh |
 | Server | Site name shorthand (`myreserve` → `https://myreserve.pamdas.org`) or URL | Full URL (adds `https://` if missing) |
 | Output | Human text (aligned columns); JSON only on `show event-type` | Always `{"records": [...], "meta": {total, pages, count_reported?}}`; `-o/--output PATH` writes file + one-line stderr summary; stdout otherwise |
 | Pagination | Only for choices (`_collect_pages`) | Every `list` command follows `next`; `--limit N` caps; `page_size=100` default |
