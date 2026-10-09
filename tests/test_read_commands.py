@@ -899,3 +899,55 @@ def test_subject_group_name_is_resolved_to_an_id(fake):
     fake.calls.clear()
     _run(["subjects", "search", "--subject-group", "0b1a7c2e-1111-4222-8333-444455556666"])
     assert _gets(fake)[0][1] == "subjects"  # a UUID needs no lookup
+
+
+def test_count_only_with_limit_is_not_exact_when_the_limit_bites(fake):
+    fake.responses["regions"] = [{"id": f"r{i}"} for i in range(5)]
+    doc = json.loads(_run(["regions", "list", "--count-only", "--limit", "2"]).output)
+    assert doc["records"] == [{"count": 2}] and doc["meta"]["exact"] is False
+    doc = json.loads(_run(["regions", "list", "--count-only", "--limit", "9"]).output)
+    assert doc["records"] == [{"count": 5}] and doc["meta"]["exact"] is True
+    fake.responses["activity/events"] = {
+        "count": 3,
+        "next": None,
+        "results": [{"id": str(i), "event_details": {"species": "buffalo"}} for i in range(3)],
+    }
+    doc = json.loads(
+        _run(
+            ["events", "search", "--where", "species=buffalo", "--count-only", "--limit", "2"]
+        ).output
+    )
+    assert doc["records"] == [{"count": 2}] and doc["meta"]["exact"] is False
+
+
+def test_observations_export_fallback_needs_a_selector(fake):
+    from erclient.er_errors import ERClientPermissionDenied
+
+    def denied(path, **kwargs):
+        raise ERClientPermissionDenied("no export permission")
+
+    fake.responses["trackingdata/export"] = denied
+    # without a subject the records fallback would walk every observation on the site
+    result = _run(["observations", "export", "--since", "2026-10-01", "--until", "2026-10-02"])
+    assert result.exit_code == 1 and "no export permission" in result.output
+    assert _gets(fake) == []
+    fake.responses["observations"] = {"count": 0, "next": None, "results": []}
+    result = _run(["observations", "export", "--subject-id", "s1", "--since", "2026-10-01"])
+    assert result.exit_code == 0, result.output
+    assert _gets(fake)[0][2]["subject_id"] == "s1"
+
+
+def test_export_fallback_document_carries_a_note_and_the_window(fake, tmp_path):
+    from erclient.er_errors import ERClientPermissionDenied
+
+    def denied(path, **kwargs):
+        raise ERClientPermissionDenied("no export permission")
+
+    fake.responses["activity/events/export"] = denied
+    fake.responses["activity/events"] = {"count": 0, "next": None, "results": []}
+    target = tmp_path / "events.csv"
+    result = _run(["events", "export", "--today", "-o", str(target)])
+    assert result.exit_code == 0, result.output
+    meta = json.loads(target.read_text())["meta"]
+    assert "may not export" in meta["note"]
+    assert meta["window"]["mode"] == "today" and meta["site_tz"] == "Africa/Nairobi"

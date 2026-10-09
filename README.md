@@ -307,7 +307,7 @@ er subjects search --limit 500 -o /tmp/subjects.json
 er events search --today --fields id,time,event_type --format tsv -o /tmp/today.tsv
 
 # How many active patrols — one request, no records
-er patrols search --state active --count-only
+er patrols search --state open --count-only
 
 # Carcasses per month this quarter, whatever the type is called on this site
 er events search --event-type '*carcass*' --since 2026-07-01 --until 2026-09-30 --group-by month

@@ -106,3 +106,13 @@ def test_parse_ts_accepts_z_offset_and_naive():
     assert clock.parse_ts("2026-10-09T12:00:00+03:00").hour == 12
     assert clock.parse_ts("2026-10-09T09:00:00").tzinfo == UTC
     assert clock.parse_ts(None) is None and clock.parse_ts("garbage") is None
+
+
+def test_bucket_window_reads_naive_bounds_in_site_time():
+    # review finding: a bare --until (naive, end of day) read as UTC spilled into
+    # a phantom next month on a +03:00 site
+    tz = ZoneInfo("Africa/Nairobi")
+    months = clock.bucket_window("2026-07-01", "2026-09-30T23:59:59.999999", "month", tz)
+    assert [b[0] for b in months] == ["2026-07", "2026-08", "2026-09"]
+    days = clock.bucket_window("2026-10-08", "2026-10-08T23:59:59.999999", "day", tz)
+    assert [b[0] for b in days] == ["2026-10-08"]

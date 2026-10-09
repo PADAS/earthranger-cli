@@ -535,8 +535,8 @@ def show_event_type(ctx, value, json_, output, fields, fmt):
     if et is None:
         click.echo(f"error: no event type with value {value!r}")
         sys.exit(1)
-    fields = extract_choice_fields(normalize_v2_schema(et.get("schema") or {}))
-    choices = {f: er.get_choices(client, f) for f in fields}
+    choice_fields = extract_choice_fields(normalize_v2_schema(et.get("schema") or {}))
+    choices = {f: er.get_choices(client, f) for f in choice_fields}
     doc = {"event_type": et, "choices": choices}
     if json_ or output:
         fields = parse_fields(fields)

@@ -76,8 +76,9 @@ class ReadCommand:
     # For "raw" exports: how to answer with the records endpoint instead when
     # the account may not export (403). {"path", "keep": {export_param:
     # records_param}, "drop": {params that mean nothing there}, "add": {...}}.
-    # A sent param in neither keep nor drop means the fallback cannot carry the
-    # question, and the 403 stands rather than widening it.
+    # A sent param in neither keep nor drop, or a missing "require"d one, means
+    # the fallback cannot carry the question, and the 403 stands rather than
+    # widening it.
     fallback: dict | None = None
 
 
@@ -382,6 +383,9 @@ COMMANDS: tuple[ReadCommand, ...] = (
             "keep": {"after_date": "since", "before_date": "until", "subject_id": "subject_id"},
             "drop": set(),
             "add": {"include_details": "true"},
+            # without a selector the records endpoint is every observation on
+            # the site (what `observations search` refuses); the 403 stands
+            "require": {"subject_id"},
         },
     ),
     ReadCommand(
@@ -642,7 +646,9 @@ def _grouped(ctx, client, spec: ReadCommand, records: list, meta: dict, group_by
     return rows, out_meta
 
 
-def _emit_raw(client, spec: ReadCommand, path: str, params: dict, output: str | None) -> None:
+def _emit_raw(
+    client, spec: ReadCommand, path: str, params: dict, output: str | None, extra_meta: dict
+) -> None:
     """Write the server's body as sent; on 403 answer with the records instead."""
     try:
         body, content_type = fetch_text(client, path, params)
@@ -657,14 +663,18 @@ def _emit_raw(client, spec: ReadCommand, path: str, params: dict, output: str | 
                     mapped = None
                     break
                 mapped[plan["keep"][name]] = value
+            if mapped is not None and not plan.get("require", set()) <= set(mapped):
+                mapped = None
         if mapped is None:
             raise
-        click.echo(
-            f"note: this account may not export ({e}); returning the matching records as "
-            f"JSON from GET /api/v1.0/{plan['path']} instead.",
-            err=True,
+        note = (
+            f"this account may not export ({e}); these are the matching records as JSON "
+            f"from GET /api/v1.0/{plan['path']} instead of the CSV."
         )
+        click.echo(f"note: {note}", err=True)
         records, meta = fetch(client, plan["path"], mapped, paginate=True)
+        meta["note"] = f"{meta['note']} {note}" if meta.get("note") else note
+        meta.update(extra_meta)
         emit(records, meta, output)
         return
     if output:
@@ -726,7 +736,10 @@ def _make_command(spec: ReadCommand, deps: Deps) -> click.Command:
         if spec.resolve is not None:
             params = spec.resolve(client, params)
         if spec.kind == "raw":
-            _emit_raw(client, spec, path, params, output)
+            extra = {"window": window_meta} if window_meta else {}
+            if ctx.obj.get("clock"):
+                extra.update(_clock.clock_meta(ctx.obj["clock"]))
+            _emit_raw(client, spec, path, params, output, extra)
             return
         if count_only and not where:
             n = fetch_count(client, path, params, version=spec.version, unwrap=spec.unwrap)
@@ -741,7 +754,9 @@ def _make_command(spec: ReadCommand, deps: Deps) -> click.Command:
                     version=spec.version,
                     unwrap=spec.unwrap,
                 )
-                n, pages, exact = walked["total"], walked["pages"], not walked.get("truncated")
+                n, pages = walked["total"], walked["pages"]
+                # a walk cut short by --limit is a floor too, not just a truncated one
+                exact = not walked.get("truncated") and (limit is None or n < limit)
             else:
                 pages, exact = 1, True
             records = [{"count": n}]
@@ -766,7 +781,8 @@ def _make_command(spec: ReadCommand, deps: Deps) -> click.Command:
                 # --where made the server count meaningless: count what matched
                 n = len(records)
                 records = [{"count": n}]
-                meta = {**meta, "total": 1, "count_reported": n, "exact": not meta.get("truncated")}
+                exact = not meta.get("truncated") and (limit is None or meta["fetched"] < limit)
+                meta = {**meta, "total": 1, "count_reported": n, "exact": exact}
             elif group_by:
                 records, meta = _grouped(ctx, client, spec, records, meta, group_by, window_meta)
         if window_meta:

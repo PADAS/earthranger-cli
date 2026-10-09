@@ -59,6 +59,19 @@ def parse_ts(value) -> datetime | None:
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
 
 
+def _parse_in(value, tz) -> datetime | None:
+    """Like parse_ts, but a naive timestamp is read in `tz`: that is how das
+    reads a bare --since/--until (its TIME_ZONE is the site's), so the CLI's
+    buckets must end where the server's window does, not at UTC midnight."""
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.strip())
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=tz)
+
+
 def _iso(dt: datetime) -> str:
     return dt.isoformat(timespec="seconds")
 
@@ -130,7 +143,7 @@ def bucket_window(since: str, until: str, period: str, tz) -> list[tuple[str, st
     months YYYY-MM."""
     if period not in PERIODS:
         raise ValueError(f"period must be one of {', '.join(PERIODS)}, not {period!r}")
-    lo, hi = parse_ts(since), parse_ts(until)
+    lo, hi = _parse_in(since, tz), _parse_in(until, tz)
     if lo is None or hi is None:
         raise ValueError("--since/--until must be ISO-8601 timestamps to bucket by period")
     cur = lo.astimezone(tz).replace(hour=0, minute=0, second=0, microsecond=0)
