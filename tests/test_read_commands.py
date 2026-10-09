@@ -431,7 +431,7 @@ def test_observations_rejects_unparseable_until_before_requesting(fake):
         (
             "2026-01-02T00:00:00",
             "2025-12-31T21:00:00Z",
-        ),  # naive = site day (+03:00),  # naive: treated as UTC
+        ),  # naive = the site's day (+03:00)
     ],
 )
 def test_observations_default_since_converts_until_offset_to_utc(fake, until, expected_since):
@@ -916,10 +916,9 @@ def test_subject_group_name_is_resolved_to_an_id(fake):
 
 
 def test_count_only_with_limit_is_not_exact_when_the_limit_bites(fake):
+    # --count-only counts the whole query; --limit only bounds a --where fetch
     fake.responses["regions"] = [{"id": f"r{i}"} for i in range(5)]
     doc = json.loads(_run(["regions", "list", "--count-only", "--limit", "2"]).output)
-    assert doc["records"] == [{"count": 2}] and doc["meta"]["exact"] is False
-    doc = json.loads(_run(["regions", "list", "--count-only", "--limit", "9"]).output)
     assert doc["records"] == [{"count": 5}] and doc["meta"]["exact"] is True
     fake.responses["activity/events"] = {
         "count": 3,
@@ -1254,11 +1253,13 @@ def test_malformed_filter_is_a_usage_error_before_connecting(fake, monkeypatch):
     assert result.exit_code == 2 and "--filter must be a JSON object" in result.output
 
 
-def test_count_only_floor_is_noted_in_table_mode(fake):
-    fake.responses["regions"] = [{"id": f"r{i}"} for i in range(5)]
-    result = _run(
-        ["regions", "list", "--count-only", "--limit", "2", "--fields", "count", "--format", "tsv"]
-    )
+def test_count_only_floor_is_noted_in_table_mode(fake, monkeypatch):
+    from earthranger_cli import read
+
+    monkeypatch.setattr(read, "MAX_PAGES", 1)  # a truncated walk is the only floor now
+    fake.responses["regions"] = {"next": "p2", "results": [{"id": "r1"}, {"id": "r2"}]}
+    fake.responses["p2"] = {"next": None, "results": [{"id": "r3"}]}
+    result = _run(["regions", "list", "--count-only", "--fields", "count", "--format", "tsv"])
     assert result.stdout == "count\n2\n"
     assert "floor" in result.stderr
 
@@ -1418,5 +1419,68 @@ def test_export_writes_the_body_without_newline_translation(fake, tmp_path, monk
     )
     result = _run(["events", "export", "-o", str(tmp_path / "e.csv")])
     assert result.exit_code == 0, result.output
-    assert seen["newline"] == ""  # the server's CRLF reaches the disk untouched on every OS
+    assert "newline" not in seen  # written as bytes: no text-mode translation on any OS
     assert (tmp_path / "e.csv").read_bytes() == b"id\r\ne1\r\n"
+
+
+def test_export_file_holds_the_bytes_the_server_sent(fake, tmp_path):
+    from conftest import FakeResponse
+
+    latin = "id,who\ne1,José\n".encode("latin-1")
+
+    class _Latin(FakeResponse):
+        @property
+        def content(self):
+            return latin
+
+        @property
+        def text(self):
+            return latin.decode("latin-1")
+
+    fake.responses["activity/events/export"] = _Latin(
+        None, content_type="text/csv; charset=iso-8859-1"
+    )
+    target = tmp_path / "e.csv"
+    result = _run(["events", "export", "-o", str(target)])
+    assert result.exit_code == 0, result.output
+    assert target.read_bytes() == latin  # not re-encoded as UTF-8
+
+
+def test_subject_group_lookup_walks_past_the_page_cap(fake, monkeypatch):
+    from earthranger_cli import read
+
+    monkeypatch.setattr(read, "MAX_PAGES", 1)
+    fake.responses["subjectgroups"] = {
+        "count": 2,
+        "next": "g2",
+        "results": [{"id": "g1", "name": "Rangers"}],
+    }
+    fake.responses["g2"] = {
+        "count": 2,
+        "next": None,
+        "results": [{"id": "g2", "name": "Elephants"}],
+    }
+    fake.responses["subjects"] = {"count": 0, "next": None, "results": []}
+    result = _run(["subjects", "search", "--subject-group", "elephants"])
+    assert result.exit_code == 0, result.output
+    assert _gets(fake)[-1][2]["subject_group"] == "g2"
+
+
+def test_exact_when_the_walk_ends_exactly_at_the_limit(fake):
+    fake.responses["activity/events"] = {
+        "count": 3,
+        "next": None,
+        "results": [{"priority": 1}, {"priority": 1}, {"priority": 2}],
+    }
+    doc = json.loads(_run(["events", "search", "--group-by", "priority", "--limit", "3"]).stdout)
+    assert doc["meta"]["exact"] is True  # the server says there are exactly three
+    assert "note" not in doc["meta"]
+
+
+def test_count_only_ignores_limit_on_every_endpoint(fake):
+    fake.responses["activity/events"] = {"count": 100, "next": "x", "results": [{"id": "e1"}]}
+    doc = json.loads(_run(["events", "search", "--count-only", "--limit", "2"]).stdout)
+    assert doc["records"] == [{"count": 100}] and doc["meta"]["exact"] is True
+    fake.responses["regions"] = [{"id": f"r{i}"} for i in range(5)]
+    doc = json.loads(_run(["regions", "list", "--count-only", "--limit", "2"]).stdout)
+    assert doc["records"] == [{"count": 5}] and doc["meta"]["exact"] is True

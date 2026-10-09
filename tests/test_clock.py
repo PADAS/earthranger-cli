@@ -215,3 +215,10 @@ def test_fetch_clock_retries_a_dropped_body_like_every_other_read(monkeypatch):
     fake._get = flaky
     assert clock.fetch_clock(fake)["utc"] == "2026-10-09T09:00:00Z"
     assert calls["n"] == 2
+
+
+def test_site_tz_rejects_impossible_offsets():
+    # a malformed /status value must be "no usable timezone", never a traceback
+    assert clock.site_tz({"timezone": "+99"}) is None
+    assert clock.site_tz({"timezone": "+1260"}) is None
+    assert clock.site_tz({"timezone": "+0545"}) is not None

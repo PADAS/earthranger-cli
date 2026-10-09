@@ -42,7 +42,10 @@ def site_tz(info: dict):
         return UTC
     m = _OFFSET_RE.match(raw)
     if m:
-        delta = timedelta(hours=int(m.group(2)), minutes=int(m.group(3) or 0))
+        hours, minutes = int(m.group(2)), int(m.group(3) or 0)
+        if hours > 23 or minutes > 59:
+            return None  # a malformed server value, not a traceback
+        delta = timedelta(hours=hours, minutes=minutes)
         return timezone(-delta if m.group(1) == "-" else delta)
     return None
 

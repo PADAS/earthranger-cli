@@ -201,8 +201,9 @@ def fetch_count(
     return None
 
 
-def fetch_text(client, path: str, params: dict | None = None) -> tuple[str, str]:
-    """GET a non-JSON body (the CSV exports). Returns (text, content_type).
+def fetch_text(client, path: str, params: dict | None = None) -> tuple[str, str, bytes]:
+    """GET a non-JSON body (the CSV exports). Returns (text, content_type, raw):
+    the text for stdout and counting, the raw bytes for a file written as sent.
     erclient's `return_response=True` hands back the raw response on 2xx and
     still raises its typed errors on 401/403/404; get_json adds the same
     bounded body-read retry every JSON read gets."""
@@ -216,4 +217,4 @@ def fetch_text(client, path: str, params: dict | None = None) -> tuple[str, str]
         body = response.content.decode(encoding)
     except (LookupError, UnicodeDecodeError):
         body = response.content.decode("utf-8", errors="replace")
-    return body, content_type
+    return body, content_type, response.content

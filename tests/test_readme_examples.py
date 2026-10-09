@@ -45,7 +45,7 @@ def parse(args: list[str]) -> None:
     """
     ctx = main.make_context("er", list(args), resilient_parsing=True)
     cmd: click.Command = main
-    known = _opts(main)
+    known = _opts(main) | {"--help"}  # click adds --help to every command without a param
     while isinstance(cmd, click.Group):
         # click >= 8.2 keeps the first positional (the subcommand name) in a
         # private slot rather than ctx.args; older click exposes protected_args
@@ -54,7 +54,7 @@ def parse(args: list[str]) -> None:
             protected = getattr(ctx, "protected_args", [])
         rest = list(protected) + list(ctx.args)
         if not rest:
-            return  # `er --help`-style: a group with nothing after it
+            break  # `er --help`-style: a group with nothing after it; still check options
         name, sub, rest = cmd.resolve_command(ctx, rest)
         if sub is None:
             raise AssertionError(f"no such command {rest[0] if rest else name!r}")
@@ -87,3 +87,10 @@ def test_parse_accepts_a_good_example():
 def test_readme_example_parses(line):
     args = shlex.split(line, comments=True)[1:]  # drop the leading `er`
     parse(args)
+
+
+def test_parse_rejects_unknown_options_on_group_only_examples():
+    with pytest.raises(click.NoSuchOption):
+        parse(["--bogus"])
+    with pytest.raises(click.NoSuchOption):
+        parse(["events", "--bogus"])

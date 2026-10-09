@@ -331,8 +331,9 @@ surface; none touches the DSL or writes.
       events, patrols, observations, tracks (and both exports); `er now`.
       (2026-10-09) **Decided during implementation:** the extra GET /status
       is made only when one of those flags, a period `--group-by`, `er
-      now`, or a bare `--since`/`--until` date on observations, tracks or an
-      export (which must be sent with the site's offset), or mixed naive
+      now`, or a bare `--since`/`--until` date on observations, tracks or the
+      observations export (which must be sent with the site's offset; the
+      events export's filter dates are read in site time by das), or mixed naive
       and offset-bearing bounds (to validate their ordering) needs it — every
       other read never pays for it — and `server_utc`, `site_now`,
       `site_tz` appear in `meta` only on those commands. Otus adds them to

@@ -238,13 +238,19 @@ def _resolve_subject_group(client, params: dict) -> dict:
     wanted = params.get("subject_group")
     if not wanted or _UUID_RE.match(wanted):
         return params
-    groups, _ = fetch(
+    groups, meta = fetch(
         client,
         "subjectgroups",
         # names and ids only: the default renders every subject's last position
         {"flat": "true", "include_inactive": "true", "render_last_location": "false"},
         paginate=True,
+        max_pages=None,  # resolution must see every group; only a loop is refused
     )
+    if meta.get("truncated"):
+        raise ERClientException(
+            "the server's subject-group listing did not end: its `next` link repeated; "
+            "refusing to resolve a name against a partial list."
+        )
     hits = [
         g
         for g in groups
@@ -612,8 +618,15 @@ def get_clock(ctx, client) -> dict:
 
 def _walk_exact(meta: dict, limit: int | None, fetched: int) -> bool:
     """Whether a paginated walk saw the whole query: neither truncated by the
-    page cap or a repeated link, nor cut short by --limit."""
-    return not meta.get("truncated") and (limit is None or fetched < limit)
+    page cap or a repeated link, nor cut short by --limit. A walk that ends
+    exactly at --limit is still exact when the server's own count says there
+    was nothing more."""
+    if meta.get("truncated"):
+        return False
+    if limit is None or fetched < limit:
+        return True
+    reported = meta.get("count_reported", meta.get("server_count"))
+    return reported is not None and fetched >= reported
 
 
 def _option_names(param: str) -> list[str]:
@@ -717,7 +730,7 @@ def _emit_raw(
 ) -> None:
     """Write the server's body as sent; on 403 answer with the records instead."""
     try:
-        body, content_type = fetch_text(client, path, params)
+        body, content_type, raw = fetch_text(client, path, params)
     except ERClientPermissionDenied as e:
         plan = spec.fallback
         mapped = dict(plan["add"]) if plan else None
@@ -763,7 +776,7 @@ def _emit_raw(
     if output:
         target = Path(output)
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(body, encoding="utf-8", newline="")  # the server's CRLF as sent
+        target.write_bytes(raw)  # exactly what the server sent: its charset, its CRLF
         rows = _csv_row_count(body)
         kind = content_type or "text/csv"
         if rows is None:
@@ -856,8 +869,10 @@ def _apply_window(ctx, client, spec: ReadCommand, win, params: dict) -> dict | N
     return window_meta
 
 
-def _count_only(client, spec: ReadCommand, path: str, params: dict, limit: int | None):
-    """One count request where the server will say; a walk reported honestly where not."""
+def _count_only(client, spec: ReadCommand, path: str, params: dict):
+    """One count request where the server will say; a walk reported honestly
+    where not. --limit never applies: a count is the size of the query on
+    every endpoint, so the walk is bounded only by the page cap."""
     n = None if spec.unwrap else fetch_count(client, path, params, version=spec.version)
     if n is not None:
         return [{"count": n}], {"total": 1, "pages": 1, "count_reported": n, "exact": True}
@@ -866,18 +881,14 @@ def _count_only(client, spec: ReadCommand, path: str, params: dict, limit: int |
         path,
         params,
         paginate=True,
-        limit=limit,
         version=spec.version,
         unwrap=spec.unwrap,
         max_pages=spec.max_pages or DEFAULT_CAP,
     )
     n, pages = walked["total"], walked["pages"]
-    exact = _walk_exact(walked, limit, n)  # a --limit stop is a floor too
-    meta = {"total": 1, "pages": pages, "count_reported": n, "exact": exact}
+    meta = {"total": 1, "pages": pages, "count_reported": n, "exact": not walked.get("truncated")}
     if walked.get("note"):
         meta["note"] = walked["note"]
-    if not exact and not walked.get("truncated"):
-        append_note(meta, f"--limit stopped the walk at {n}; the count is a floor, not the total.")
     return [{"count": n}], meta
 
 
@@ -954,7 +965,7 @@ def _make_command(spec: ReadCommand, deps: Deps) -> click.Command:
             _emit_raw(client, spec, path, params, output, extra)
             return
         if count_only and not where:
-            records, meta = _count_only(client, spec, path, params, limit)
+            records, meta = _count_only(client, spec, path, params)
         else:
             records, meta = fetch(
                 client,
@@ -1014,7 +1025,8 @@ def _make_command(spec: ReadCommand, deps: Deps) -> click.Command:
             "--limit",
             type=click.IntRange(min=1),
             metavar="N",
-            help="Cap total records returned (with --where: records fetched before filtering).",
+            help="Cap total records returned (with --where: records fetched before "
+            "filtering; ignored by --count-only, which counts the whole query).",
         )(fn)
     fn = click.option(
         "-o",

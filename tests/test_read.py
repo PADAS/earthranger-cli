@@ -300,7 +300,7 @@ def test_fetch_text_decodes_utf8_when_the_server_names_no_charset():
         def _get(self, path, **kwargs):
             return _Resp()
 
-    body, kind = read.fetch_text(_C(), "x")
+    body, kind, _raw = read.fetch_text(_C(), "x")
     assert body == "id,who\ne1,José – Nyumbu\n" and kind == "text/csv"
 
 
@@ -336,3 +336,16 @@ def test_fetch_text_retries_a_dropped_body(monkeypatch):
 
     assert read.fetch_text(_C(), "x")[0] == "id\n"
     assert _C.calls == 2
+
+
+def test_fetch_text_also_returns_the_bytes_as_sent():
+    class _Resp:
+        content = "id\nJosé\n".encode("latin-1")
+        headers = {"Content-Type": "text/csv; charset=iso-8859-1"}  # noqa: RUF012
+
+    class _C:
+        def _get(self, path, **kwargs):
+            return _Resp()
+
+    body, _kind, raw = read.fetch_text(_C(), "x")
+    assert body == "id\nJosé\n" and raw == _Resp.content
