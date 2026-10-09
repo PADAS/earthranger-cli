@@ -204,9 +204,10 @@ def fetch_count(
 def fetch_text(client, path: str, params: dict | None = None) -> tuple[str, str]:
     """GET a non-JSON body (the CSV exports). Returns (text, content_type).
     erclient's `return_response=True` hands back the raw response on 2xx and
-    still raises its typed errors on 401/403/404."""
+    still raises its typed errors on 401/403/404; get_json adds the same
+    bounded body-read retry every JSON read gets."""
     params = {k: v for k, v in (params or {}).items() if v is not None}
-    response = client._get(path, max_retries=0, params=params, return_response=True)
+    response = get_json(client, path, params=params, return_response=True)
     content_type = response.headers.get("Content-Type", "")
     # requests decodes text/* with no charset as ISO-8859-1; das's CSV is UTF-8
     match = re.search(r"charset=([\w-]+)", content_type, re.IGNORECASE)

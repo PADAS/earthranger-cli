@@ -7,6 +7,8 @@ caller counting; a caller adding up a table is where sums go wrong.
 
 from __future__ import annotations
 
+import bisect
+
 import click
 
 from . import clock
@@ -67,13 +69,13 @@ def group_by_period(
     edges = [
         (clock.parse_ts(lo), clock.parse_ts(hi), row) for row, (_, lo, hi) in zip(rows, buckets)
     ]
+    starts = [lo for lo, _, _ in edges]  # sorted: bisect finds the candidate bucket
     unbucketed = 0
     for record in records:
         when = clock.parse_ts(pluck(record, time_field)) if isinstance(record, dict) else None
-        for lo, hi, row in edges:
-            if when is not None and lo <= when <= hi:
-                row["count"] += 1
-                break
+        i = bisect.bisect_right(starts, when) - 1 if when is not None else -1
+        if i >= 0 and when <= edges[i][1]:
+            edges[i][2]["count"] += 1
         else:
             unbucketed += 1
     return rows, unbucketed
@@ -112,25 +114,40 @@ def details_match(record: dict, key: str, value: str) -> bool | None:
     return _matches(details[key], value)
 
 
+def _by_key(where: list[tuple[str, str]]) -> dict[str, list[str]]:
+    grouped: dict[str, list[str]] = {}
+    for key, value in where:
+        grouped.setdefault(key, []).append(value)
+    return grouped
+
+
+def where_summary(where: list[tuple[str, str]]) -> dict:
+    """meta.where: a value per key, a list when the key was repeated (OR)."""
+    return {k: v[0] if len(v) == 1 else v for k, v in _by_key(where).items()}
+
+
 def filter_details(records: list, where: list[tuple[str, str]]) -> tuple[list, str]:
-    """Records whose event_details match every KEY=VALUE, and a note that names
-    the event types carrying no such detail at all (a type can say "elephant"
-    in its name instead of in a species field; those cannot match and should
-    be counted by type, not as none)."""
+    """Records whose event_details match every KEY (values for the same key are
+    alternatives: `--where species=buffalo --where species=elephant` is either),
+    and a note that names the event types carrying no such detail at all (a
+    type can say "elephant" in its name instead of in a species field; those
+    cannot match and should be counted by type, not as none)."""
+    grouped = _by_key(where)
     kept = []
-    silent: dict[str, dict[str, int]] = {k: {} for k, _ in where}
+    silent: dict[str, dict[str, int]] = {k: {} for k in grouped}
     for r in records:
         ok = True
-        for key, value in where:
-            m = details_match(r, key, value)
-            if m is None:
+        for key, values in grouped.items():
+            results = [details_match(r, key, v) for v in values]
+            if all(m is None for m in results):
                 t = str(r.get("event_type") or "?") if isinstance(r, dict) else "?"
                 silent[key][t] = silent[key].get(t, 0) + 1
-            if not m:
+                ok = False
+            elif not any(results):
                 ok = False
         if ok:
             kept.append(r)
-    spec = ", ".join(f"{k}={v}" for k, v in where)
+    spec = ", ".join(f"{k}={'|'.join(v)}" for k, v in grouped.items())
     parts = [
         (
             f"--where {spec} was applied here, to event_details: "

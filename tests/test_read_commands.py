@@ -1200,3 +1200,32 @@ def test_client_clock_fallback_is_announced(fake):
     assert result.exit_code == 0, result.output
     assert json.loads(result.stdout)["meta"]["clock_source"] == "client"
     assert "note: the server sent no usable Date header" in result.stderr
+
+
+def test_where_repeated_key_is_an_or_and_limit_is_explained(fake):
+    fake.responses["activity/events"] = {
+        "count": 3,
+        "next": None,
+        "results": [
+            {"id": "e1", "event_type": "c", "event_details": {"species": "buffalo"}},
+            {"id": "e2", "event_type": "c", "event_details": {"species": "elephant"}},
+            {"id": "e3", "event_type": "c", "event_details": {"species": "lion"}},
+        ],
+    }
+    doc = json.loads(
+        _run(
+            ["events", "search", "--where", "species=buffalo", "--where", "species=elephant"]
+        ).output
+    )
+    assert [r["id"] for r in doc["records"]] == ["e1", "e2"]
+    assert doc["meta"]["where"] == {"species": ["buffalo", "elephant"]}
+    doc = json.loads(_run(["events", "search", "--where", "species=lion", "--limit", "3"]).output)
+    assert "--limit bounds the records fetched" in doc["meta"]["note"]
+
+
+def test_malformed_filter_is_a_usage_error_before_connecting(fake, monkeypatch):
+    monkeypatch.setattr(cli_mod, "_connect", lambda ctx: pytest.fail("connected"))
+    result = _run(["events", "search", "--filter", "{bad", "--since", "2026-01-01"])
+    assert result.exit_code == 2 and "--filter is not valid JSON" in result.output
+    result = _run(["patrols", "search", "--filter", "[1]"])
+    assert result.exit_code == 2 and "--filter must be a JSON object" in result.output

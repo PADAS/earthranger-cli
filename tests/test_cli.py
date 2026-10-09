@@ -2165,3 +2165,10 @@ def test_show_event_type_json_with_choice_fields_and_fields_option(fake):
     assert "species" in doc["records"][0]["choices"]
     result = _run(["events", "show", "event-type", "s", "--json", "--fields", "event_type.value"])
     assert json.loads(result.output)["records"] == [{"event_type.value": "s"}]
+
+
+def test_list_categories_format_without_fields_is_a_usage_error_even_without_json(fake):
+    fake.categories = [{"value": "c", "display": "C"}]
+    result = _run(["events", "list", "categories", "--format", "tsv"])
+    assert result.exit_code == 2
+    assert "--format tsv needs --fields" in result.output

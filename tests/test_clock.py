@@ -180,3 +180,34 @@ def test_parse_ts_takes_the_zone_for_naive_values():
     assert clock.parse_ts("2026-10-08T00:00:00", tz).utcoffset() == timedelta(hours=3)
     assert clock.parse_ts("2026-10-08T00:00:00Z", tz).utcoffset() == timedelta(0)
     assert not hasattr(clock, "_parse_in")
+
+
+def test_site_tz_accepts_utc_and_gmt_abbreviations_only():
+    from datetime import UTC, datetime
+
+    now = datetime(2026, 10, 9, tzinfo=UTC)
+    assert clock.site_tz({"timezone": "UTC"}).utcoffset(now) == timedelta(0)
+    assert clock.site_tz({"timezone": "GMT"}).utcoffset(now) == timedelta(0)
+    # IANA's legacy "EST" key is US-only; an Australian site also says EST
+    assert clock.site_tz({"timezone": "EST"}) is None
+
+
+def test_fetch_clock_retries_a_dropped_body_like_every_other_read(monkeypatch):
+    from requests.exceptions import ChunkedEncodingError
+
+    from earthranger_cli import read
+
+    monkeypatch.setattr(read, "_sleep", lambda s: None)
+    fake = FakeER()
+    calls = {"n": 0}
+    real = fake._get
+
+    def flaky(path, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise ChunkedEncodingError("dropped")
+        return real(path, **kwargs)
+
+    fake._get = flaky
+    assert clock.fetch_clock(fake)["utc"] == "2026-10-09T09:00:00Z"
+    assert calls["n"] == 2

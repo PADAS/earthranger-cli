@@ -29,7 +29,7 @@ from erclient.er_errors import ERClientPermissionDenied
 from . import aggregate
 from . import clock as _clock
 from . import windows as _windows
-from .output import check_format, emit, output_options, parse_fields
+from .output import append_note, check_format, emit, output_options, parse_fields
 from .read import fetch, fetch_count, fetch_text, follow_pages
 
 
@@ -644,9 +644,7 @@ def _grouped(
         limit_note = (
             f"grouped only the {fetched} record(s) --limit allowed; counts are a floor, not totals."
         )
-        out_meta["note"] = (
-            f"{out_meta['note']} {limit_note}" if out_meta.get("note") else limit_note
-        )
+        append_note(out_meta, limit_note)
     if group_by in _clock.PERIODS:
         # the window and time_field were checked before connecting (callback)
         info = get_clock(ctx, client)
@@ -671,7 +669,7 @@ def _grouped(
                 "patrol that started before --since, or no timestamp at all) and are not "
                 "counted in any period."
             )
-            out_meta["note"] = f"{out_meta['note']} {outside}" if out_meta.get("note") else outside
+            append_note(out_meta, outside)
     else:
         rows, matched = aggregate.group_counts(records, group_by)
         if records and not matched:
@@ -739,7 +737,7 @@ def _emit_raw(
         )
         click.echo(f"note: {note}", err=True)
         records, meta = fetch(client, plan["path"], mapped, paginate=True)
-        meta["note"] = f"{meta['note']} {note}" if meta.get("note") else note
+        append_note(meta, note)
         meta.update(extra_meta)
         emit(records, meta, output)
         return
@@ -790,6 +788,10 @@ def _make_command(spec: ReadCommand, deps: Deps) -> click.Command:
                     params[flag.param] = [v.strip() for v in value.split(",") if v.strip()]
             elif value is not None:
                 params[flag.param] = value
+        if spec.window == "filter" and "filter" in params:
+            # events/patrols take a JSON filter: malformed is a usage error, not a login
+            # (the observations --filter is an exclusion-flag integer, not JSON)
+            _windows.load_filter(params)
         where = aggregate.parse_where(kwargs.get("where")) if "where" in kwargs else []
         if where:
             params.update(spec.where_params)  # e.g. include_details, which the filter reads
@@ -870,8 +872,14 @@ def _make_command(spec: ReadCommand, deps: Deps) -> click.Command:
                 records, note = aggregate.filter_details(records, where)
                 meta["fetched"] = fetched
                 meta["total"] = len(records)
-                meta["where"] = dict(where)
-                meta["note"] = f"{meta['note']} {note}" if meta.get("note") else note
+                meta["where"] = aggregate.where_summary(where)
+                if limit is not None:
+                    append_note(
+                        meta,
+                        f"--limit bounds the records fetched ({fetched}), not the matches; "
+                        "raise it or narrow the window for more.",
+                    )
+                append_note(meta, note)
             if count_only:
                 # --where made the server count meaningless: count what matched
                 n = len(records)
@@ -918,7 +926,10 @@ def _make_command(spec: ReadCommand, deps: Deps) -> click.Command:
             help="Report the server's count for the query in one request; no records.",
         )(fn)
         fn = click.option(
-            "--limit", type=click.IntRange(min=1), metavar="N", help="Cap total records returned."
+            "--limit",
+            type=click.IntRange(min=1),
+            metavar="N",
+            help="Cap total records returned (with --where: records fetched before filtering).",
         )(fn)
     fn = click.option(
         "-o",

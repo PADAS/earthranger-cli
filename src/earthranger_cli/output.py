@@ -102,6 +102,11 @@ def render(records: list, meta: dict, fields: list[str] | None, fmt: str) -> str
     return (_tsv if fmt == "tsv" else _csv)(records, fields or [])
 
 
+def append_note(meta: dict, text: str) -> None:
+    """Add a sentence to meta.note, keeping whatever is already there."""
+    meta["note"] = f"{meta['note']} {text}" if meta.get("note") else text
+
+
 def check_format(fields: list[str] | None, fmt: str) -> None:
     if fmt != "json" and not fields:
         raise click.UsageError(f"--format {fmt} needs --fields to say which columns to write.")
@@ -116,6 +121,9 @@ def emit(
     fmt: str = "json",
 ) -> None:
     text = render(records, meta, fields, fmt)
+    if fmt != "json" and meta.get("note"):
+        # a table carries no meta, so what the JSON would have said goes to stderr
+        click.echo(f"note: {meta['note']}", err=True)
     if output:
         path = Path(output)
         path.parent.mkdir(parents=True, exist_ok=True)

@@ -140,3 +140,20 @@ def test_group_by_period_reports_records_outside_the_buckets():
     )
     assert [(r["period"], r["count"]) for r in rows] == [("2026-10-01", 0), ("2026-10-02", 1)]
     assert unbucketed == 2
+
+
+def test_where_same_key_values_are_ored():
+    recs = [
+        {"event_type": "c", "event_details": {"species": "buffalo"}},
+        {"event_type": "c", "event_details": {"species": "elephant"}},
+        {"event_type": "c", "event_details": {"species": "lion"}},
+    ]
+    kept, note = aggregate.filter_details(recs, [("species", "buffalo"), ("species", "elephant")])
+    assert [r["event_details"]["species"] for r in kept] == ["buffalo", "elephant"]
+    assert "species=buffalo|elephant" in note
+    assert aggregate.where_summary(
+        [("species", "buffalo"), ("species", "elephant"), ("cause", "x")]
+    ) == {
+        "species": ["buffalo", "elephant"],
+        "cause": "x",
+    }

@@ -119,3 +119,17 @@ def test_emit_writes_utf8_regardless_of_locale(tmp_path, monkeypatch):
     assert seen["encoding"] == "utf-8"
     doc = json.loads((tmp_path / "o.json").read_text(encoding="utf-8"))
     assert doc["records"][0]["t"] == "Nyumbu – José 🐘"
+
+
+def test_table_formats_echo_meta_notes_to_stderr(capsys, tmp_path):
+    meta = {"total": 1, "pages": 1, "truncated": True, "note": "stopped after 200 page(s)"}
+    emit([{"id": "a"}], meta, None, fields=["id"], fmt="tsv")
+    out, err = capsys.readouterr()
+    assert out == "id\na\n"
+    assert err == "note: stopped after 200 page(s)\n"
+    emit([{"id": "a"}], meta, str(tmp_path / "t.csv"), fields=["id"], fmt="csv")
+    _, err = capsys.readouterr()
+    assert "note: stopped after 200 page(s)" in err and "Done. 1 record(s)" in err
+    emit([{"id": "a"}], meta, None, fields=["id"], fmt="json")
+    _, err = capsys.readouterr()
+    assert err == ""  # JSON carries meta itself

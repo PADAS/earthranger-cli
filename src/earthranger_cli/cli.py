@@ -460,6 +460,7 @@ def list_group():
 def _table_options_hint(json_, output, fields, fmt) -> None:
     """The human listing is unchanged by --fields/--format (by design); say so
     on stderr rather than let the flags vanish without a trace."""
+    check_format(parse_fields(fields), fmt)  # the same usage error with or without --json
     if (fields or fmt != "json") and not (json_ or output):
         click.echo(
             "note: --fields/--format apply to the JSON document; add --json or -o. "

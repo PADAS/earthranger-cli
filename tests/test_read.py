@@ -314,3 +314,25 @@ def test_fetch_text_honours_a_declared_charset():
             return _Resp()
 
     assert read.fetch_text(_C(), "x")[0] == "id\nJosé\n"
+
+
+def test_fetch_text_retries_a_dropped_body(monkeypatch):
+    from requests.exceptions import ChunkedEncodingError
+
+    monkeypatch.setattr(read, "_sleep", lambda s: None)
+
+    class _Resp:
+        content = b"id\n"
+        headers = {"Content-Type": "text/csv"}  # noqa: RUF012
+
+    class _C:
+        calls = 0
+
+        def _get(self, path, **kwargs):
+            _C.calls += 1
+            if _C.calls == 1:
+                raise ChunkedEncodingError("dropped")
+            return _Resp()
+
+    assert read.fetch_text(_C(), "x")[0] == "id\n"
+    assert _C.calls == 2

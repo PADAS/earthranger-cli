@@ -14,6 +14,8 @@ from datetime import UTC, datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from .read import get_json
+
 # das's `server_timezone` is `timezone.localtime().strftime("%Z")`: an abbreviation
 # ("EAT", "PDT") or, for zones tzdb gives none, a bare offset ("+03", "+0545").
 # Only the offset form is usable without a tz database; `server_timezone_name`
@@ -33,7 +35,12 @@ def site_tz(info: dict):
             return ZoneInfo(str(name))
         except (ZoneInfoNotFoundError, ValueError, KeyError):
             pass
-    m = _OFFSET_RE.match(str(info.get("timezone") or "").strip())
+    raw = str(info.get("timezone") or "").strip()
+    if raw.upper() in ("UTC", "GMT"):
+        # unambiguous; other abbreviations are not (IANA's legacy "EST" key is
+        # US-only, and an Australian site reports EST too), so they stay refused
+        return UTC
+    m = _OFFSET_RE.match(raw)
     if m:
         delta = timedelta(hours=int(m.group(2)), minutes=int(m.group(3) or 0))
         return timezone(-delta if m.group(1) == "-" else delta)
@@ -93,7 +100,7 @@ def day_bounds(info: dict, days_ago: int = 0) -> tuple[str, str] | None:
 def fetch_clock(client) -> dict:
     """One GET /status: UTC from the HTTP Date header (the body carries no
     timestamp), the site's timezone from the body."""
-    response = client._get("status", max_retries=0, return_response=True)
+    response = get_json(client, "status", return_response=True)  # same body-read retry as reads
     now = None
     date_hdr = response.headers.get("Date")
     if date_hdr:
