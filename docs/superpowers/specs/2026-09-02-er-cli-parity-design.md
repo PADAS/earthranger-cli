@@ -2,8 +2,9 @@
 
 Date: 2026-09-02
 Status: P0 implemented 2026-09-23; P1 done 2026-10-07; P2 closed 2026-10-08.
-P3 (parity with the otus er-cli, which superseded tusker's) proposed
-2026-10-09 — see §Comparison with otus er-cli and §P3.
+P3 (parity with the otus er-cli, which superseded tusker's) proposed and
+implemented 2026-10-09 (`feat/otus-parity`); only its "Maybe" tier is open —
+see §Comparison with otus er-cli and §P3.
 
 ## Overview
 
@@ -97,7 +98,7 @@ refresh. Our auth is a strict superset; nothing to take.
 | Otus capability | Here? | Adopt? | Notes |
 |---|---|---|---|
 | `--fields a,b.c,list.1` projection; `--format json\|tsv\|csv` (tsv/csv require `--fields`) | No | **Yes — highest value** | Shrinks what an agent reads back; the main reason their skills shell out instead of calling the API. Dotted paths, list indexes. |
-| Site-timezone windows: `--today`, `--yesterday`, `--last 7d`, `er now`; `meta.server_utc` / `site_now` / `site_tz` on every response (one extra `/status/` call) | No (`--since` defaults to 24 h on observations only) | **Yes** | Agents get the site's "today" wrong without it. Apply to events, patrols, observations, tracks. |
+| Site-timezone windows: `--today`, `--yesterday`, `--last 7d`, `er now`; `meta.server_utc` / `site_now` / `site_tz` on every response (one extra `/status/` call) | No (`--since` defaults to 24 h on observations only) | **Yes**, but the clock only on demand | Agents get the site's "today" wrong without it. Applied to events, patrols, observations, tracks, exports. The `meta` time fields appear only when a window flag or period grouping fetched the clock (see §P3). |
 | `--count_only` (one `page_size=1` request, reads `count`; walks pages and reports a floor if the endpoint has none); `--group_by day\|week\|month\|FIELD` | No | **Yes** | Counts without paging the whole result. |
 | `events export`, `observations export`: ER's own CSV from `/activity/events/export/` and `/trackingdata/export/`, unchanged; on 403 falls back to JSON records and says so | No | **Yes** | Bulk pulls without paging JSON. Flags are hand-added because the spec declares none. |
 | `--where KEY=VALUE` (repeatable) client-side filter on `event_details` | No | **Yes, small** | Cheap given we already fetch and understand the type schema. |
@@ -323,23 +324,28 @@ so the phases above don't suggest the repo was idle between P0 and P1.
 Ordered by value to an agent skill. Each item is additive to the read
 surface; none touches the DSL or writes.
 
-- [ ] `--fields` projection and `--format json|tsv|csv` on every read
+- [x] `--fields` projection and `--format json|tsv|csv` on every read
       command (tsv/csv require `--fields`). Dotted paths and list indexes
       as otus spells them, so skills port unchanged.
-- [ ] Site-timezone windows: `--today`, `--yesterday`, `--last <N>d|h` on
-      events, patrols, observations, tracks; `er now`; `server_utc`,
-      `site_now`, `site_tz` in `meta` (one `/status/` call per invocation,
-      cached).
-- [ ] `--count-only` and `--group-by day|week|month|FIELD` on list commands.
-- [ ] `events export` and `observations export` (server CSV, pass-through;
+- [x] Site-timezone windows: `--today`, `--yesterday`, `--last <N>d|h` on
+      events, patrols, observations, tracks (and both exports); `er now`.
+      (2026-10-09) **Decided during implementation:** the extra GET /status
+      is made only when one of those flags, a period `--group-by`, or `er
+      now` needs it — a plain read never pays for it — and `server_utc`,
+      `site_now`, `site_tz` appear in `meta` only on those commands. Otus
+      adds them to every response; we chose not to double every read's
+      request count for a value `er now` gives in one call.
+- [x] `--count-only` and `--group-by day|week|month|FIELD` on list commands.
+- [x] `events export` and `observations export` (server CSV, pass-through;
       403 → JSON fallback with a `note:`).
-- [ ] `--where KEY=VALUE` on `events search`.
-- [ ] Page cap (200) and repeated-`next` detection in `read.follow_pages`,
+- [x] `--where KEY=VALUE` on `events search`.
+- [x] Page cap (200) and repeated-`next` detection in `read.follow_pages`,
       surfaced as `meta.truncated` + `meta.note`.
-- [ ] Glob matching in `--event-type`; subject-group name resolution on
+- [x] Glob matching in `--event-type`; subject-group name resolution on
       `subjects search --subject-group`; nearest-match suggestion on misses.
-- [ ] Test that every `er …` example in README.md parses against the real
+- [x] Test that every `er …` example in README.md parses against the real
       click command tree.
+      (All ticked items: 2026-10-09, `feat/otus-parity`.)
 - [ ] Maybe: `link event|patrol ID`, `analyzers subject|spatial`,
       `patrols --with-distance`.
 

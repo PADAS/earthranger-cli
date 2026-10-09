@@ -10,6 +10,13 @@
 
 **Spec:** `docs/superpowers/specs/2026-09-02-er-cli-parity-design.md` — §Comparison with otus er-cli (as of 2026-10-09) and §P3 — otus parity, including its guardrails.
 
+> **Executed 2026-10-09** (inline, branch `feat/otus-parity`). One deviation,
+> ruled mid-run on the user's direction: the GET /status behind the clock is
+> made only when `--today`/`--yesterday`/`--last`, a period `--group-by`, or
+> `er now` needs it. Task 4's passive per-read lookup and best-effort meta
+> enrichment were removed in Task 5's commit; `get_clock(ctx, client)` always
+> raises, and the clock fields appear in `meta` only on those commands.
+
 ## Global Constraints
 
 - Python `>=3.11`; no new runtime dependencies (`zoneinfo`, `fnmatch`, `difflib`, `csv` are stdlib).
@@ -52,7 +59,7 @@
   def check_format(fields, fmt) -> None              # UsageError when tsv/csv without --fields
   ```
 
-- [ ] **Step 1: Write the failing tests for pluck/project/render**
+- [x] **Step 1: Write the failing tests for pluck/project/render**
 
 Append to `tests/test_output.py`:
 
@@ -126,12 +133,12 @@ def test_emit_tsv_to_file_keeps_done_line_on_stderr(tmp_path, capsys):
     assert target.read_text() == "id\na\n"
 ```
 
-- [ ] **Step 2: Run them to verify they fail**
+- [x] **Step 2: Run them to verify they fail**
 
 Run: `uv run --extra dev pytest tests/test_output.py -q`
 Expected: ImportError on `cell` / `parse_fields` etc.
 
-- [ ] **Step 3: Implement in `output.py`**
+- [x] **Step 3: Implement in `output.py`**
 
 Replace the file body after the module docstring with:
 
@@ -266,12 +273,12 @@ def output_options(f):
     return f
 ```
 
-- [ ] **Step 4: Run output tests**
+- [x] **Step 4: Run output tests**
 
 Run: `uv run --extra dev pytest tests/test_output.py -q`
 Expected: PASS (the existing three tests still pass: stdout JSON ends with one `\n`).
 
-- [ ] **Step 5: Write the failing CLI tests**
+- [x] **Step 5: Write the failing CLI tests**
 
 Append to `tests/test_read_commands.py`:
 
@@ -318,12 +325,12 @@ def test_list_event_types_fields_only_under_json(monkeypatch):
 
 (Use whatever fixture/import names `tests/test_cli.py` already uses for `FakeER`, `cli_mod`, `main`, `CliRunner`; read its header first.)
 
-- [ ] **Step 6: Run them to verify they fail**
+- [x] **Step 6: Run them to verify they fail**
 
 Run: `uv run --extra dev pytest tests/test_read_commands.py::test_fields_and_format_on_a_read_command tests/test_cli.py::test_list_event_types_fields_only_under_json -q`
 Expected: FAIL with "No such option: --fields".
 
-- [ ] **Step 7: Wire the options**
+- [x] **Step 7: Wire the options**
 
 In `read_commands.py` `_make_command`:
 
@@ -350,12 +357,12 @@ In `cli.py` `json_output_options`, add `f = output_options(f)` after the `--json
 
 The human branch ignores `fields`/`fmt` entirely (guardrail).
 
-- [ ] **Step 8: Run the full suite and linters**
+- [x] **Step 8: Run the full suite and linters**
 
 Run: `uv run --extra dev pytest -q && uv run --extra dev ruff check src tests && uv run --extra dev ruff format --check src tests`
 Expected: all pass. `test_every_command_is_registered_with_output_option` still passes (it checks `output`, `limit`, `page_size` only).
 
-- [ ] **Step 9: Commit**
+- [x] **Step 9: Commit**
 
 ```bash
 git add src/earthranger_cli/output.py src/earthranger_cli/read_commands.py src/earthranger_cli/cli.py tests/test_output.py tests/test_read_commands.py tests/test_cli.py
@@ -391,7 +398,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
   def fetch_text(client, path, params=None) -> tuple[str, str]   # (body, content_type)
   ```
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `tests/test_read.py` (reuse the file's existing fake-client helper for `_get`; read its header first):
 
@@ -453,12 +460,12 @@ class _Client:
         return self.responses[key]
 ```
 
-- [ ] **Step 2: Run to verify they fail**
+- [x] **Step 2: Run to verify they fail**
 
 Run: `uv run --extra dev pytest tests/test_read.py -q`
 Expected: FAIL — `follow_pages` returns a 3-tuple; `fetch_count` missing.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 In `read.py`:
 
@@ -531,12 +538,12 @@ def fetch_text(client, path, params=None) -> tuple[str, str]:
 
 Update `_all_event_types` in `read_commands.py`: `v2, _, _, _ = follow_pages(client, v2_page)`.
 
-- [ ] **Step 4: Run tests and linters**
+- [x] **Step 4: Run tests and linters**
 
 Run: `uv run --extra dev pytest -q && uv run --extra dev ruff check src tests`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/earthranger_cli/read.py src/earthranger_cli/read_commands.py tests/test_read.py
@@ -574,7 +581,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
   ```
 - FakeER gains `self.status = {"server_timezone_name": "Africa/Nairobi", "server_timezone": "EAT"}` and `self.date_header = "Fri, 09 Oct 2026 09:00:00 GMT"`; `_get(path, return_response=True)` returns a `FakeResponse` whose `.text` is `json.dumps({"data": body, "status": {"code": 200}})`, `.headers = {"Date": self.date_header, "Content-Type": "application/json"}`, `.status_code = 200`; the call is recorded as `("_get_response", path, params)` so index-based `_gets()` assertions in existing tests are unaffected. For `path == "status"` the body is `self.responses.get("status", self.status)`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `tests/test_clock.py`:
 
@@ -668,12 +675,12 @@ def test_parse_ts_accepts_z_offset_and_naive():
     assert clock.parse_ts(None) is None and clock.parse_ts("garbage") is None
 ```
 
-- [ ] **Step 2: Run to verify they fail**
+- [x] **Step 2: Run to verify they fail**
 
 Run: `uv run --extra dev pytest tests/test_clock.py -q`
 Expected: ModuleNotFoundError `earthranger_cli.clock`.
 
-- [ ] **Step 3: Extend FakeER**
+- [x] **Step 3: Extend FakeER**
 
 In `tests/conftest.py`, add near the top:
 
@@ -715,7 +722,7 @@ In `FakeER.__init__` add `self.status = {"server_timezone_name": "Africa/Nairobi
             return FakeResponse(body, date=self.date_header)
 ```
 
-- [ ] **Step 4: Implement `clock.py`**
+- [x] **Step 4: Implement `clock.py`**
 
 ```python
 """The site's clock: server UTC time, site timezone, and the windows built from them.
@@ -875,12 +882,12 @@ def bucket_window(since: str, until: str, period: str, tz) -> list[tuple[str, st
 
 (Drop the `READ_RETRIES` import line if ruff flags it; it is only documentation.)
 
-- [ ] **Step 5: Run tests and linters**
+- [x] **Step 5: Run tests and linters**
 
 Run: `uv run --extra dev pytest tests/test_clock.py tests/test_read_commands.py -q && uv run --extra dev ruff check src tests && uv run --extra dev ruff format --check src tests`
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/earthranger_cli/clock.py tests/test_clock.py tests/conftest.py
@@ -908,7 +915,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 - Consumes: `clock.fetch_clock`, `clock.clock_meta`.
 - Produces: `read_commands.get_clock(ctx, client, *, required: bool) -> dict | None` — fetches once per invocation and caches in `ctx.obj["clock"]`; with `required=False` swallows `ERClientException`/`requests.exceptions.RequestException` and returns None; with `required=True` re-raises. Used by Tasks 5 and 6.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 def test_meta_carries_the_site_clock(fake):
@@ -961,12 +968,12 @@ def test_now_prints_the_site_clock_as_one_record(fake):
     assert result.output == "today.since\n2026-10-09T00:00:00+03:00\n"
 ```
 
-- [ ] **Step 2: Run to verify they fail**
+- [x] **Step 2: Run to verify they fail**
 
 Run: `uv run --extra dev pytest tests/test_read_commands.py -k "clock or now_prints" -q`
 Expected: FAIL (KeyError `server_utc`; "No such command 'now'").
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 In `read_commands.py`:
 
@@ -1028,12 +1035,12 @@ Add the `now` command in `register` (after the loop):
 
 (Check decorator order against the registry commands: `api_errors` wraps the callback *inside* `pass_context`; mirror `_make_command` exactly — build the function, then `deps.api_errors`, then `click.pass_context`, then options, then `click.command`.)
 
-- [ ] **Step 4: Run the suite; fix tests that counted `_get` calls**
+- [x] **Step 4: Run the suite; fix tests that counted `_get` calls**
 
 Run: `uv run --extra dev pytest -q`
 Expected: PASS. If any test asserts on `fake.calls` as a whole (not via `_gets`), filter `_get_response` entries there.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/earthranger_cli/read_commands.py tests/test_read_commands.py
@@ -1076,7 +1083,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
   def apply_window(kind: str, params: dict, since, until) -> None   # folds per kind; UsageError on bad --filter
   ```
 
-- [ ] **Step 1: Write the failing unit tests**
+- [x] **Step 1: Write the failing unit tests**
 
 Create `tests/test_windows.py`:
 
@@ -1163,12 +1170,12 @@ def test_apply_window_folds_into_filter_and_merges():
     assert params == {"after_date": "a"}
 ```
 
-- [ ] **Step 2: Run to verify they fail**
+- [x] **Step 2: Run to verify they fail**
 
 Run: `uv run --extra dev pytest tests/test_windows.py -q`
 Expected: ModuleNotFoundError.
 
-- [ ] **Step 3: Implement `windows.py`**
+- [x] **Step 3: Implement `windows.py`**
 
 ```python
 """Time windows for the read commands, in the site's calendar.
@@ -1307,12 +1314,12 @@ def apply_window(kind: str, params: dict, since, until) -> None:
 
 (Move the `datetime` import to the top; keep ruff happy. The default-window message must stay byte-identical to the existing observations note so `tests/test_read_commands.py`'s current assertions hold: check them with `grep -n "defaulting" tests/test_read_commands.py` and match.)
 
-- [ ] **Step 4: Run unit tests**
+- [x] **Step 4: Run unit tests**
 
 Run: `uv run --extra dev pytest tests/test_windows.py -q`
 Expected: PASS.
 
-- [ ] **Step 5: Write the failing command-level tests**
+- [x] **Step 5: Write the failing command-level tests**
 
 Append to `tests/test_read_commands.py`:
 
@@ -1378,12 +1385,12 @@ def test_today_without_site_timezone_exits_1(fake):
 
 Also update the existing observations tests: the default-since note and the `since` param format are unchanged, but the selector check still runs pre-connect — keep `test_observations_...` assertions as they are and run them.
 
-- [ ] **Step 6: Run to verify they fail**
+- [x] **Step 6: Run to verify they fail**
 
 Run: `uv run --extra dev pytest tests/test_read_commands.py -k "today or last or window or bare_until" -q`
 Expected: FAIL with "No such option: --today".
 
-- [ ] **Step 7: Wire into `read_commands.py`**
+- [x] **Step 7: Wire into `read_commands.py`**
 
 Add fields to `ReadCommand`:
 
@@ -1426,12 +1433,12 @@ Options: after the `for flag in reversed(spec.flags)` loop add `if spec.window: 
 
 Update `test_every_command_is_registered_with_output_option` to also assert `("since" in names) == (spec.window is not None)`.
 
-- [ ] **Step 8: Run the full suite and linters**
+- [x] **Step 8: Run the full suite and linters**
 
 Run: `uv run --extra dev pytest -q && uv run --extra dev ruff check src tests && uv run --extra dev ruff format --check src tests`
 Expected: PASS. Existing observations tests that assert the `since` default and the stderr note must still pass unchanged; if the note text differs, fix the text in `windows.py`, not the test.
 
-- [ ] **Step 9: Commit**
+- [x] **Step 9: Commit**
 
 ```bash
 git add src/earthranger_cli/windows.py src/earthranger_cli/read_commands.py tests/test_windows.py tests/test_read_commands.py
@@ -1466,7 +1473,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
   ```
 - Callback semantics: `--count-only` → one `fetch_count` request (plus the clock); if the endpoint has no count, walk pages and report a floor. Emits `records=[{"count": N}]`, `meta={"total": 1, "pages": P, "count_reported": N, "exact": bool, ...clock}`. `--group-by X` → fetch all (honouring `--limit`), then rows; `meta={"total": len(rows), "pages", "group_by": X, "records_counted": sum, ...}`; `truncated` carried over. Both together → UsageError.
 
-- [ ] **Step 1: Write the failing unit tests**
+- [x] **Step 1: Write the failing unit tests**
 
 Create `tests/test_aggregate.py`:
 
@@ -1519,12 +1526,12 @@ def test_group_by_period_uses_dotted_time_field():
     assert rows == [{"period": "2026-10", "since": "2026-10-01T00:00:00+00:00", "until": "2026-10-31T23:59:59+00:00", "count": 1}]
 ```
 
-- [ ] **Step 2: Run to verify they fail**
+- [x] **Step 2: Run to verify they fail**
 
 Run: `uv run --extra dev pytest tests/test_aggregate.py -q`
 Expected: ModuleNotFoundError.
 
-- [ ] **Step 3: Implement `aggregate.py`**
+- [x] **Step 3: Implement `aggregate.py`**
 
 ```python
 """Counting and grouping records in the CLI rather than in the model's head.
@@ -1585,12 +1592,12 @@ def group_by_period(records: list, *, period: str, since: str, until: str, tz, t
     return rows
 ```
 
-- [ ] **Step 4: Run unit tests**
+- [x] **Step 4: Run unit tests**
 
 Run: `uv run --extra dev pytest tests/test_aggregate.py -q`
 Expected: PASS.
 
-- [ ] **Step 5: Write the failing command tests**
+- [x] **Step 5: Write the failing command tests**
 
 ```python
 def test_count_only_asks_the_server_once(fake):
@@ -1643,12 +1650,12 @@ def test_count_only_and_group_by_are_exclusive(fake):
     assert result.exit_code == 2 and "either --count-only or --group-by" in result.output
 ```
 
-- [ ] **Step 6: Run to verify they fail**
+- [x] **Step 6: Run to verify they fail**
 
 Run: `uv run --extra dev pytest tests/test_read_commands.py -k "count_only or group_by" -q`
 Expected: FAIL "No such option: --count-only".
 
-- [ ] **Step 7: Wire into `read_commands.py`**
+- [x] **Step 7: Wire into `read_commands.py`**
 
 Add `time_field: str | None = None` to `ReadCommand`; set it on the events (`"time"`), observations (`"recorded_at"`), patrols (`"patrol_segments.0.time_range.start_time"`) rows. Options for list commands (next to `--limit`):
 
@@ -1710,12 +1717,12 @@ def _grouped(ctx, client, spec, records, meta, group_by, window_meta):
 
 Keep `meta["window"]` and the clock enrichment after this branch so grouped output carries them too.
 
-- [ ] **Step 8: Run the full suite and linters**
+- [x] **Step 8: Run the full suite and linters**
 
 Run: `uv run --extra dev pytest -q && uv run --extra dev ruff check src tests && uv run --extra dev ruff format --check src tests`
 Expected: PASS.
 
-- [ ] **Step 9: Commit**
+- [x] **Step 9: Commit**
 
 ```bash
 git add src/earthranger_cli/aggregate.py src/earthranger_cli/read_commands.py tests/test_aggregate.py tests/test_read_commands.py
@@ -1744,7 +1751,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 - `ReadCommand.fallback: dict | None` — `{"path": str, "keep": {export_param: records_param}, "drop": set, "add": dict, "window": kind}`. On `ERClientPermissionDenied` the callback maps the sent params through it; any param not in `keep` or `drop` → re-raise the 403 (Review Focus 5); otherwise a stderr `note:` and the records document (JSON) is emitted instead, through the normal list path (paginated, `--fields` not available, so JSON only).
 - Before writing the rows, confirm das's parameter names: `grep -n "query_params\|GET.get\|request.GET" ~/padas/das/das/activity/views.py | grep -i export -A3` and the same for `trackingdata/export` in `~/padas/das/das/observations/views.py`. Adjust flag names below to what das actually reads; keep otus's spellings as the documented ones where they match.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 def test_events_export_writes_the_servers_csv(fake, tmp_path):
@@ -1805,12 +1812,12 @@ def test_export_403_with_an_untranslatable_flag_stays_a_403(fake):
 
 For the `denied` callables, extend `FakeER._get`'s `return_response` branch: `if callable(body): return body(path, params=params)`. For the event-type resolution in the first test, seed `fake.event_types = [{"id": "t-carcass", "value": "carcass", "display": "Carcass"}]` in the test before running.
 
-- [ ] **Step 2: Run to verify they fail**
+- [x] **Step 2: Run to verify they fail**
 
 Run: `uv run --extra dev pytest tests/test_read_commands.py -k export -q`
 Expected: FAIL "No such command 'export'".
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Rows (after `events get` and after `observations search`):
 
@@ -1903,12 +1910,12 @@ Option wiring: `limit`, `page_size`, `output_options`, `count_only`/`group_by` a
 
 Note on `fetch_text` through `FakeER`: it goes through the `return_response` branch; add the `callable(body)` hook described in Step 1 to `conftest.py`.
 
-- [ ] **Step 4: Run the suite and linters**
+- [x] **Step 4: Run the suite and linters**
 
 Run: `uv run --extra dev pytest -q && uv run --extra dev ruff check src tests && uv run --extra dev ruff format --check src tests`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/earthranger_cli/read_commands.py tests/test_read_commands.py tests/conftest.py
@@ -1941,7 +1948,7 @@ def filter_details(records: list, where: list[tuple[str, str]]) -> tuple[list, s
 ```
 Matching: case-insensitive string equality against `event_details[key]`; a dict value matches on its `name`, `value` or `display`; a list matches if any element matches. `--where` forces `include_details=true`. After the fetch (and before `--group-by`/`--count-only` counting), records are filtered; `meta.fetched` is the pre-filter count, `meta.total` the kept count, `meta.where` the pairs, `meta.note` the filter note. With `--count-only`, the command walks all pages (no server count) and counts the kept records.
 
-- [ ] **Step 1: Write the failing unit tests**
+- [x] **Step 1: Write the failing unit tests**
 
 ```python
 def test_parse_where_and_details_match():
@@ -1969,12 +1976,12 @@ def test_filter_details_keeps_matches_and_names_silent_types():
     assert "1 event(s) have no 'species' detail" in note and "elephant_carcass (1)" in note
 ```
 
-- [ ] **Step 2: Run to verify they fail**
+- [x] **Step 2: Run to verify they fail**
 
 Run: `uv run --extra dev pytest tests/test_aggregate.py -q`
 Expected: AttributeError `parse_where`.
 
-- [ ] **Step 3: Implement in `aggregate.py`**
+- [x] **Step 3: Implement in `aggregate.py`**
 
 ```python
 import click
@@ -2037,7 +2044,7 @@ def filter_details(records: list, where: list[tuple[str, str]]) -> tuple[list, s
     return kept, " ".join(parts)
 ```
 
-- [ ] **Step 4: Write the failing command test**
+- [x] **Step 4: Write the failing command test**
 
 ```python
 def test_where_filters_details_client_side_and_counts_the_matches(fake):
@@ -2066,7 +2073,7 @@ def test_where_filters_details_client_side_and_counts_the_matches(fake):
     assert result.exit_code == 2 and "KEY=VALUE" in result.output
 ```
 
-- [ ] **Step 5: Run to verify it fails, then wire**
+- [x] **Step 5: Run to verify it fails, then wire**
 
 Run: `uv run --extra dev pytest tests/test_read_commands.py -k where -q` → FAIL "No such option: --where".
 
@@ -2080,12 +2087,12 @@ In `read_commands.py`: `Flag` kind `"multi"` → `click.option(*names, multiple=
 
 In the fetch branch: if `where`, never take the `fetch_count` shortcut — fetch with pagination, then `records, note = aggregate.filter_details(records, where)`; set `meta["fetched"] = meta["total"]`, `meta["total"] = len(records)`, `meta["where"] = dict(where)`, `meta["note"] = note` (join with any truncation note); then apply `count_only` (`[{"count": len(records)}]`, `exact = not truncated`) or `group_by` on the kept records.
 
-- [ ] **Step 6: Run the suite and linters**
+- [x] **Step 6: Run the suite and linters**
 
 Run: `uv run --extra dev pytest -q && uv run --extra dev ruff check src tests && uv run --extra dev ruff format --check src tests`
 Expected: PASS.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add src/earthranger_cli/aggregate.py src/earthranger_cli/read_commands.py tests/test_aggregate.py tests/test_read_commands.py
@@ -2112,7 +2119,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 - `_resolve_event_types`: a wanted value containing any of `*?[` is a pattern (`fnmatch.fnmatchcase`, case-folded) matched against every type's `value` and `display`; all hits' ids are added and a stderr `note:` lists them; no hit → UsageError with the server's values. An exact miss adds `Did you mean: a, b?` from `difflib.get_close_matches(w, values + displays, n=3, cutoff=0.6)`.
 - `_resolve_subject_group(client, params)`: a non-UUID `subject_group` is looked up in `GET subjectgroups?flat=true&include_inactive=true` (paginated via `fetch`) by `name` (case-folded exact); one hit → id; several → UsageError listing `name (id)`; none → UsageError with close matches.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 def test_event_type_glob_matches_values_and_displays(fake):
@@ -2164,12 +2171,12 @@ def test_subject_group_name_is_resolved_to_an_id(fake):
 
 (Check how `tests/test_cli.py` currently posts events with `FakeER` — `--no-validate` and any required flags like `--server` — and copy that invocation shape into the guardrail test.)
 
-- [ ] **Step 2: Run to verify they fail**
+- [x] **Step 2: Run to verify they fail**
 
 Run: `uv run --extra dev pytest tests/test_read_commands.py -k "glob or close_matches or subject_group_name or never_resolved" -q`
 Expected: the glob/suggest/subject-group tests FAIL; the post guardrail passes already (keep it as the pin).
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 In `_resolve_event_types`, after `by_display` is built and before the loop:
 
@@ -2217,12 +2224,12 @@ def _resolve_subject_group(client, params: dict) -> dict:
 
 Set `resolve=_resolve_subject_group` on the `subjects search` row and change its `subject_group` flag help to "Subject group name or id."
 
-- [ ] **Step 4: Run the suite and linters**
+- [x] **Step 4: Run the suite and linters**
 
 Run: `uv run --extra dev pytest -q && uv run --extra dev ruff check src tests && uv run --extra dev ruff format --check src tests`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/earthranger_cli/read_commands.py tests/test_read_commands.py
@@ -2245,7 +2252,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 
 **Interfaces:** none produced; consumes `earthranger_cli.cli.main`.
 
-- [ ] **Step 1: Write the test, with a deliberately bad example pinned first**
+- [x] **Step 1: Write the test, with a deliberately bad example pinned first**
 
 ```python
 """Every `er ...` line in a README code block must parse against the real click
@@ -2311,12 +2318,12 @@ def test_readme_example_parses(line):
     parse(args)
 ```
 
-- [ ] **Step 2: Run it**
+- [x] **Step 2: Run it**
 
 Run: `uv run --extra dev pytest tests/test_readme_examples.py -q`
 Expected: `test_parse_rejects_a_bad_example` PASSES (it pins the helper's teeth); every README line passes too. If a README line fails, the README is wrong — fix the README (Task 11 adds the new examples, so re-run there). If the helper raises on `ctx.protected_args` (click 8.2+ removed it), use `ctx.args` only.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add tests/test_readme_examples.py
@@ -2334,7 +2341,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 - Modify: `docs/superpowers/specs/2026-09-02-er-cli-parity-design.md` (§P3 checkboxes with dates)
 - Modify: `docs/superpowers/plans/2026-10-09-otus-parity.md` (this file: tick the boxes)
 
-- [ ] **Step 1: README Commands table** — add rows:
+- [x] **Step 1: README Commands table** — add rows:
 
 ```
 | `now` | Server UTC time, site local time and timezone, and today's `--since/--until` bounds in site time |
@@ -2343,7 +2350,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 
 and in the `events search` row append: `; --since/--until/--today/--yesterday/--last 7d (site time); --where species=buffalo filters event_details`. Add a line after the table: "Every read command takes `--fields a,b.c` and `--format json|tsv|csv`; every paginated one takes `--count-only` and `--group-by FIELD|day|week|month`."
 
-- [ ] **Step 2: README "Reading data" section** — after the `meta` bullet list add a sub-section:
+- [x] **Step 2: README "Reading data" section** — after the `meta` bullet list add a sub-section:
 
 ```markdown
 ### Windows, counts, columns
@@ -2379,14 +2386,14 @@ er events search --event-type '*carcass*' --since 2026-07-01 --until 2026-09-30 
 
 (Spell `patrols search --state` with whatever the row's flag is; Task 7's das check decides `--status` vs `--state`.)
 
-- [ ] **Step 3: Run the README examples test and the suite**
+- [x] **Step 3: Run the README examples test and the suite**
 
 Run: `uv run --extra dev pytest -q`
 Expected: PASS, including every new README line.
 
-- [ ] **Step 4: Spec** — tick each §P3 item `[x]` with `(2026-10-09, this PR)`; leave the "Maybe" line unticked.
+- [x] **Step 4: Spec** — tick each §P3 item `[x]` with `(2026-10-09, this PR)`; leave the "Maybe" line unticked.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add README.md docs/superpowers/specs/2026-09-02-er-cli-parity-design.md docs/superpowers/plans/2026-10-09-otus-parity.md
