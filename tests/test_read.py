@@ -287,3 +287,30 @@ def test_follow_pages_stops_when_a_page_repeats_the_first_page():
     records, _pages, _, truncated = read.follow_pages(client, first)
     assert [r["id"] for r in records] == ["a", "b"]
     assert truncated is True
+
+
+def test_fetch_text_decodes_utf8_when_the_server_names_no_charset():
+    # requests decodes text/* without a charset as ISO-8859-1; the export is UTF-8
+    class _Resp:
+        content = "id,who\ne1,José – Nyumbu\n".encode()
+        text = content.decode("iso-8859-1")  # what requests would hand back
+        headers = {"Content-Type": "text/csv"}  # noqa: RUF012
+
+    class _C:
+        def _get(self, path, **kwargs):
+            return _Resp()
+
+    body, kind = read.fetch_text(_C(), "x")
+    assert body == "id,who\ne1,José – Nyumbu\n" and kind == "text/csv"
+
+
+def test_fetch_text_honours_a_declared_charset():
+    class _Resp:
+        content = "id\nJosé\n".encode("latin-1")
+        headers = {"Content-Type": "text/csv; charset=iso-8859-1"}  # noqa: RUF012
+
+    class _C:
+        def _get(self, path, **kwargs):
+            return _Resp()
+
+    assert read.fetch_text(_C(), "x")[0] == "id\nJosé\n"

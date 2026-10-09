@@ -954,7 +954,7 @@ def test_export_fallback_document_carries_a_note_and_the_window(fake, tmp_path):
     target = tmp_path / "events.csv"
     result = _run(["events", "export", "--today", "-o", str(target)])
     assert result.exit_code == 0, result.output
-    meta = json.loads(target.read_text())["meta"]
+    meta = json.loads((tmp_path / "events.json").read_text())["meta"]  # JSON never lands in a .csv
     assert "may not export" in meta["note"]
     assert meta["window"]["mode"] == "today" and meta["site_tz"] == "Africa/Nairobi"
 
@@ -1145,3 +1145,58 @@ def test_event_type_with_brackets_matches_exactly_before_globbing(fake):
     assert result.exit_code == 0, result.output
     assert _gets(fake)[0][2]["event_type"] == ["t1"]
     assert "matched" not in result.stderr
+
+
+def test_period_group_by_notes_unbucketed_records(fake):
+    fake.responses["activity/patrols"] = {
+        "count": 2,
+        "next": None,
+        "results": [
+            {"patrol_segments": [{"time_range": {"start_time": "2026-09-29T10:00:00+03:00"}}]},
+            {"patrol_segments": [{"time_range": {"start_time": "2026-10-02T10:00:00+03:00"}}]},
+        ],
+    }
+    doc = json.loads(
+        _run(
+            [
+                "patrols",
+                "search",
+                "--since",
+                "2026-10-01",
+                "--until",
+                "2026-10-02",
+                "--group-by",
+                "day",
+            ]
+        ).output
+    )
+    assert doc["meta"]["records_counted"] == 1 and doc["meta"]["unbucketed"] == 1
+    assert "outside" in doc["meta"]["note"]
+
+
+def test_export_fallback_writes_json_beside_a_csv_path(fake, tmp_path):
+    from erclient.er_errors import ERClientPermissionDenied
+
+    def denied(path, **kwargs):
+        raise ERClientPermissionDenied("no export permission")
+
+    fake.responses["activity/events/export"] = denied
+    fake.responses["activity/events"] = {"count": 1, "next": None, "results": [{"id": "e1"}]}
+    target = tmp_path / "today.csv"
+    result = _run(["events", "export", "--since", "2026-10-01", "-o", str(target)])
+    assert result.exit_code == 0, result.output
+    assert not target.exists()
+    sibling = tmp_path / "today.json"
+    assert json.loads(sibling.read_text())["records"] == [{"id": "e1"}]
+    assert str(sibling) in result.stderr
+
+
+def test_client_clock_fallback_is_announced(fake):
+    from conftest import FakeResponse
+
+    fake.responses["status"] = FakeResponse(fake.status, date="")
+    fake.responses["activity/events"] = {"count": 0, "next": None, "results": []}
+    result = _run(["events", "search", "--today"])
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout)["meta"]["clock_source"] == "client"
+    assert "note: the server sent no usable Date header" in result.stderr

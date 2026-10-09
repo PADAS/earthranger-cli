@@ -48,28 +48,16 @@ def parse_duration(raw: str) -> timedelta:
     return timedelta(**{_UNIT[m.group(2)]: int(m.group(1))})
 
 
-def parse_ts(value) -> datetime | None:
-    """ISO-8601 with Z or an offset; a naive timestamp is read as UTC."""
+def parse_ts(value, naive_tz=UTC) -> datetime | None:
+    """ISO-8601 with Z or an offset; a naive timestamp is read in `naive_tz`
+    (UTC unless the caller knows the zone the endpoint applies to it)."""
     if not isinstance(value, str):
         return None
     try:
         parsed = datetime.fromisoformat(value.strip())
     except ValueError:
         return None
-    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
-
-
-def _parse_in(value, tz) -> datetime | None:
-    """Like parse_ts, but a naive timestamp is read in `tz`: that is how das
-    reads a bare --since/--until (its TIME_ZONE is the site's), so the CLI's
-    buckets must end where the server's window does, not at UTC midnight."""
-    if not isinstance(value, str):
-        return None
-    try:
-        parsed = datetime.fromisoformat(value.strip())
-    except ValueError:
-        return None
-    return parsed if parsed.tzinfo else parsed.replace(tzinfo=tz)
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=naive_tz)
 
 
 def _iso(dt: datetime) -> str:
@@ -115,9 +103,13 @@ def fetch_clock(client) -> dict:
             now = (parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)).astimezone(UTC)
         except (TypeError, ValueError, IndexError):
             now = None  # a proxy rewrote the header into something unparseable
+    # no usable Date header: fall back to this host's clock, and say so, since
+    # every window built from it is then only as right as the caller's clock
+    source = "server" if now is not None else "client"
     now = now or datetime.now(UTC)
     info: dict = {
         "utc": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "clock_source": source,
         "timezone_name": None,
         "timezone": None,
         "local": None,
@@ -147,6 +139,8 @@ def clock_meta(info: dict) -> dict:
         "site_now": info.get("local"),
         "site_tz": info.get("timezone_name") or info.get("timezone"),
     }
+    if info.get("clock_source") == "client":
+        meta["clock_source"] = "client"
     return {k: v for k, v in meta.items() if v}
 
 
@@ -161,7 +155,7 @@ def bucket_window(
     if period not in PERIODS:
         raise ValueError(f"period must be one of {', '.join(PERIODS)}, not {period!r}")
     naive_tz = naive_tz or tz
-    lo, hi = _parse_in(since, naive_tz), _parse_in(until, naive_tz)
+    lo, hi = parse_ts(since, naive_tz), parse_ts(until, naive_tz)
     if lo is None or hi is None:
         raise ValueError("--since/--until must be ISO-8601 timestamps to bucket by period")
     cur = lo.astimezone(tz).replace(hour=0, minute=0, second=0, microsecond=0)

@@ -587,7 +587,19 @@ def get_clock(ctx, client) -> dict:
     cached = ctx.obj.get("clock")
     if cached is None:
         cached = ctx.obj["clock"] = _clock.fetch_clock(client)
+        if cached.get("clock_source") == "client":
+            click.echo(
+                "note: the server sent no usable Date header; windows are computed from this "
+                "machine's clock (meta.clock_source = client).",
+                err=True,
+            )
     return cached
+
+
+def _walk_exact(meta: dict, limit: int | None, fetched: int) -> bool:
+    """Whether a paginated walk saw the whole query: neither truncated by the
+    page cap or a repeated link, nor cut short by --limit."""
+    return not meta.get("truncated") and (limit is None or fetched < limit)
 
 
 def _option_names(param: str) -> list[str]:
@@ -627,7 +639,7 @@ def _grouped(
     }
     out_meta["group_by"] = group_by
     out_meta["fetched"] = fetched
-    out_meta["exact"] = not meta.get("truncated") and (limit is None or fetched < limit)
+    out_meta["exact"] = _walk_exact(meta, limit, fetched)
     if not out_meta["exact"] and not meta.get("truncated"):
         limit_note = (
             f"grouped only the {fetched} record(s) --limit allowed; counts are a floor, not totals."
@@ -638,16 +650,12 @@ def _grouped(
     if group_by in _clock.PERIODS:
         # the window and time_field were checked before connecting (callback)
         info = get_clock(ctx, client)
-        tz = _clock.site_tz(info)
-        if tz is None:
-            raise click.ClickException(
-                "the site reported no usable timezone, so --group-by cannot say where a day begins."
-            )
+        tz = _clock.site_tz(info)  # refused before the walk if None (callback)
         until = window_meta.get("until") or info.get("local") or info["utc"]
         # das reads a naive date inside an events/patrols filter in the site zone,
         # but a naive observations since/until in UTC; bucket the way it windowed
         naive_tz = tz if spec.window == "filter" else UTC
-        rows = aggregate.group_by_period(
+        rows, unbucketed = aggregate.group_by_period(
             records,
             period=group_by,
             since=window_meta["since"],
@@ -656,6 +664,14 @@ def _grouped(
             time_field=spec.time_field,
             naive_tz=naive_tz,
         )
+        out_meta["unbucketed"] = unbucketed
+        if unbucketed:
+            outside = (
+                f"{unbucketed} fetched record(s) fall outside the window's buckets (e.g. a "
+                "patrol that started before --since, or no timestamp at all) and are not "
+                "counted in any period."
+            )
+            out_meta["note"] = f"{out_meta['note']} {outside}" if out_meta.get("note") else outside
     else:
         rows, matched = aggregate.group_counts(records, group_by)
         if records and not matched:
@@ -712,9 +728,14 @@ def _emit_raw(
                 note=lambda text: click.echo(text, err=True),
             )
             mapped["since"] = since
+        if output and Path(output).suffix.lower() == ".csv":
+            # never leave JSON in a file named .csv: a reader would parse garbage
+            output = str(Path(output).with_suffix(".json"))
         note = (
             f"this account may not export ({e}); these are the matching records as JSON "
-            f"from GET /api/v1.0/{plan['path']} instead of the CSV."
+            f"from GET /api/v1.0/{plan['path']} instead of the CSV"
+            + (f", written to {output}" if output else "")
+            + "."
         )
         click.echo(f"note: {note}", err=True)
         records, meta = fetch(client, plan["path"], mapped, paginate=True)
@@ -725,7 +746,7 @@ def _emit_raw(
     if output:
         target = Path(output)
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(body)
+        target.write_text(body, encoding="utf-8")
         rows = _csv_row_count(body)
         kind = content_type or "text/csv"
         if rows is None:
@@ -829,7 +850,7 @@ def _make_command(spec: ReadCommand, deps: Deps) -> click.Command:
                 )
                 n, pages = walked["total"], walked["pages"]
                 # a walk cut short by --limit is a floor too, not just a truncated one
-                exact = not walked.get("truncated") and (limit is None or n < limit)
+                exact = _walk_exact(walked, limit, n)
             else:
                 pages, exact = 1, True
             records = [{"count": n}]
@@ -855,7 +876,7 @@ def _make_command(spec: ReadCommand, deps: Deps) -> click.Command:
                 # --where made the server count meaningless: count what matched
                 n = len(records)
                 records = [{"count": n}]
-                exact = not meta.get("truncated") and (limit is None or fetched < limit)
+                exact = _walk_exact(meta, limit, fetched)
                 meta = {**meta, "total": 1, "count_reported": n, "exact": exact}
             elif group_by:
                 records, meta = _grouped(

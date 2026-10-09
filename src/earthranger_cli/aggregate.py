@@ -10,7 +10,7 @@ from __future__ import annotations
 import click
 
 from . import clock
-from .output import cell, pluck
+from .output import cell, lookup, pluck
 
 
 def group_counts(records: list, field: str) -> tuple[list[dict], int]:
@@ -24,36 +24,14 @@ def group_counts(records: list, field: str) -> tuple[list[dict], int]:
     for record in records:
         if not isinstance(record, dict):
             continue
-        value = pluck(record, field)
-        if has_path(record, field):
+        found, value = lookup(record, field)
+        if found:
             matched += 1
         key = cell(value)
         counts[key] = counts.get(key, 0) + 1
     rows = [{"group": key or "(none)", "count": n} for key, n in counts.items()]
     rows.sort(key=lambda row: (-row["count"], str(row["group"])))
     return rows, matched
-
-
-def has_path(record, path: str) -> bool:
-    """Whether the dotted path exists in the record, whatever its value."""
-    value = record
-    parts = path.split(".")
-    for i, part in enumerate(parts):
-        last = i == len(parts) - 1
-        if isinstance(value, dict):
-            if part not in value:
-                return False
-            value = value[part]
-        elif isinstance(value, list):
-            try:
-                value = value[int(part)]
-            except (ValueError, IndexError):
-                return False
-        else:
-            return False
-        if last:
-            return True
-    return False
 
 
 def scalar_keys(records: list, limit: int = 25) -> list[str]:
@@ -77,24 +55,28 @@ def group_by_period(
     tz,
     time_field: str,
     naive_tz=None,
-) -> list[dict]:
+) -> tuple[list[dict], int]:
     """Count records into site-local day/week/month buckets over [since, until],
     reading each record's timestamp from the dotted `time_field`. `naive_tz`
-    is the zone the endpoint applies to a naive bound (see clock.bucket_window)."""
+    is the zone the endpoint applies to a naive bound (see clock.bucket_window).
+    Returns (rows, unbucketed): the server may return records whose timestamp
+    is outside the window (a patrol that overlaps it, an event timed after the
+    clock instant), and those must be reported rather than silently dropped."""
     buckets = clock.bucket_window(since, until, period, tz, naive_tz=naive_tz)
     rows = [{"period": label, "since": lo, "until": hi, "count": 0} for label, lo, hi in buckets]
     edges = [
         (clock.parse_ts(lo), clock.parse_ts(hi), row) for row, (_, lo, hi) in zip(rows, buckets)
     ]
+    unbucketed = 0
     for record in records:
         when = clock.parse_ts(pluck(record, time_field)) if isinstance(record, dict) else None
-        if when is None:
-            continue
         for lo, hi, row in edges:
-            if lo <= when <= hi:
+            if when is not None and lo <= when <= hi:
                 row["count"] += 1
                 break
-    return rows
+        else:
+            unbucketed += 1
+    return rows, unbucketed
 
 
 def parse_where(items) -> list[tuple[str, str]]:

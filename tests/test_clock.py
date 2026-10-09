@@ -161,3 +161,22 @@ def test_fetch_clock_reads_an_unknown_local_date_header_as_utc():
     fake = FakeER()
     fake.responses["status"] = FakeResponse(fake.status, date="Tue, 06 Oct 2026 10:00:00 -0000")
     assert clock.fetch_clock(fake)["utc"] == "2026-10-06T10:00:00Z"
+
+
+def test_fetch_clock_says_when_the_clock_is_the_clients():
+    from conftest import FakeResponse
+
+    fake = FakeER()
+    assert clock.fetch_clock(fake)["clock_source"] == "server"
+    fake.responses["status"] = FakeResponse(fake.status, date="")
+    info = clock.fetch_clock(fake)
+    assert info["clock_source"] == "client"
+    assert clock.clock_meta(info)["clock_source"] == "client"
+    assert "clock_source" not in clock.clock_meta(clock.fetch_clock(FakeER()))
+
+
+def test_parse_ts_takes_the_zone_for_naive_values():
+    tz = ZoneInfo("Africa/Nairobi")
+    assert clock.parse_ts("2026-10-08T00:00:00", tz).utcoffset() == timedelta(hours=3)
+    assert clock.parse_ts("2026-10-08T00:00:00Z", tz).utcoffset() == timedelta(0)
+    assert not hasattr(clock, "_parse_in")

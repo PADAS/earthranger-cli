@@ -14,6 +14,7 @@ the `{records, meta}` pieces every read command emits.
 
 from __future__ import annotations
 
+import re
 import sys
 import time
 from collections.abc import Callable
@@ -206,4 +207,12 @@ def fetch_text(client, path: str, params: dict | None = None) -> tuple[str, str]
     still raises its typed errors on 401/403/404."""
     params = {k: v for k, v in (params or {}).items() if v is not None}
     response = client._get(path, max_retries=0, params=params, return_response=True)
-    return response.text, response.headers.get("Content-Type", "")
+    content_type = response.headers.get("Content-Type", "")
+    # requests decodes text/* with no charset as ISO-8859-1; das's CSV is UTF-8
+    match = re.search(r"charset=([\w-]+)", content_type, re.IGNORECASE)
+    encoding = match.group(1) if match else "utf-8"
+    try:
+        body = response.content.decode(encoding)
+    except (LookupError, UnicodeDecodeError):
+        body = response.content.decode("utf-8", errors="replace")
+    return body, content_type

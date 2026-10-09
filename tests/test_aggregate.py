@@ -30,7 +30,7 @@ def test_group_by_period_counts_into_site_buckets():
         {"time": "2026-10-09T05:00:00Z"},
         {"time": None},
     ]
-    rows = aggregate.group_by_period(
+    rows, _ = aggregate.group_by_period(
         recs,
         period="day",
         since="2026-10-07T00:00:00+03:00",
@@ -49,7 +49,7 @@ def test_group_by_period_counts_into_site_buckets():
 def test_group_by_period_uses_dotted_time_field():
     tz = ZoneInfo("UTC")
     recs = [{"patrol_segments": [{"time_range": {"start_time": "2026-10-08T05:00:00Z"}}]}]
-    rows = aggregate.group_by_period(
+    rows, _ = aggregate.group_by_period(
         recs,
         period="month",
         since="2026-10-01T00:00:00Z",
@@ -104,7 +104,7 @@ def test_filter_details_keeps_matches_and_names_silent_types():
 def test_group_by_period_counts_the_last_fractional_second_of_a_day():
     tz = ZoneInfo("Africa/Nairobi")
     recs = [{"time": "2026-10-08T23:59:59.500000+03:00"}, {"time": "2026-10-09T00:00:00+03:00"}]
-    rows = aggregate.group_by_period(
+    rows, _ = aggregate.group_by_period(
         recs,
         period="day",
         since="2026-10-08T00:00:00+03:00",
@@ -121,3 +121,22 @@ def test_group_counts_present_counts_the_key_not_its_emptiness():
     assert present == 2
     _, present = aggregate.group_counts([{"a": {"b": None}}, {"a": {}}], "a.b")
     assert present == 1
+
+
+def test_group_by_period_reports_records_outside_the_buckets():
+    tz = ZoneInfo("Africa/Nairobi")
+    recs = [
+        {"time": "2026-09-29T10:00:00+03:00"},  # a patrol that started before --since
+        {"time": "2026-10-02T10:00:00+03:00"},
+        {"time": None},
+    ]
+    rows, unbucketed = aggregate.group_by_period(
+        recs,
+        period="day",
+        since="2026-10-01T00:00:00+03:00",
+        until="2026-10-02T23:59:59.999999+03:00",
+        tz=tz,
+        time_field="time",
+    )
+    assert [(r["period"], r["count"]) for r in rows] == [("2026-10-01", 0), ("2026-10-02", 1)]
+    assert unbucketed == 2

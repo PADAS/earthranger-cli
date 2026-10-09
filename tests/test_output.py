@@ -97,3 +97,25 @@ def test_emit_tsv_to_file_keeps_done_line_on_stderr(tmp_path, capsys):
     assert out == ""
     assert err == f"Done. 1 record(s) written to {target} (1 page(s)).\n"
     assert target.read_text() == "id\na\n"
+
+
+def test_render_tsv_escapes_backslashes_so_escaped_tabs_are_unambiguous():
+    out = render([{"p": "C:\\temp\\new", "q": "a\tb"}], {}, ["p", "q"], "tsv")
+    assert out == "p\tq\nC:\\\\temp\\\\new\ta\\tb\n"
+
+
+def test_emit_writes_utf8_regardless_of_locale(tmp_path, monkeypatch):
+    import pathlib
+
+    seen = {}
+    real = pathlib.Path.write_text
+
+    def spy(self, data, *args, **kwargs):
+        seen["encoding"] = kwargs.get("encoding")
+        return real(self, data, *args, **kwargs)
+
+    monkeypatch.setattr(pathlib.Path, "write_text", spy)
+    emit([{"t": "Nyumbu – José 🐘"}], {"total": 1, "pages": 1}, str(tmp_path / "o.json"))
+    assert seen["encoding"] == "utf-8"
+    doc = json.loads((tmp_path / "o.json").read_text(encoding="utf-8"))
+    assert doc["records"][0]["t"] == "Nyumbu – José 🐘"

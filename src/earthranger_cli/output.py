@@ -18,7 +18,8 @@ from pathlib import Path
 import click
 
 FORMATS = ("json", "tsv", "csv")
-_TSV_ESCAPES = str.maketrans({"\t": "\\t", "\n": "\\n", "\r": "\\r"})
+# the backslash first, so an escaped tab can never be confused with a literal "\\t"
+_TSV_ESCAPES = str.maketrans({"\\": "\\\\", "\t": "\\t", "\n": "\\n", "\r": "\\r"})
 
 
 def parse_fields(raw: str | None) -> list[str] | None:
@@ -28,12 +29,14 @@ def parse_fields(raw: str | None) -> list[str] | None:
     return [f.strip() for f in raw.split(",") if f.strip()] or None
 
 
-def pluck(record, path: str):
+def lookup(record, path: str) -> tuple[bool, object]:
     """Follow a dotted path into a record; a numeric segment indexes a list.
 
-    Missing is not an error: the point is extracting a column across records
-    that do not all carry it, so a path that is not there is None (an empty
-    cell), including an index past either end of a list.
+    Returns (found, value): `found` is whether the path exists at all, so a
+    caller can tell a null value from a missing key in one walk. Missing is
+    not an error: the point is extracting a column across records that do not
+    all carry it, so a path that is not there is (False, None), including an
+    index past either end of a list.
     """
     value = record
     for part in path.split("."):
@@ -41,17 +44,22 @@ def pluck(record, path: str):
             try:
                 index = int(part)
             except ValueError:
-                return None
+                return False, None
             if not -len(value) <= index < len(value):
-                return None
+                return False, None
             value = value[index]
         elif isinstance(value, dict):
-            value = value.get(part)
+            if part not in value:
+                return False, None
+            value = value[part]
         else:
-            return None
-        if value is None:
-            return None
-    return value
+            return False, None
+    return True, value
+
+
+def pluck(record, path: str):
+    """The value at a dotted path, or None when it is missing (an empty cell)."""
+    return lookup(record, path)[1]
 
 
 def project(records: list, fields: list[str] | None) -> list:
@@ -111,7 +119,7 @@ def emit(
     if output:
         path = Path(output)
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(text)
+        path.write_text(text, encoding="utf-8")
         click.echo(
             f"Done. {meta.get('total', len(records))} record(s) written to {output} "
             f"({meta.get('pages', 1)} page(s)).",

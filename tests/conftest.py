@@ -24,6 +24,10 @@ class FakeResponse:
         return json.dumps({"data": self.body, "status": {"code": self.status_code}})
 
     @property
+    def content(self) -> bytes:
+        return self.text.encode("utf-8")
+
+    @property
     def headers(self) -> dict:
         return {"Date": self.date, "Content-Type": self.content_type}
 
