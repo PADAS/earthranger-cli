@@ -2129,3 +2129,14 @@ def test_version_flag():
     result = _run(["--version"])
     assert result.exit_code == 0
     assert result.output.strip() == f"er, version {__version__}"
+
+
+def test_list_event_types_fields_only_under_json(fake):
+    fake.event_types = [{"value": "a", "display": "A", "category": "c", "is_active": True}]
+    human = _run(["events", "list", "event-types"])
+    with_fields = _run(["events", "list", "event-types", "--fields", "value"])
+    # guardrail: --fields without --json changes nothing about the human output
+    assert with_fields.output == human.output
+    assert human.output.startswith("a")
+    as_json = _run(["events", "list", "event-types", "--json", "--fields", "value"])
+    assert json.loads(as_json.output)["records"] == [{"value": "a"}]

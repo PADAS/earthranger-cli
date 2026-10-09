@@ -554,3 +554,37 @@ def test_events_search_exact_value_beats_a_colliding_display_name(fake):
     assert result.exit_code == 0, result.output
     params = next(c for c in fake.calls if c[0] == "_get" and c[1] == "activity/events")[2]
     assert params["event_type"] == ["77777777-7777-7777-7777-777777777777"]
+
+
+def test_fields_and_format_on_a_read_command(fake):
+    fake.responses["subjects"] = {
+        "count": 2,
+        "next": None,
+        "results": [
+            {
+                "id": "s1",
+                "name": "Alpha",
+                "last_position": {"geometry": {"coordinates": [36.8, -1.3]}},
+            },
+            {"id": "s2", "name": "Beta, Jr"},
+        ],
+    }
+    result = _run(
+        ["subjects", "search", "--fields", "id,name,last_position.geometry.coordinates.1"]
+    )
+    assert result.exit_code == 0, result.output
+    doc = json.loads(result.output)
+    assert doc["records"][0] == {
+        "id": "s1",
+        "name": "Alpha",
+        "last_position.geometry.coordinates.1": -1.3,
+    }
+    assert doc["records"][1]["last_position.geometry.coordinates.1"] is None
+    assert doc["meta"]["total"] == 2
+
+    result = _run(["subjects", "search", "--fields", "id,name", "--format", "csv"])
+    assert result.output == 'id,name\ns1,Alpha\ns2,"Beta, Jr"\n'
+
+    result = _run(["subjects", "search", "--format", "tsv"])
+    assert result.exit_code == 2
+    assert "--format tsv needs --fields" in result.output

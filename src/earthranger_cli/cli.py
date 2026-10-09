@@ -33,7 +33,7 @@ from .events import (
     parse_field_args,
     post_events,
 )
-from .output import emit
+from .output import check_format, emit, output_options, parse_fields
 from .pull import PullError, pull_category, render_spec_yaml
 from .validate import UnknownEventType, validate_events
 
@@ -464,6 +464,7 @@ def json_output_options(f):
         "-o", "--output", type=click.Path(dir_okay=False), help="Write JSON here (implies --json)."
     )(f)
     f = click.option("--json", "json_", is_flag=True, help="Emit {records, meta} JSON.")(f)
+    f = output_options(f)
     return f
 
 
@@ -472,12 +473,14 @@ def json_output_options(f):
 @json_output_options
 @click.pass_context
 @_api_errors
-def list_categories(ctx, json_, output):
+def list_categories(ctx, json_, output, fields, fmt):
     """List event categories (inactive included)."""
     client = _connect(ctx)
     categories = list(client.get_event_categories(include_inactive=True))
     if json_ or output:
-        emit(categories, {"total": len(categories), "pages": 1}, output)
+        fields = parse_fields(fields)
+        check_format(fields, fmt)
+        emit(categories, {"total": len(categories), "pages": 1}, output, fields=fields, fmt=fmt)
         return
     for c in categories:
         active = "" if c.get("is_active", True) else "  (inactive)"
@@ -495,7 +498,7 @@ def _category_value_of(event_type: dict):
 @json_output_options
 @click.pass_context
 @_api_errors
-def list_event_types(ctx, category, json_, output):
+def list_event_types(ctx, category, json_, output, fields, fmt):
     """List event types (inactive included)."""
     client = _connect(ctx)
     types = [
@@ -504,7 +507,9 @@ def list_event_types(ctx, category, json_, output):
         if not category or _category_value_of(t) == category
     ]
     if json_ or output:
-        emit(types, {"total": len(types), "pages": 1}, output)
+        fields = parse_fields(fields)
+        check_format(fields, fmt)
+        emit(types, {"total": len(types), "pages": 1}, output, fields=fields, fmt=fmt)
         return
     for t in types:
         active = "" if t.get("is_active", True) else "  (inactive)"
@@ -522,7 +527,7 @@ def show_group():
 @json_output_options
 @click.pass_context
 @_api_errors
-def show_event_type(ctx, value, json_, output):
+def show_event_type(ctx, value, json_, output, fields, fmt):
     """Print the full v2 event type JSON plus its referenced Choice records."""
     client = _connect(ctx)
     types = client.get_event_types(include_inactive=True, include_schema=True, version="v2.0")
@@ -534,7 +539,9 @@ def show_event_type(ctx, value, json_, output):
     choices = {f: er.get_choices(client, f) for f in fields}
     doc = {"event_type": et, "choices": choices}
     if json_ or output:
-        emit([doc], {"total": 1, "pages": 1}, output)
+        fields = parse_fields(fields)
+        check_format(fields, fmt)
+        emit([doc], {"total": 1, "pages": 1}, output, fields=fields, fmt=fmt)
         return
     click.echo(json.dumps(doc, indent=2))
 

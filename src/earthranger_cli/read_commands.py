@@ -20,7 +20,7 @@ from urllib.parse import quote
 
 import click
 
-from .output import emit
+from .output import check_format, emit, output_options, parse_fields
 from .read import fetch, follow_pages
 
 
@@ -432,7 +432,9 @@ def _endpoint(spec: ReadCommand) -> str:
 
 
 def _make_command(spec: ReadCommand, deps: Deps) -> click.Command:
-    def callback(ctx, output, limit=None, **kwargs):
+    def callback(ctx, output, fields=None, fmt="json", limit=None, **kwargs):
+        fields = parse_fields(fields)
+        check_format(fields, fmt)
         # Build and validate the request before connecting: a usage error (a
         # missing selector, an unparseable --until) must not first demand a
         # server or prompt for a password.
@@ -464,7 +466,7 @@ def _make_command(spec: ReadCommand, deps: Deps) -> click.Command:
             version=spec.version,
             unwrap=spec.unwrap,
         )
-        emit(records, meta, output)
+        emit(records, meta, output, fields=fields, fmt=fmt)
 
     callback.__name__ = f"{spec.group}_{spec.name}".replace("-", "_")
     fn = deps.api_errors(callback)
@@ -483,6 +485,7 @@ def _make_command(spec: ReadCommand, deps: Deps) -> click.Command:
     fn = click.option(
         "-o", "--output", type=click.Path(dir_okay=False), help="Write JSON here instead of stdout."
     )(fn)
+    fn = output_options(fn)
     if spec.arg:
         fn = click.argument(spec.arg)(fn)
     fn = deps.connection_options(fn)
