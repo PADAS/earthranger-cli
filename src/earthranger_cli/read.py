@@ -86,17 +86,31 @@ def normalize_page(data: Any) -> tuple[list, str | None, int | None]:
     return [data], None, 1
 
 
-def follow_pages(client, page: Any, *, limit: int | None = None) -> tuple[list, int, int | None]:
+MAX_PAGES = 200  # otus's ceiling; ER's largest sites page far below this
+
+
+def follow_pages(
+    client, page: Any, *, limit: int | None = None
+) -> tuple[list, int, int | None, bool]:
     """Collect `page` and every page reachable through its `next` link.
 
     Stops as soon as `limit` records are in hand (no further requests) and
     trims any overshoot from the last page. Absolute `next` links use the
     configured API origin, preserving the server-provided path and query.
-    Returns (records, pages_fetched, count_reported).
+    Returns (records, pages_fetched, count_reported, truncated); `truncated`
+    is True when the walk stopped at MAX_PAGES or because a `next` link
+    repeated (a server bug that would otherwise loop forever), and the caller
+    says so in meta.
     """
     records, next_url, count = normalize_page(page)
     pages = 1
+    seen: set[str] = set()
+    truncated = False
     while next_url and (limit is None or len(records) < limit):
+        if pages >= MAX_PAGES or next_url in seen:
+            truncated = True
+            break
+        seen.add(next_url)
         link = urlsplit(next_url)
         if link.netloc:
             origin = urlsplit(client._api_root())
@@ -106,7 +120,7 @@ def follow_pages(client, page: Any, *, limit: int | None = None) -> tuple[list, 
         pages += 1
     if limit is not None:
         records = records[:limit]
-    return records, pages, count
+    return records, pages, count, truncated
 
 
 def fetch(
@@ -137,12 +151,50 @@ def fetch(
         # endpoint-specific envelope (e.g. {"features": [...]}) that normalize_page
         # would otherwise treat as a single record
         page = unwrap(page)
+    truncated = False
     if paginate:
-        records, pages, count = follow_pages(client, page, limit=limit)
+        records, pages, count, truncated = follow_pages(client, page, limit=limit)
     else:
         records, _, count = normalize_page(page)
         pages = 1
     meta: dict = {"total": len(records), "pages": pages}
     if count is not None:
         meta["count_reported"] = count
+    if truncated:
+        meta["truncated"] = True
+        meta["note"] = (
+            f"stopped after {pages} page(s); the result is a floor, not the total. "
+            "Narrow the query (--since/--until, --limit) or raise --page-size."
+        )
     return records, meta
+
+
+def fetch_count(
+    client,
+    path: str,
+    params: dict | None = None,
+    *,
+    version: str | None = None,
+    unwrap: Callable[[Any], Any] | None = None,
+) -> int | None:
+    """The server's own total for a query in one request: DRF reports `count`
+    beside the first page, so ask for one record and read the envelope. None
+    when the endpoint is a bare list or a single object (no count to read)."""
+    params = {k: v for k, v in (params or {}).items() if v is not None}
+    params["page_size"] = 1
+    base_url = client._api_root(version) if version else None
+    page = get_json(client, path, base_url=base_url, params=params)
+    if unwrap is not None:
+        page = unwrap(page)
+    if isinstance(page, dict) and "results" in page:
+        return page.get("count")
+    return None
+
+
+def fetch_text(client, path: str, params: dict | None = None) -> tuple[str, str]:
+    """GET a non-JSON body (the CSV exports). Returns (text, content_type).
+    erclient's `return_response=True` hands back the raw response on 2xx and
+    still raises its typed errors on 401/403/404."""
+    params = {k: v for k, v in (params or {}).items() if v is not None}
+    response = client._get(path, max_retries=0, params=params, return_response=True)
+    return response.text, response.headers.get("Content-Type", "")

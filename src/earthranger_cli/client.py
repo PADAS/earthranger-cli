@@ -238,7 +238,7 @@ def get_all_choices(client) -> list[dict]:
 
 def _collect_pages(client, page) -> list[dict]:
     """All records reachable from `page` (the first response) by following `next`."""
-    records, _pages, _count = follow_pages(client, page)
+    records, _pages, _count, _truncated = follow_pages(client, page)
     return records
 
 

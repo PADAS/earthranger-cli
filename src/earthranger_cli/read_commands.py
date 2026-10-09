@@ -111,7 +111,7 @@ def _all_event_types(client) -> list[dict]:
     """
     v1 = client.get_event_types(include_inactive=True)
     v2_page = client.get_event_types(include_inactive=True, version="v2.0")
-    v2, _, _ = follow_pages(client, v2_page)
+    v2, _, _, _ = follow_pages(client, v2_page)
     return [t for t in list(v1 or []) + list(v2) if isinstance(t, dict)]
 
 
