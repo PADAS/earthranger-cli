@@ -266,9 +266,13 @@ tusker's `er-cli` and the Skylight CLI, so agent skills can "write to
   `2w`) on `events search`, `events export`, `patrols search`, `observations
   search|export` and `tracks get` are computed from the site's clock and
   timezone, not the caller's; `er now` prints both and today's bounds. A bare
-  `--until 2026-08-31` means the end of that day. When one of these flags is
-  used, `meta.window` records the bounds sent and `meta` carries `server_utc`,
-  `site_now` and `site_tz`; a plain read makes no extra request.
+  `--since`/`--until` date is the site's calendar day on every command (a
+  bare `--until 2026-08-31` means the end of that day). When one of these
+  flags is used, `meta.window` records the bounds actually sent and `meta`
+  carries `server_utc`, `site_now` and `site_tz`. The site clock is fetched
+  only when something needs it: a time flag, a period `--group-by`, `er now`,
+  or a bare date on observations, tracks or an export, which must be sent
+  with the site's offset. Every other read makes no extra request.
 - **Counts.** `--count-only` asks the server for its total in one request
   (`records: [{"count": N}]`, `meta.exact`); `--group-by priority` counts per
   value, `--group-by month` per site-local period over the window.
