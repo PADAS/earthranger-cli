@@ -1,8 +1,9 @@
 # earthranger-cli
 
 A command-line utility for creating and **editing** EarthRanger event
-categories, choices, and v2 event types — and posting events — directly
-against the EarthRanger API, authenticated with a username and password.
+categories, choices, and v2 event types — posting events, and reading
+subjects, tracks, patrols and more as agent-friendly JSON — directly
+against the EarthRanger API, with a cached login session or a bearer token.
 
 You describe what you want in a small YAML spec (no hand-written JSON
 Schema); `er events apply` generates the ER v2 schema envelope and the
@@ -213,6 +214,7 @@ per profile; old `tokens/<host>.json` files are ignored.)
 | `events list event-types [--category V]` | List event types |
 | `events show event-type V` | Full v2 event-type JSON + its Choice records |
 | `events pull CATEGORY [-o FILE] [--skip-unsupported]` | Reconstruct a DSL spec from the server (reverse of apply) |
+| `choices list`, `choices show FIELD_NAME` | List choice fields with option counts (flagging sets no v2 schema references); print one choice set in display order. Writes stay spec-driven via `events apply` |
 | `events search [--event-type V[,V...]] [--limit N] [-o F]` | Search events; `--event-type` takes values, display names or ids (mixed is fine); JSON `{records, meta}` output |
 | `events get EVENT_ID [-o F]` | One event as a one-record `{records, meta}` document |
 | `events list categories\|event-types [--json] [-o F]`, `events show event-type V [--json] [-o F]` | Same as above, opt-in `{records, meta}` output |
