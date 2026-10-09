@@ -685,3 +685,68 @@ def test_today_without_site_timezone_exits_1(fake):
     assert result.exit_code == 1
     assert "no usable timezone (EAT)" in result.output
     assert _gets(fake) == []  # refused before asking for events
+
+
+def test_count_only_asks_the_server_once(fake):
+    fake.responses["activity/events"] = {"count": 1234, "next": "x", "results": [{"id": "e1"}]}
+    result = _run(["events", "search", "--count-only", "--state", "active"])
+    assert result.exit_code == 0, result.output
+    doc = json.loads(result.output)
+    assert doc["records"] == [{"count": 1234}]
+    assert doc["meta"]["count_reported"] == 1234 and doc["meta"]["exact"] is True
+    sent = _gets(fake)
+    assert len(sent) == 1 and sent[0][2]["page_size"] == 1 and sent[0][2]["state"] == ["active"]
+
+
+def test_count_only_walks_when_the_endpoint_has_no_count(fake):
+    fake.responses["regions"] = [{"id": "r1"}, {"id": "r2"}]
+    doc = json.loads(_run(["regions", "list", "--count_only"]).output)
+    assert doc["records"] == [{"count": 2}] and doc["meta"]["exact"] is True
+
+
+def test_group_by_field_and_unknown_field(fake):
+    fake.responses["activity/events"] = {
+        "count": 3,
+        "next": None,
+        "results": [{"priority": 300}, {"priority": 300}, {"priority": 0}],
+    }
+    doc = json.loads(_run(["events", "search", "--group-by", "priority"]).output)
+    assert doc["records"] == [{"group": "300", "count": 2}, {"group": "0", "count": 1}]
+    assert doc["meta"]["group_by"] == "priority" and doc["meta"]["records_counted"] == 3
+    result = _run(["events", "search", "--group-by", "nope"])
+    assert result.exit_code == 2
+    assert "no record carries 'nope'" in result.output and "priority" in result.output
+
+
+def test_group_by_month_needs_a_window(fake):
+    fake.responses["activity/events"] = {
+        "count": 2,
+        "next": None,
+        "results": [{"time": "2026-09-15T10:00:00Z"}, {"time": "2026-10-02T10:00:00Z"}],
+    }
+    result = _run(["events", "search", "--group-by", "month"])
+    assert result.exit_code == 2 and "needs a window" in result.output
+    doc = json.loads(
+        _run(
+            [
+                "events",
+                "search",
+                "--group-by",
+                "month",
+                "--since",
+                "2026-09-01",
+                "--until",
+                "2026-10-09",
+            ]
+        ).output
+    )
+    assert [(r["period"], r["count"]) for r in doc["records"]] == [("2026-09", 1), ("2026-10", 1)]
+    assert doc["meta"]["site_tz"] == "Africa/Nairobi"  # the clock was needed, so it is reported
+    fake.responses["subjects"] = {"count": 0, "next": None, "results": []}
+    result = _run(["subjects", "search", "--group-by", "day"])
+    assert result.exit_code == 2 and "needs a window" in result.output
+
+
+def test_count_only_and_group_by_are_exclusive(fake):
+    result = _run(["events", "search", "--count-only", "--group-by", "priority"])
+    assert result.exit_code == 2 and "either --count-only or --group-by" in result.output

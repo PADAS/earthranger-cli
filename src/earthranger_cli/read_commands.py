@@ -20,10 +20,11 @@ from urllib.parse import quote
 
 import click
 
+from . import aggregate
 from . import clock as _clock
 from . import windows as _windows
 from .output import check_format, emit, output_options, parse_fields
-from .read import fetch, follow_pages
+from .read import fetch, fetch_count, follow_pages
 
 
 @dataclass(frozen=True)
@@ -62,6 +63,8 @@ class ReadCommand:
     window: str | None = None
     # Fill --since this far before --until (or now) when no window flag is given.
     default_window: timedelta | None = None
+    # Dotted path to a record's timestamp, for --group-by day|week|month.
+    time_field: str | None = None
 
 
 @dataclass(frozen=True)
@@ -252,6 +255,7 @@ COMMANDS: tuple[ReadCommand, ...] = (
         prepare=_prepare_observations,
         window="since_until",
         default_window=OBSERVATIONS_DEFAULT_WINDOW,
+        time_field="recorded_at",
     ),
     ReadCommand(
         "events",
@@ -282,6 +286,7 @@ COMMANDS: tuple[ReadCommand, ...] = (
         ),
         resolve=_resolve_event_types,
         window="filter",
+        time_field="time",
     ),
     ReadCommand(
         "events", "get", "activity/event/{id}", "Retrieve one event.", "get", arg="event_id"
@@ -298,6 +303,7 @@ COMMANDS: tuple[ReadCommand, ...] = (
             _PAGE_SIZE,
         ),
         window="filter",
+        time_field="patrol_segments.0.time_range.start_time",
     ),
     ReadCommand(
         "patrols", "get", "activity/patrols/{id}", "Retrieve one patrol.", "get", arg="patrol_id"
@@ -428,10 +434,57 @@ def _endpoint(spec: ReadCommand) -> str:
     return f"[GET /api/{spec.version or 'v1.0'}/{path}]"
 
 
+def _grouped(ctx, client, spec: ReadCommand, records: list, meta: dict, group_by: str, window_meta):
+    """Rows of counts in place of records: per field value, or per site-local
+    period over the command's window."""
+    out_meta = {
+        k: v for k, v in meta.items() if k in ("pages", "count_reported", "truncated", "note")
+    }
+    out_meta["group_by"] = group_by
+    if group_by in _clock.PERIODS:
+        if not window_meta or not window_meta.get("since"):
+            raise click.UsageError(
+                f"--group-by {group_by} needs a window to divide: "
+                "pass --since/--until, --today, or --last."
+            )
+        if not spec.time_field:
+            raise click.UsageError(
+                f"{spec.group} records have no timestamp to bucket by {group_by}; "
+                "group by a field instead."
+            )
+        info = get_clock(ctx, client)
+        tz = _clock.site_tz(info)
+        if tz is None:
+            raise click.ClickException(
+                "the site reported no usable timezone, so --group-by cannot say where a day begins."
+            )
+        until = window_meta.get("until") or info.get("local") or info["utc"]
+        rows = aggregate.group_by_period(
+            records,
+            period=group_by,
+            since=window_meta["since"],
+            until=until,
+            tz=tz,
+            time_field=spec.time_field,
+        )
+    else:
+        rows, matched = aggregate.group_counts(records, group_by)
+        if records and not matched:
+            keys = ", ".join(aggregate.scalar_keys(records))
+            raise click.UsageError(f"no record carries {group_by!r}; fields seen: {keys}")
+    out_meta["total"] = len(rows)
+    out_meta["records_counted"] = sum(r["count"] for r in rows)
+    return rows, out_meta
+
+
 def _make_command(spec: ReadCommand, deps: Deps) -> click.Command:
     def callback(ctx, output, fields=None, fmt="json", limit=None, **kwargs):
         fields = parse_fields(fields)
         check_format(fields, fmt)
+        count_only = kwargs.pop("count_only", False)
+        group_by = kwargs.pop("group_by", None)
+        if count_only and group_by:
+            raise click.UsageError("pass either --count-only or --group-by, not both.")
         # Build and validate the request before connecting: a usage error (a
         # missing selector, conflicting window flags) must not first demand a
         # server or prompt for a password.
@@ -464,15 +517,36 @@ def _make_command(spec: ReadCommand, deps: Deps) -> click.Command:
             _windows.apply_window(spec.window, params, since, until)
         if spec.resolve is not None:
             params = spec.resolve(client, params)
-        records, meta = fetch(
-            client,
-            path,
-            params,
-            paginate=spec.kind == "list",
-            limit=limit,
-            version=spec.version,
-            unwrap=spec.unwrap,
-        )
+        if count_only:
+            n = fetch_count(client, path, params, version=spec.version, unwrap=spec.unwrap)
+            if n is None:
+                # a bare list or an envelope with no count: walk it and say how far we got
+                _records, walked = fetch(
+                    client,
+                    path,
+                    params,
+                    paginate=True,
+                    limit=limit,
+                    version=spec.version,
+                    unwrap=spec.unwrap,
+                )
+                n, pages, exact = walked["total"], walked["pages"], not walked.get("truncated")
+            else:
+                pages, exact = 1, True
+            records = [{"count": n}]
+            meta = {"total": 1, "pages": pages, "count_reported": n, "exact": exact}
+        else:
+            records, meta = fetch(
+                client,
+                path,
+                params,
+                paginate=spec.kind == "list",
+                limit=limit,
+                version=spec.version,
+                unwrap=spec.unwrap,
+            )
+            if group_by:
+                records, meta = _grouped(ctx, client, spec, records, meta, group_by, window_meta)
         if window_meta:
             meta["window"] = window_meta
         if ctx.obj.get("clock"):
@@ -493,6 +567,17 @@ def _make_command(spec: ReadCommand, deps: Deps) -> click.Command:
     if spec.window:
         fn = _windows.window_options(fn)
     if spec.kind == "list":
+        fn = click.option(
+            *_option_names("group_by"),
+            metavar="FIELD|day|week|month",
+            help="Count records per value of FIELD (a dotted path), or per site-local period "
+            "(needs a window: --since/--until, --today, --last).",
+        )(fn)
+        fn = click.option(
+            *_option_names("count_only"),
+            is_flag=True,
+            help="Report the server's count for the query in one request; no records.",
+        )(fn)
         fn = click.option(
             "--limit", type=click.IntRange(min=1), metavar="N", help="Cap total records returned."
         )(fn)
