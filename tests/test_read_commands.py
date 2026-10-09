@@ -1005,3 +1005,68 @@ def test_observations_group_by_day_buckets_a_utc_window_in_site_time(fake):
         ("2026-10-08", 0),
         ("2026-10-09", 1),
     ]
+
+
+def test_grouped_limit_note_keeps_the_where_note(fake):
+    fake.responses["activity/events"] = {
+        "count": 9,
+        "next": None,
+        "results": [
+            {"priority": 300, "event_type": "carcass", "event_details": {"species": "buffalo"}},
+            {"priority": 0, "event_type": "elephant_carcass", "event_details": {}},
+        ],
+    }
+    doc = json.loads(
+        _run(
+            [
+                "events",
+                "search",
+                "--where",
+                "species=buffalo",
+                "--group-by",
+                "priority",
+                "--limit",
+                "2",
+            ]
+        ).output
+    )
+    assert doc["meta"]["exact"] is False
+    assert "--where species=buffalo was applied here" in doc["meta"]["note"]
+    assert "no 'species' detail" in doc["meta"]["note"]
+    assert "--limit" in doc["meta"]["note"]
+
+
+def test_events_export_fallback_needs_a_window_or_filter(fake):
+    from erclient.er_errors import ERClientPermissionDenied
+
+    def denied(path, **kwargs):
+        raise ERClientPermissionDenied("no export permission")
+
+    fake.responses["activity/events/export"] = denied
+    # unbounded: the records fallback would walk every event on the site in detail
+    result = _run(["events", "export"])
+    assert result.exit_code == 1 and "no export permission" in result.output
+    assert _gets(fake) == []
+    fake.responses["activity/events"] = {"count": 0, "next": None, "results": []}
+    assert _run(["events", "export", "--since", "2026-10-01"]).exit_code == 0
+
+
+def test_period_group_by_usage_errors_come_before_connecting(fake, monkeypatch):
+    monkeypatch.setattr(cli_mod, "_connect", lambda ctx: pytest.fail("connected"))
+    result = _run(["events", "search", "--group-by", "day"])
+    assert result.exit_code == 2 and "needs a window" in result.output
+    result = _run(["subjects", "search", "--group-by", "month"])
+    assert result.exit_code == 2 and "needs a window" in result.output
+
+
+def test_export_done_line_counts_csv_records_not_newlines(fake, tmp_path):
+    from conftest import FakeResponse
+
+    body = 'id,notes\ne1,"first line\nsecond line"\ne2,plain\n'
+    fake.responses["activity/events/export"] = FakeResponse(
+        None, content_type="text/csv", text_override=body
+    )
+    target = tmp_path / "events.csv"
+    result = _run(["events", "export", "-o", str(target)])
+    assert result.exit_code == 0, result.output
+    assert result.stderr.strip() == f"Done. 2 data row(s) written to {target} (text/csv)."

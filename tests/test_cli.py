@@ -2135,9 +2135,12 @@ def test_list_event_types_fields_only_under_json(fake):
     fake.event_types = [{"value": "a", "display": "A", "category": "c", "is_active": True}]
     human = _run(["events", "list", "event-types"])
     with_fields = _run(["events", "list", "event-types", "--fields", "value"])
-    # guardrail: --fields without --json changes nothing about the human output
-    assert with_fields.output == human.output
-    assert human.output.startswith("a")
+    # guardrail: --fields without --json changes nothing about the human output,
+    # but a stderr hint says why nothing happened
+    assert with_fields.stdout == human.stdout
+    assert human.stdout.startswith("a")
+    assert "--fields" in with_fields.stderr and "--json" in with_fields.stderr
+    assert human.stderr == ""
     as_json = _run(["events", "list", "event-types", "--json", "--fields", "value"])
     assert json.loads(as_json.output)["records"] == [{"value": "a"}]
 

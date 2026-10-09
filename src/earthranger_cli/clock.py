@@ -106,8 +106,14 @@ def fetch_clock(client) -> dict:
     """One GET /status: UTC from the HTTP Date header (the body carries no
     timestamp), the site's timezone from the body."""
     response = client._get("status", max_retries=0, return_response=True)
+    now = None
     date_hdr = response.headers.get("Date")
-    now = parsedate_to_datetime(date_hdr).astimezone(UTC) if date_hdr else datetime.now(UTC)
+    if date_hdr:
+        try:
+            now = parsedate_to_datetime(date_hdr).astimezone(UTC)
+        except (TypeError, ValueError, IndexError):
+            now = None  # a proxy rewrote the header into something unparseable
+    now = now or datetime.now(UTC)
     info: dict = {
         "utc": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
         "timezone_name": None,

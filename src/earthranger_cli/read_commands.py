@@ -11,12 +11,13 @@ output.emit) so agent skills can consume it unchanged.
 
 from __future__ import annotations
 
+import csv
 import difflib
 import fnmatch
-import json
+import io
 import re
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, timedelta
 from pathlib import Path
 from typing import Any
@@ -80,6 +81,9 @@ class ReadCommand:
     # the fallback cannot carry the question, and the 403 stands rather than
     # widening it.
     fallback: dict | None = None
+    # Query params a `--where` filter needs the server to include (the detail
+    # it reads), declared on the row rather than assumed by the shared callback.
+    where_params: dict = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -251,25 +255,12 @@ def _resolve_subject_group(client, params: dict) -> dict:
     )
 
 
-def _merge_filter(params: dict, **fields) -> None:
-    """Set keys inside the `filter` JSON object, keeping whatever else it holds."""
-    raw = params.get("filter")
-    try:
-        current = json.loads(raw) if raw else {}
-    except json.JSONDecodeError as e:
-        raise click.UsageError(f"--filter is not valid JSON ({e}).") from None
-    if not isinstance(current, dict):
-        raise click.UsageError("--filter must be a JSON object.")
-    current.update(fields)
-    params["filter"] = json.dumps(current, separators=(",", ":"))
-
-
 def _resolve_export_event_types(client, params: dict) -> dict:
     """The export view reads event types only from inside `filter`."""
     params = _resolve_event_types(client, params)
     ids = params.pop("event_type", None)
     if ids:
-        _merge_filter(params, event_type=list(ids))
+        _windows.merge_filter(params, event_type=list(ids))
     return params
 
 
@@ -425,6 +416,7 @@ COMMANDS: tuple[ReadCommand, ...] = (
         resolve=_resolve_event_types,
         window="filter",
         time_field="time",
+        where_params={"include_details": "true"},
     ),
     ReadCommand(
         "events", "get", "activity/event/{id}", "Retrieve one event.", "get", arg="event_id"
@@ -458,6 +450,9 @@ COMMANDS: tuple[ReadCommand, ...] = (
             "keep": {"filter": "filter", "state": "state", "bbox": "bbox"},
             "drop": {"value_cols", "display_cols"},
             "add": {"include_details": "true"},
+            # the CSV export is legitimately whole-site; a detailed JSON walk of
+            # every event is not, so the fallback needs a window or a filter
+            "require_any": {"filter"},
         },
     ),
     ReadCommand(
@@ -627,20 +622,14 @@ def _grouped(
     out_meta["fetched"] = fetched
     out_meta["exact"] = not meta.get("truncated") and (limit is None or fetched < limit)
     if not out_meta["exact"] and not meta.get("truncated"):
-        out_meta["note"] = (
+        limit_note = (
             f"grouped only the {fetched} record(s) --limit allowed; counts are a floor, not totals."
         )
+        out_meta["note"] = (
+            f"{out_meta['note']} {limit_note}" if out_meta.get("note") else limit_note
+        )
     if group_by in _clock.PERIODS:
-        if not window_meta or not window_meta.get("since"):
-            raise click.UsageError(
-                f"--group-by {group_by} needs a window to divide: "
-                "pass --since/--until, --today, or --last."
-            )
-        if not spec.time_field:
-            raise click.UsageError(
-                f"{spec.group} records have no timestamp to bucket by {group_by}; "
-                "group by a field instead."
-            )
+        # the window and time_field were checked before connecting (callback)
         info = get_clock(ctx, client)
         tz = _clock.site_tz(info)
         if tz is None:
@@ -689,6 +678,9 @@ def _emit_raw(
                 mapped[plan["keep"][name]] = value
             if mapped is not None and not plan.get("require", set()) <= set(mapped):
                 mapped = None
+            require_any = plan.get("require_any")
+            if mapped is not None and require_any and not (require_any & set(mapped)):
+                mapped = None
         if mapped is None:
             raise
         note = (
@@ -705,7 +697,8 @@ def _emit_raw(
         target = Path(output)
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(body)
-        rows = max(body.count("\n") - 1, 0) if body.strip() else 0
+        # CSV records, not newlines: the server quotes multi-line notes
+        rows = max(sum(1 for _ in csv.reader(io.StringIO(body))) - 1, 0) if body.strip() else 0
         click.echo(
             f"Done. {rows} data row(s) written to {output} ({content_type or 'text/csv'}).",
             err=True,
@@ -744,7 +737,24 @@ def _make_command(spec: ReadCommand, deps: Deps) -> click.Command:
                 params[flag.param] = value
         where = aggregate.parse_where(kwargs.get("where")) if "where" in kwargs else []
         if where:
-            params["include_details"] = "true"  # the filter reads event_details
+            params.update(spec.where_params)  # e.g. include_details, which the filter reads
+        if group_by in _clock.PERIODS:
+            # both facts are known now; failing after a full walk would waste it
+            if win is None:
+                raise click.UsageError(
+                    f"--group-by {group_by} needs a window, and {spec.group} records have "
+                    "none to divide; group by a field instead."
+                )
+            if not (win.since or win.mode or spec.default_window):
+                raise click.UsageError(
+                    f"--group-by {group_by} needs a window to divide: "
+                    "pass --since/--until, --today, or --last."
+                )
+            if not spec.time_field:
+                raise click.UsageError(
+                    f"{spec.group} records have no timestamp to bucket by {group_by}; "
+                    "group by a field instead."
+                )
         if spec.prepare is not None:
             params = spec.prepare(params)
         client = deps.connect(ctx)

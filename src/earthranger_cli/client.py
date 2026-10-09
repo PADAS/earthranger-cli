@@ -237,8 +237,17 @@ def get_all_choices(client) -> list[dict]:
 
 
 def _collect_pages(client, page) -> list[dict]:
-    """All records reachable from `page` (the first response) by following `next`."""
-    records, _pages, _count, _truncated = follow_pages(client, page)
+    """All records reachable from `page` (the first response) by following `next`.
+
+    The authoring commands act on this list as the complete set (a missing
+    choice gets created, a missing type gets flagged), so a walk the page cap
+    or a repeated `next` link cut short is refused rather than returned."""
+    records, pages, _count, truncated = follow_pages(client, page)
+    if truncated:
+        raise ERClientException(
+            f"the server's listing did not end after {pages} page(s) (an endless or repeated "
+            "`next` link); refusing to treat a partial list as complete."
+        )
     return records
 
 

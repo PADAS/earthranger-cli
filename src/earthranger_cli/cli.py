@@ -457,6 +457,17 @@ def list_group():
     """List objects on the server."""
 
 
+def _table_options_hint(json_, output, fields, fmt) -> None:
+    """The human listing is unchanged by --fields/--format (by design); say so
+    on stderr rather than let the flags vanish without a trace."""
+    if (fields or fmt != "json") and not (json_ or output):
+        click.echo(
+            "note: --fields/--format apply to the JSON document; add --json or -o. "
+            "Showing the human listing.",
+            err=True,
+        )
+
+
 def json_output_options(f):
     """Opt-in agent output for the older read commands: --json switches to the
     {records, meta} contract; -o implies --json and writes the document to a file."""
@@ -475,6 +486,7 @@ def json_output_options(f):
 @_api_errors
 def list_categories(ctx, json_, output, fields, fmt):
     """List event categories (inactive included)."""
+    _table_options_hint(json_, output, fields, fmt)
     client = _connect(ctx)
     categories = list(client.get_event_categories(include_inactive=True))
     if json_ or output:
@@ -500,6 +512,7 @@ def _category_value_of(event_type: dict):
 @_api_errors
 def list_event_types(ctx, category, json_, output, fields, fmt):
     """List event types (inactive included)."""
+    _table_options_hint(json_, output, fields, fmt)
     client = _connect(ctx)
     types = [
         t
@@ -529,6 +542,7 @@ def show_group():
 @_api_errors
 def show_event_type(ctx, value, json_, output, fields, fmt):
     """Print the full v2 event type JSON plus its referenced Choice records."""
+    _table_options_hint(json_, output, fields, fmt)
     client = _connect(ctx)
     types = client.get_event_types(include_inactive=True, include_schema=True, version="v2.0")
     et = next((t for t in types if t.get("value") == value), None)

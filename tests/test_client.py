@@ -276,3 +276,19 @@ def test_get_me_body_failure_is_retried(monkeypatch):
     client._get.side_effect = [ChunkedEncodingError(ProtocolError("x")), {"username": "chris"}]
     assert get_me(client) == {"username": "chris"}
     assert client._get.call_count == 2
+
+
+def test_collect_pages_refuses_a_truncated_choices_listing(monkeypatch):
+    from unittest.mock import Mock
+
+    from erclient.er_errors import ERClientException
+
+    from earthranger_cli import client as er
+    from earthranger_cli import read
+
+    monkeypatch.setattr(read, "MAX_PAGES", 1)
+    client = Mock()
+    client._api_root.return_value = "https://x/api/v1.0"
+    first = {"count": 500, "next": "https://x/api/v1.0/choices/?page=2", "results": [{"id": "c1"}]}
+    with pytest.raises(ERClientException, match="did not end"):
+        er._collect_pages(client, first)

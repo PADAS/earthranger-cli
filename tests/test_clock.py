@@ -142,3 +142,12 @@ def test_period_ends_keep_the_final_fractional_second():
     tz = ZoneInfo("Africa/Nairobi")
     (_label, lo, hi), *_ = clock.bucket_window("2026-10-08", "2026-10-08", "day", tz)
     assert (lo, hi) == ("2026-10-08T00:00:00+03:00", "2026-10-08T23:59:59.999999+03:00")
+
+
+def test_fetch_clock_survives_a_malformed_date_header():
+    from conftest import FakeResponse
+
+    fake = FakeER()
+    fake.responses["status"] = FakeResponse(fake.status, date="not a date at all")
+    info = clock.fetch_clock(fake)
+    assert info["utc"].endswith("Z") and info["timezone_name"] == "Africa/Nairobi"
