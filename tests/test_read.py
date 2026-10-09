@@ -278,3 +278,12 @@ def test_fetch_count_asks_for_one_record():
 def test_fetch_count_is_none_for_unpaginated_endpoints():
     client = _Client({"things": [{"i": 0}, {"i": 1}]})
     assert read.fetch_count(client, "things", {}) is None
+
+
+def test_follow_pages_stops_when_a_page_repeats_the_first_page():
+    # a next link pointing back at page 1 must not append page 1's records twice
+    client = _Client({"p2": {"results": [{"id": "a"}, {"id": "b"}], "next": "p1"}})
+    first = {"results": [{"id": "a"}, {"id": "b"}], "next": "p2"}
+    records, _pages, _, truncated = read.follow_pages(client, first)
+    assert [r["id"] for r in records] == ["a", "b"]
+    assert truncated is True

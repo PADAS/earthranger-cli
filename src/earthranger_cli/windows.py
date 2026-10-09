@@ -163,6 +163,17 @@ def apply_window(kind: str, params: dict, since, until) -> None:
         return
     lower, upper = ("since", "until") if kind == "since_until" else ("after_date", "before_date")
     if since is not None:
-        params[lower] = since
+        params[lower] = _aware(since)
     if until is not None:
-        params[upper] = until
+        params[upper] = _aware(until)
+
+
+def _aware(value: str) -> str:
+    """A naive bound with an explicit UTC offset. das reads a naive observation
+    bound as UTC on the search endpoint and chokes comparing one against an
+    aware datetime on the export, so the CLI never sends a naive wall time to
+    these endpoints; an aware value passes through untouched."""
+    parsed = clock.parse_ts(value)
+    if parsed is None or value.strip()[-1] in "Zz" or re.search(r"[+-]\d{2}:?\d{2}$", value):
+        return value
+    return parsed.isoformat(timespec="microseconds" if parsed.microsecond else "seconds")

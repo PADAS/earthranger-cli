@@ -176,8 +176,21 @@ def _resolve_event_types(client, params: dict) -> dict:
         if _UUID_RE.match(w):
             resolved.append(w)
             continue
+        if w in by_value:
+            resolved.append(by_value[w])
+            continue
+        matches = by_display.get(w.casefold(), [])
+        if len(matches) == 1:
+            resolved.append(matches[0]["id"])
+            continue
+        if len(matches) > 1:
+            options = ", ".join(sorted(f"{m.get('value')} ({m['id']})" for m in matches))
+            raise click.UsageError(
+                f"display name {w!r} matches {len(matches)} event types: {options}. "
+                "Pass the value or id instead."
+            )
         if any(ch in w for ch in "*?["):
-            # a pattern: every type whose value or display matches, named on stderr
+            # only after no exact value/display matched: a pattern (brackets included)
             pat = w.casefold()
             hits = [
                 t
@@ -199,19 +212,6 @@ def _resolve_event_types(client, params: dict) -> dict:
                 f"note: --event-type {w!r} matched {len(hits)} type(s): {matched}.", err=True
             )
             continue
-        if w in by_value:
-            resolved.append(by_value[w])
-            continue
-        matches = by_display.get(w.casefold(), [])
-        if len(matches) == 1:
-            resolved.append(matches[0]["id"])
-            continue
-        if len(matches) > 1:
-            options = ", ".join(sorted(f"{m.get('value')} ({m['id']})" for m in matches))
-            raise click.UsageError(
-                f"display name {w!r} matches {len(matches)} event types: {options}. "
-                "Pass the value or id instead."
-            )
         available = ", ".join(sorted(by_value))
         displays = [str(t["display"]) for t in types if t.get("display")]
         close = difflib.get_close_matches(w, list(by_value) + displays, n=3, cutoff=0.6)
@@ -371,9 +371,16 @@ COMMANDS: tuple[ReadCommand, ...] = (
         window="after_before",
         fallback={
             "path": "observations",
-            "keep": {"after_date": "since", "before_date": "until", "subject_id": "subject_id"},
+            "keep": {
+                "after_date": "since",
+                "before_date": "until",
+                "subject_id": "subject_id",
+                "filter": "filter",
+            },
             "drop": set(),
             "add": {"include_details": "true"},
+            # the records endpoint is bounded the way `observations search` is
+            "default_window": OBSERVATIONS_DEFAULT_WINDOW,
             # without a selector the records endpoint is every observation on
             # the site (what `observations search` refuses); the 403 stands
             "require": {"subject_id"},
@@ -696,6 +703,15 @@ def _emit_raw(
                 mapped = None
         if mapped is None:
             raise
+        default_window = plan.get("default_window")
+        if default_window is not None and "since" not in mapped:
+            since, _until, _ = _windows.resolve_window(
+                _windows.WindowRequest(None, mapped.get("until"), None, None),
+                get_info=None,
+                default_window=default_window,
+                note=lambda text: click.echo(text, err=True),
+            )
+            mapped["since"] = since
         note = (
             f"this account may not export ({e}); these are the matching records as JSON "
             f"from GET /api/v1.0/{plan['path']} instead of the CSV."
@@ -787,6 +803,11 @@ def _make_command(spec: ReadCommand, deps: Deps) -> click.Command:
             _windows.apply_window(spec.window, params, since, until)
         if spec.resolve is not None:
             params = spec.resolve(client, params)
+        # the site zone decides where buckets begin; refuse before the walk, not after
+        if group_by in _clock.PERIODS and _clock.site_tz(get_clock(ctx, client)) is None:
+            raise click.ClickException(
+                "the site reported no usable timezone, so --group-by cannot say where a day begins."
+            )
         if spec.kind == "raw":
             extra = {"window": window_meta} if window_meta else {}
             if ctx.obj.get("clock"):

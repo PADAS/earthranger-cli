@@ -14,23 +14,46 @@ from .output import cell, pluck
 
 
 def group_counts(records: list, field: str) -> tuple[list[dict], int]:
-    """Count records per distinct value of `field`. Returns (rows, matched):
-    `matched` is how many records carried the field at all, so a caller can
-    tell "everything is None" from "there were no records". Commonest first,
-    then by value, because that is the order the answer is read in."""
+    """Count records per distinct value of `field`. Returns (rows, present):
+    `present` is how many records carry the key at all (a null value counts),
+    so a caller can tell "the field is not there" from "it is null everywhere".
+    Commonest first, then by value, because that is the order the answer is
+    read in."""
     counts: dict[str, int] = {}
     matched = 0
     for record in records:
         if not isinstance(record, dict):
             continue
         value = pluck(record, field)
-        if value is not None and value != "":
+        if has_path(record, field):
             matched += 1
         key = cell(value)
         counts[key] = counts.get(key, 0) + 1
     rows = [{"group": key or "(none)", "count": n} for key, n in counts.items()]
     rows.sort(key=lambda row: (-row["count"], str(row["group"])))
     return rows, matched
+
+
+def has_path(record, path: str) -> bool:
+    """Whether the dotted path exists in the record, whatever its value."""
+    value = record
+    parts = path.split(".")
+    for i, part in enumerate(parts):
+        last = i == len(parts) - 1
+        if isinstance(value, dict):
+            if part not in value:
+                return False
+            value = value[part]
+        elif isinstance(value, list):
+            try:
+                value = value[int(part)]
+            except (ValueError, IndexError):
+                return False
+        else:
+            return False
+        if last:
+            return True
+    return False
 
 
 def scalar_keys(records: list, limit: int = 25) -> list[str]:

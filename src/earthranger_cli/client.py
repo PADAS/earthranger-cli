@@ -242,11 +242,12 @@ def _collect_pages(client, page) -> list[dict]:
     The authoring commands act on this list as the complete set (a missing
     choice gets created, a missing type gets flagged), so a walk the page cap
     or a repeated `next` link cut short is refused rather than returned."""
-    records, pages, _count, truncated = follow_pages(client, page)
+    # no page cap here: a long choices list is legitimate; only a loop is refused
+    records, pages, _count, truncated = follow_pages(client, page, cap=False)
     if truncated:
         raise ERClientException(
-            f"the server's listing did not end after {pages} page(s) (an endless or repeated "
-            "`next` link); refusing to treat a partial list as complete."
+            f"the server's listing did not end after {pages} page(s): its `next` link repeated; "
+            "refusing to treat a partial list as complete."
         )
     return records
 

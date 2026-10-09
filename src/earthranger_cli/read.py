@@ -89,8 +89,13 @@ def normalize_page(data: Any) -> tuple[list, str | None, int | None]:
 MAX_PAGES = 200  # otus's ceiling; ER's largest sites page far below this
 
 
+def _page_keys(records: list) -> tuple | None:
+    keys = tuple(r.get("id") for r in records if isinstance(r, dict))
+    return keys if keys and len(keys) == len(records) and all(keys) else None
+
+
 def follow_pages(
-    client, page: Any, *, limit: int | None = None
+    client, page: Any, *, limit: int | None = None, cap: bool = True
 ) -> tuple[list, int, int | None, bool]:
     """Collect `page` and every page reachable through its `next` link.
 
@@ -98,16 +103,17 @@ def follow_pages(
     trims any overshoot from the last page. Absolute `next` links use the
     configured API origin, preserving the server-provided path and query.
     Returns (records, pages_fetched, count_reported, truncated); `truncated`
-    is True when the walk stopped at MAX_PAGES or because a `next` link
-    repeated (a server bug that would otherwise loop forever), and the caller
-    says so in meta.
+    is True when the walk stopped at MAX_PAGES (unless `cap` is False) or
+    because a `next` link repeated or led back to the first page (a server
+    bug that would otherwise loop forever), and the caller says so in meta.
     """
     records, next_url, count = normalize_page(page)
+    first_keys = _page_keys(records)  # page 1's URL is unknown here; its records are not
     pages = 1
     seen: set[str] = set()
     truncated = False
     while next_url and (limit is None or len(records) < limit):
-        if pages >= MAX_PAGES or next_url in seen:
+        if (cap and pages >= MAX_PAGES) or next_url in seen:
             truncated = True
             break
         seen.add(next_url)
@@ -116,6 +122,9 @@ def follow_pages(
             origin = urlsplit(client._api_root())
             next_url = urlunsplit((origin.scheme, origin.netloc, link.path, link.query, ""))
         more, next_url, _ = normalize_page(get_json(client, next_url))
+        if first_keys is not None and _page_keys(more) == first_keys:
+            truncated = True  # a `next` that led back to page 1: stop before duplicating it
+            break
         records.extend(more)
         pages += 1
     if limit is not None:

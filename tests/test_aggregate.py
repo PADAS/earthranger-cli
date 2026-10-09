@@ -113,3 +113,11 @@ def test_group_by_period_counts_the_last_fractional_second_of_a_day():
         time_field="time",
     )
     assert [(r["period"], r["count"]) for r in rows] == [("2026-10-08", 1), ("2026-10-09", 1)]
+
+
+def test_group_counts_present_counts_the_key_not_its_emptiness():
+    rows, present = aggregate.group_counts([{"p": None}, {"p": None}, {"q": 1}], "p")
+    assert rows == [{"group": "(none)", "count": 3}]
+    assert present == 2
+    _, present = aggregate.group_counts([{"a": {"b": None}}, {"a": {}}], "a.b")
+    assert present == 1

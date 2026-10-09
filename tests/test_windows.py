@@ -113,3 +113,18 @@ def test_parse_window_rejects_unparseable_bounds_before_connecting():
     with pytest.raises(click.UsageError, match="--since must be an ISO-8601 timestamp"):
         windows.parse_window(_kw(since="01/10/2026"))
     assert windows.parse_window(_kw(since="2026-10-01")).since == "2026-10-01"
+
+
+def test_apply_window_sends_naive_since_until_bounds_as_utc():
+    # review: das compares observation bounds against aware datetimes (and reads a
+    # naive one as UTC), so a naive wall time must leave with an offset
+    params = {}
+    windows.apply_window("after_before", params, None, "2026-08-31T23:59:59.999999")
+    assert params == {"before_date": "2026-08-31T23:59:59.999999+00:00"}
+    params = {}
+    windows.apply_window("since_until", params, "2026-01-01", "2026-01-01T00:00:00Z")
+    assert params == {"since": "2026-01-01T00:00:00+00:00", "until": "2026-01-01T00:00:00Z"}
+    # the filter kind stays naive: das reads it in the site zone
+    params = {}
+    windows.apply_window("filter", params, "2026-08-01", None)
+    assert json.loads(params["filter"]) == {"date_range": {"lower": "2026-08-01"}}

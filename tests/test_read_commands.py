@@ -1088,3 +1088,60 @@ def test_export_with_a_huge_csv_field_still_succeeds(fake, tmp_path):
     assert result.stdout == ""
     assert f"written to {target}" in result.stderr
     assert "row count unavailable" in result.stderr
+
+
+def test_group_by_field_with_all_null_values_is_one_none_row(fake):
+    fake.responses["activity/events"] = {
+        "count": 2,
+        "next": None,
+        "results": [{"priority_label": None}, {"priority_label": None}],
+    }
+    result = _run(["events", "search", "--group-by", "priority_label"])
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output)["records"] == [{"group": "(none)", "count": 2}]
+
+
+def test_period_group_by_checks_the_site_timezone_before_fetching(fake):
+    fake.status = {"server_timezone": "EAT"}
+    result = _run(
+        [
+            "events",
+            "search",
+            "--since",
+            "2026-07-01",
+            "--until",
+            "2026-09-30",
+            "--group-by",
+            "month",
+        ]
+    )
+    assert result.exit_code == 1 and "no usable timezone" in result.output
+    assert _gets(fake) == []
+
+
+def test_observations_export_fallback_defaults_the_window_and_keeps_filter(fake):
+    from erclient.er_errors import ERClientPermissionDenied
+
+    def denied(path, **kwargs):
+        raise ERClientPermissionDenied("no export permission")
+
+    fake.responses["trackingdata/export"] = denied
+    fake.responses["observations"] = {"count": 0, "next": None, "results": []}
+    result = _run(["observations", "export", "--subject-id", "s1", "--filter", "0"])
+    assert result.exit_code == 0, result.output
+    sent = _gets(fake)[0][2]
+    assert sent["subject_id"] == "s1" and sent["filter"] == "0"
+    assert sent["since"].endswith("Z")  # the 24 h default observations search applies
+    assert "defaulting to the 24 hours before now" in result.stderr
+
+
+def test_event_type_with_brackets_matches_exactly_before_globbing(fake):
+    fake.event_types = [
+        {"id": "t1", "value": "sighting_legacy", "display": "Wildlife Sighting [legacy]"},
+        {"id": "t2", "value": "sighting", "display": "Wildlife Sighting"},
+    ]
+    fake.responses["activity/events"] = {"count": 0, "next": None, "results": []}
+    result = _run(["events", "search", "--event-type", "Wildlife Sighting [legacy]"])
+    assert result.exit_code == 0, result.output
+    assert _gets(fake)[0][2]["event_type"] == ["t1"]
+    assert "matched" not in result.stderr

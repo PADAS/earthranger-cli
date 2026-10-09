@@ -151,3 +151,13 @@ def test_fetch_clock_survives_a_malformed_date_header():
     fake.responses["status"] = FakeResponse(fake.status, date="not a date at all")
     info = clock.fetch_clock(fake)
     assert info["utc"].endswith("Z") and info["timezone_name"] == "Africa/Nairobi"
+
+
+def test_fetch_clock_reads_an_unknown_local_date_header_as_utc():
+    # review: '-0000' makes parsedate_to_datetime return a naive datetime, which
+    # astimezone would read as the host's local time
+    from conftest import FakeResponse
+
+    fake = FakeER()
+    fake.responses["status"] = FakeResponse(fake.status, date="Tue, 06 Oct 2026 10:00:00 -0000")
+    assert clock.fetch_clock(fake)["utc"] == "2026-10-06T10:00:00Z"

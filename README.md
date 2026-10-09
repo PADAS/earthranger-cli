@@ -230,9 +230,10 @@ per profile; old `tokens/<host>.json` files are ignored.)
 
 Every paginated read command answers to both `list` and `search` (`er subjects list`
 and `er regions search` both work); the names above are the ones shown in `--help`.
-Every read command takes `--fields a,b.c` and `--format json|tsv|csv`; every
-paginated one takes `--count-only` and `--group-by FIELD|day|week|month`
-(see *Windows, counts, columns* below).
+Every command that emits the records document (all reads except the two CSV
+exports) takes `--fields a,b.c` and `--format json|tsv|csv`; every paginated
+one takes `--count-only` and `--group-by FIELD|day|week|month` (see *Windows,
+counts, columns* below).
 
 ## Reading data (agent-friendly JSON)
 

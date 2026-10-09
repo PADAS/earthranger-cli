@@ -110,7 +110,9 @@ def fetch_clock(client) -> dict:
     date_hdr = response.headers.get("Date")
     if date_hdr:
         try:
-            now = parsedate_to_datetime(date_hdr).astimezone(UTC)
+            parsed = parsedate_to_datetime(date_hdr)
+            # "-0000" (unknown local) parses naive; it is UTC, not this host's zone
+            now = (parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)).astimezone(UTC)
         except (TypeError, ValueError, IndexError):
             now = None  # a proxy rewrote the header into something unparseable
     now = now or datetime.now(UTC)
