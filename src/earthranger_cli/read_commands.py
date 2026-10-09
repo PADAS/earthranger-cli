@@ -24,7 +24,7 @@ from typing import Any
 from urllib.parse import quote
 
 import click
-from erclient.er_errors import ERClientPermissionDenied
+from erclient.er_errors import ERClientException, ERClientPermissionDenied
 
 from . import aggregate
 from . import clock as _clock
@@ -140,7 +140,13 @@ def _all_event_types(client) -> list[dict]:
     """
     v1 = client.get_event_types(include_inactive=True)
     v2_page = client.get_event_types(include_inactive=True, version="v2.0")
-    v2, _, _, _ = follow_pages(client, v2_page)
+    v2, pages, _, truncated = follow_pages(client, v2_page, cap=False)
+    if truncated:
+        # a partial listing would resolve names against half the types
+        raise ERClientException(
+            f"the server's event-type listing did not end after {pages} page(s): its `next` "
+            "link repeated; refusing to resolve names against a partial list."
+        )
     seen: set = set()
     types = []
     for t in list(v1 or []) + list(v2):
@@ -230,7 +236,11 @@ def _resolve_subject_group(client, params: dict) -> dict:
     if not wanted or _UUID_RE.match(wanted):
         return params
     groups, _ = fetch(
-        client, "subjectgroups", {"flat": "true", "include_inactive": "true"}, paginate=True
+        client,
+        "subjectgroups",
+        # names and ids only: the default renders every subject's last position
+        {"flat": "true", "include_inactive": "true", "render_last_location": "false"},
+        paginate=True,
     )
     hits = [
         g
@@ -650,9 +660,8 @@ def _grouped(
         info = get_clock(ctx, client)
         tz = _clock.site_tz(info)  # refused before the walk if None (callback)
         until = window_meta.get("until") or info.get("local") or info["utc"]
-        # das reads a naive date inside an events/patrols filter in the site zone,
-        # but a naive observations since/until in UTC; bucket the way it windowed
-        naive_tz = tz if spec.window == "filter" else UTC
+        # a naive bound here is a filter-kind one, which das reads in the site zone
+        # (the other kinds were sent, and recorded in window_meta, with an offset)
         rows, unbucketed = aggregate.group_by_period(
             records,
             period=group_by,
@@ -660,7 +669,7 @@ def _grouped(
             until=until,
             tz=tz,
             time_field=spec.time_field,
-            naive_tz=naive_tz,
+            naive_tz=tz,
         )
         out_meta["unbucketed"] = unbucketed
         if unbucketed:
@@ -823,7 +832,24 @@ def _make_command(spec: ReadCommand, deps: Deps) -> click.Command:
                 default_window=spec.default_window,
                 note=lambda text: click.echo(text, err=True),
             )
-            _windows.apply_window(spec.window, params, since, until)
+            naive_tz = None
+            if spec.window != "filter" and (_windows.is_naive(since) or _windows.is_naive(until)):
+                # a bare date is the site's calendar day on every command; these
+                # endpoints need it spelled with the site's offset, so this is the
+                # one plain read that fetches the clock
+                naive_tz = _clock.site_tz(get_clock(ctx, client))
+                if naive_tz is None:
+                    click.echo(
+                        "note: the site reported no usable timezone; bare --since/--until "
+                        "dates are read as UTC.",
+                        err=True,
+                    )
+                    naive_tz = UTC
+            _windows.apply_window(spec.window, params, since, until, naive_tz=naive_tz)
+            if window_meta and spec.window != "filter":
+                lower, upper = _windows.bound_params(spec.window)
+                window_meta["since"] = params.get(lower, window_meta.get("since"))
+                window_meta["until"] = params.get(upper, window_meta.get("until"))
         if spec.resolve is not None:
             params = spec.resolve(client, params)
         # the site zone decides where buckets begin; refuse before the walk, not after
@@ -853,10 +879,17 @@ def _make_command(spec: ReadCommand, deps: Deps) -> click.Command:
                 n, pages = walked["total"], walked["pages"]
                 # a walk cut short by --limit is a floor too, not just a truncated one
                 exact = _walk_exact(walked, limit, n)
+                floor_note = walked.get("note")
+                if not exact and not walked.get("truncated"):
+                    floor_note = (
+                        f"--limit stopped the walk at {n}; the count is a floor, not the total."
+                    )
             else:
-                pages, exact = 1, True
+                pages, exact, floor_note = 1, True, None
             records = [{"count": n}]
             meta = {"total": 1, "pages": pages, "count_reported": n, "exact": exact}
+            if floor_note:
+                meta["note"] = floor_note
         else:
             records, meta = fetch(
                 client,

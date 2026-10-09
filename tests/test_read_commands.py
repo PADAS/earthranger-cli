@@ -897,7 +897,12 @@ def test_subject_group_name_is_resolved_to_an_id(fake):
     assert result.exit_code == 0, result.output
     assert _gets(fake)[0][1:3] == (
         "subjectgroups",
-        {"flat": "true", "include_inactive": "true", "page_size": 100},
+        {
+            "flat": "true",
+            "include_inactive": "true",
+            "render_last_location": "false",
+            "page_size": 100,
+        },
     )
     assert _gets(fake)[1][2]["subject_group"] == "g2"
     result = _run(["subjects", "search", "--subject-group", "elefants"])
@@ -978,12 +983,13 @@ def test_group_by_field_reports_completeness_under_limit(fake):
     assert doc["meta"]["fetched"] == 3 and doc["meta"]["where"] == {"species": "x"}
 
 
-def test_observations_group_by_day_buckets_a_utc_window_in_site_time(fake):
-    # das reads naive observation bounds as UTC; Oct 8 UTC reaches 02:59 on Oct 9 in Nairobi
+def test_observations_bare_dates_are_the_site_day_and_pay_for_the_clock_once(fake):
+    # a bare date means the site's calendar day on every command; for observations
+    # that needs the site zone, so this is the one case a plain read fetches the clock
     fake.responses["observations"] = {
         "count": 1,
         "next": None,
-        "results": [{"recorded_at": "2026-10-08T22:00:00Z"}],
+        "results": [{"recorded_at": "2026-10-08T10:00:00Z"}],
     }
     doc = json.loads(
         _run(
@@ -1001,10 +1007,24 @@ def test_observations_group_by_day_buckets_a_utc_window_in_site_time(fake):
             ]
         ).output
     )
-    assert [(r["period"], r["count"]) for r in doc["records"]] == [
-        ("2026-10-08", 0),
-        ("2026-10-09", 1),
-    ]
+    sent = _gets(fake)[0][2]
+    assert sent["since"] == "2026-10-08T00:00:00+03:00"
+    assert sent["until"] == "2026-10-08T23:59:59.999999+03:00"
+    assert [(r["period"], r["count"]) for r in doc["records"]] == [("2026-10-08", 1)]
+    assert [c for c in fake.calls if c[0] == "_get_response"] == [("_get_response", "status", None)]
+    # an aware bound needs no clock
+    fake.calls.clear()
+    _run(["observations", "search", "--subject-id", "s1", "--since", "2026-10-08T00:00:00Z"])
+    assert [c for c in fake.calls if c[0] == "_get_response"] == []
+
+
+def test_observations_bare_dates_fall_back_to_utc_without_a_site_zone(fake):
+    fake.status = {"server_timezone": "EAT"}
+    fake.responses["observations"] = {"count": 0, "next": None, "results": []}
+    result = _run(["observations", "search", "--subject-id", "s1", "--since", "2026-10-08"])
+    assert result.exit_code == 0, result.output
+    assert _gets(fake)[0][2]["since"] == "2026-10-08T00:00:00+00:00"
+    assert "no usable timezone" in result.stderr and "UTC" in result.stderr
 
 
 def test_grouped_limit_note_keeps_the_where_note(fake):
@@ -1229,3 +1249,23 @@ def test_malformed_filter_is_a_usage_error_before_connecting(fake, monkeypatch):
     assert result.exit_code == 2 and "--filter is not valid JSON" in result.output
     result = _run(["patrols", "search", "--filter", "[1]"])
     assert result.exit_code == 2 and "--filter must be a JSON object" in result.output
+
+
+def test_count_only_floor_is_noted_in_table_mode(fake):
+    fake.responses["regions"] = [{"id": f"r{i}"} for i in range(5)]
+    result = _run(
+        ["regions", "list", "--count-only", "--limit", "2", "--fields", "count", "--format", "tsv"]
+    )
+    assert result.stdout == "count\n2\n"
+    assert "floor" in result.stderr
+
+
+def test_looping_event_type_listing_is_refused(fake):
+    fake.event_types = []
+    page = {"results": [{"id": "t1", "value": "a", "display": "A"}], "next": "loop"}
+    fake.event_types_v2 = page
+    fake.responses["loop"] = page
+    result = _run(["events", "search", "--event-type", "a"])
+    assert result.exit_code == 1
+    assert "event-type listing did not end" in result.output
+    assert not any(c[0] == "_get" and c[1] == "activity/events" for c in fake.calls)

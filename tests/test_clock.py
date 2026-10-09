@@ -88,7 +88,9 @@ def test_bucket_window_days_weeks_months():
     tz = ZoneInfo("Africa/Nairobi")
     days = clock.bucket_window("2026-10-07T10:00:00+03:00", "2026-10-09T12:00:00+03:00", "day", tz)
     assert [b[0] for b in days] == ["2026-10-07", "2026-10-08", "2026-10-09"]
-    assert days[0][1:] == ("2026-10-07T00:00:00+03:00", "2026-10-07T23:59:59.999999+03:00")
+    # the first day is clipped to the window's 10:00 start and flagged partial
+    assert days[0][1:] == ("2026-10-07T10:00:00+03:00", "2026-10-07T23:59:59.999999+03:00", True)
+    assert days[1][1:] == ("2026-10-08T00:00:00+03:00", "2026-10-08T23:59:59.999999+03:00", False)
     weeks = clock.bucket_window(
         "2026-10-07T00:00:00+03:00", "2026-10-13T00:00:00+03:00", "week", tz
     )
@@ -97,7 +99,7 @@ def test_bucket_window_days_weeks_months():
         "2026-08-20T00:00:00+03:00", "2026-10-01T00:00:00+03:00", "month", tz
     )
     assert [b[0] for b in months] == ["2026-08", "2026-09", "2026-10"]
-    assert months[1][1:] == ("2026-09-01T00:00:00+03:00", "2026-09-30T23:59:59.999999+03:00")
+    assert months[1][1:] == ("2026-09-01T00:00:00+03:00", "2026-09-30T23:59:59.999999+03:00", False)
     with pytest.raises(ValueError, match="period"):
         clock.bucket_window(
             "2026-10-07T00:00:00+03:00", "2026-10-08T00:00:00+03:00", "fortnight", tz
@@ -140,7 +142,9 @@ def test_period_ends_keep_the_final_fractional_second():
     info = {"utc": "2026-10-09T02:30:00Z", "timezone_name": "America/Los_Angeles"}
     assert clock.day_bounds(info)[1] == "2026-10-08T23:59:59.999999-07:00"
     tz = ZoneInfo("Africa/Nairobi")
-    (_label, lo, hi), *_ = clock.bucket_window("2026-10-08", "2026-10-08", "day", tz)
+    (_label, lo, hi, _partial), *_ = clock.bucket_window(
+        "2026-10-08", "2026-10-08T23:59:59.999999", "day", tz
+    )
     assert (lo, hi) == ("2026-10-08T00:00:00+03:00", "2026-10-08T23:59:59.999999+03:00")
 
 

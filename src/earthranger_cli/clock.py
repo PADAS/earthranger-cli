@@ -153,12 +153,12 @@ def clock_meta(info: dict) -> dict:
 
 def bucket_window(
     since: str, until: str, period: str, tz, naive_tz=None
-) -> list[tuple[str, str, str]]:
-    """Calendar buckets covering [since, until] in site time: (label, lo, hi)
-    with hi = next start − 1 µs. Days label YYYY-MM-DD, weeks their Monday,
-    months YYYY-MM. A naive bound is read in `naive_tz` — the zone the
-    *endpoint* applies to it (das reads event/patrol filter dates in the site
-    zone but observation bounds in UTC) — defaulting to the site zone."""
+) -> list[tuple[str, str, str, bool]]:
+    """Calendar buckets covering [since, until] in site time: (label, lo, hi,
+    partial). Days label YYYY-MM-DD, weeks their Monday, months YYYY-MM. A
+    bucket's lo/hi are clipped to the window and `partial` says so, so a row
+    for seven days of a month never reads as the whole month. A naive bound
+    is read in `naive_tz`, defaulting to the site zone."""
     if period not in PERIODS:
         raise ValueError(f"period must be one of {', '.join(PERIODS)}, not {period!r}")
     naive_tz = naive_tz or tz
@@ -171,6 +171,7 @@ def bucket_window(
         cur -= timedelta(days=cur.weekday())
     elif period == "month":
         cur = cur.replace(day=1)
+    start, end_in = lo.astimezone(tz), end
     buckets = []
     while cur <= end:
         if period == "day":
@@ -180,6 +181,8 @@ def bucket_window(
         else:
             nxt = (cur.replace(day=28) + timedelta(days=4)).replace(day=1)
             label = cur.strftime("%Y-%m")
-        buckets.append((label, _iso(cur), _iso(nxt - _LAST_INSTANT)))
+        b_lo, b_hi = max(cur, start), min(nxt - _LAST_INSTANT, end_in)
+        partial = b_lo != cur or b_hi != nxt - _LAST_INSTANT
+        buckets.append((label, _iso(b_lo), _iso(b_hi), partial))
         cur = nxt
     return buckets

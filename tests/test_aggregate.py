@@ -11,7 +11,7 @@ def test_group_counts_sorts_commonest_first_then_by_value():
     rows, matched = aggregate.group_counts(recs, "p")
     assert rows == [
         {"group": "red", "count": 2},
-        {"group": "(none)", "count": 1},
+        {"group": "(missing)", "count": 1},  # {"q": 1} has no p at all
         {"group": "amber", "count": 1},
         {"group": '{"n":"x"}', "count": 1},
     ]
@@ -61,8 +61,9 @@ def test_group_by_period_uses_dotted_time_field():
         {
             "period": "2026-10",
             "since": "2026-10-01T00:00:00+00:00",
-            "until": "2026-10-31T23:59:59.999999+00:00",
+            "until": "2026-10-31T00:00:00+00:00",  # clipped to the window's --until
             "count": 1,
+            "partial": True,
         }
     ]
 
@@ -117,7 +118,7 @@ def test_group_by_period_counts_the_last_fractional_second_of_a_day():
 
 def test_group_counts_present_counts_the_key_not_its_emptiness():
     rows, present = aggregate.group_counts([{"p": None}, {"p": None}, {"q": 1}], "p")
-    assert rows == [{"group": "(none)", "count": 3}]
+    assert rows == [{"group": "(none)", "count": 2}, {"group": "(missing)", "count": 1}]
     assert present == 2
     _, present = aggregate.group_counts([{"a": {"b": None}}, {"a": {}}], "a.b")
     assert present == 1
@@ -157,3 +158,41 @@ def test_where_same_key_values_are_ored():
         "species": ["buffalo", "elephant"],
         "cause": "x",
     }
+
+
+def test_group_by_period_clips_partial_periods_to_the_window():
+    tz = ZoneInfo("Africa/Nairobi")
+    rows, _ = aggregate.group_by_period(
+        [{"time": "2026-10-05T10:00:00+03:00"}],
+        period="month",
+        since="2026-10-03T00:00:00+03:00",
+        until="2026-10-09T12:00:00+03:00",
+        tz=tz,
+        time_field="time",
+    )
+    assert rows == [
+        {
+            "period": "2026-10",
+            "since": "2026-10-03T00:00:00+03:00",
+            "until": "2026-10-09T12:00:00+03:00",
+            "count": 1,
+            "partial": True,
+        }
+    ]
+    rows, _ = aggregate.group_by_period(
+        [],
+        period="day",
+        since="2026-10-08T00:00:00+03:00",
+        until="2026-10-08T23:59:59.999999+03:00",
+        tz=tz,
+        time_field="time",
+    )
+    assert rows[0]["partial"] is False
+
+
+def test_where_matches_numbers_numerically():
+    rec = {"event_details": {"count": 5.0, "code": "007"}}
+    assert aggregate.details_match(rec, "count", "5") is True
+    assert aggregate.details_match(rec, "count", "5.0") is True
+    assert aggregate.details_match(rec, "count", "6") is False
+    assert aggregate.details_match(rec, "code", "007") is True  # strings still compare as text

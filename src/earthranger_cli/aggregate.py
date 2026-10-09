@@ -29,9 +29,10 @@ def group_counts(records: list, field: str) -> tuple[list[dict], int]:
         found, value = lookup(record, field)
         if found:
             matched += 1
-        key = cell(value)
+        # a record without the key is not the same as one where it is null
+        key = (cell(value) or "(none)") if found else "(missing)"
         counts[key] = counts.get(key, 0) + 1
-    rows = [{"group": key or "(none)", "count": n} for key, n in counts.items()]
+    rows = [{"group": key, "count": n} for key, n in counts.items()]
     rows.sort(key=lambda row: (-row["count"], str(row["group"])))
     return rows, matched
 
@@ -65,9 +66,13 @@ def group_by_period(
     is outside the window (a patrol that overlaps it, an event timed after the
     clock instant), and those must be reported rather than silently dropped."""
     buckets = clock.bucket_window(since, until, period, tz, naive_tz=naive_tz)
-    rows = [{"period": label, "since": lo, "until": hi, "count": 0} for label, lo, hi in buckets]
+    rows = [
+        {"period": label, "since": lo, "until": hi, "count": 0, "partial": partial}
+        for label, lo, hi, partial in buckets
+    ]
     edges = [
-        (clock.parse_ts(lo), clock.parse_ts(hi), row) for row, (_, lo, hi) in zip(rows, buckets)
+        (clock.parse_ts(lo), clock.parse_ts(hi), row)
+        for row, (_, lo, hi, _partial) in zip(rows, buckets)
     ]
     starts = [lo for lo, _, _ in edges]  # sorted: bisect finds the candidate bucket
     unbucketed = 0
@@ -101,6 +106,11 @@ def _matches(value, wanted: str) -> bool:
         return any(_matches(v, wanted) for v in value)
     if value is None:
         return False
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        try:
+            return float(value) == float(wanted)  # 5.0 matches "5"
+        except ValueError:
+            return False
     return str(value).casefold() == wanted.casefold()
 
 

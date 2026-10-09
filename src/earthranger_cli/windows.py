@@ -142,38 +142,60 @@ def load_filter(params: dict) -> dict:
     return current
 
 
+def _store_filter(params: dict, current: dict) -> None:
+    params["filter"] = json.dumps(current, separators=(",", ":"))
+
+
 def merge_filter(params: dict, **fields) -> None:
     """Set keys inside the `filter` JSON object, keeping whatever else it holds."""
     current = load_filter(params)
     current.update(fields)
-    params["filter"] = json.dumps(current, separators=(",", ":"))
+    _store_filter(params, current)
 
 
-def apply_window(kind: str, params: dict, since, until) -> None:
-    """Write the bounds into the request the way this endpoint spells them."""
+def bound_params(kind: str) -> tuple[str, str]:
+    """The (lower, upper) query params a non-filter window kind is sent as."""
+    return ("since", "until") if kind == "since_until" else ("after_date", "before_date")
+
+
+def apply_window(kind: str, params: dict, since, until, naive_tz=None) -> None:
+    """Write the bounds into the request the way this endpoint spells them.
+
+    A filter-kind bound is sent as given: das reads a naive date inside the
+    events/patrols filter in the site zone itself. The other kinds never leave
+    naive — das reads a naive observation bound as UTC on search and fails
+    comparing one against an aware datetime on export — so a naive value is
+    localized in `naive_tz` (the site zone when the caller fetched it, else
+    UTC) and sent with its offset; an aware value passes through untouched.
+    """
     if since is None and until is None:
         return
     if kind == "filter":
-        window = dict(load_filter(params).get("date_range") or {})
+        current = load_filter(params)
+        window = dict(current.get("date_range") or {})
         if since is not None:
             window["lower"] = since
         if until is not None:
             window["upper"] = until
-        merge_filter(params, date_range=window)
+        current["date_range"] = window
+        _store_filter(params, current)
         return
-    lower, upper = ("since", "until") if kind == "since_until" else ("after_date", "before_date")
+    lower, upper = bound_params(kind)
     if since is not None:
-        params[lower] = _aware(since)
+        params[lower] = _aware(since, naive_tz)
     if until is not None:
-        params[upper] = _aware(until)
+        params[upper] = _aware(until, naive_tz)
 
 
-def _aware(value: str) -> str:
-    """A naive bound with an explicit UTC offset. das reads a naive observation
-    bound as UTC on the search endpoint and chokes comparing one against an
-    aware datetime on the export, so the CLI never sends a naive wall time to
-    these endpoints; an aware value passes through untouched."""
-    parsed = clock.parse_ts(value)
-    if parsed is None or value.strip()[-1] in "Zz" or re.search(r"[+-]\d{2}:?\d{2}$", value):
+def is_naive(value: str | None) -> bool:
+    """A parseable timestamp with no Z and no offset."""
+    if not value or clock.parse_ts(value) is None:
+        return False
+    return not (value.strip()[-1] in "Zz" or re.search(r"[+-]\d{2}:?\d{2}$", value.strip()))
+
+
+def _aware(value: str, naive_tz) -> str:
+    if not is_naive(value):
         return value
+    parsed = clock.parse_ts(value, naive_tz or UTC)
     return parsed.isoformat(timespec="microseconds" if parsed.microsecond else "seconds")

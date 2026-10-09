@@ -457,16 +457,19 @@ def list_group():
     """List objects on the server."""
 
 
-def _table_options_hint(json_, output, fields, fmt) -> None:
-    """The human listing is unchanged by --fields/--format (by design); say so
-    on stderr rather than let the flags vanish without a trace."""
-    check_format(parse_fields(fields), fmt)  # the same usage error with or without --json
+def _table_options(json_, output, fields, fmt) -> list[str] | None:
+    """Validate --fields/--format once and return the parsed fields. The human
+    listing is unchanged by them (by design); say so on stderr rather than let
+    the flags vanish without a trace."""
+    parsed = parse_fields(fields)
+    check_format(parsed, fmt)  # the same usage error with or without --json
     if (fields or fmt != "json") and not (json_ or output):
         click.echo(
             "note: --fields/--format apply to the JSON document; add --json or -o. "
             "Showing the human listing.",
             err=True,
         )
+    return parsed
 
 
 def json_output_options(f):
@@ -487,12 +490,10 @@ def json_output_options(f):
 @_api_errors
 def list_categories(ctx, json_, output, fields, fmt):
     """List event categories (inactive included)."""
-    _table_options_hint(json_, output, fields, fmt)
+    fields = _table_options(json_, output, fields, fmt)
     client = _connect(ctx)
     categories = list(client.get_event_categories(include_inactive=True))
     if json_ or output:
-        fields = parse_fields(fields)
-        check_format(fields, fmt)
         emit(categories, {"total": len(categories), "pages": 1}, output, fields=fields, fmt=fmt)
         return
     for c in categories:
@@ -513,7 +514,7 @@ def _category_value_of(event_type: dict):
 @_api_errors
 def list_event_types(ctx, category, json_, output, fields, fmt):
     """List event types (inactive included)."""
-    _table_options_hint(json_, output, fields, fmt)
+    fields = _table_options(json_, output, fields, fmt)
     client = _connect(ctx)
     types = [
         t
@@ -521,8 +522,6 @@ def list_event_types(ctx, category, json_, output, fields, fmt):
         if not category or _category_value_of(t) == category
     ]
     if json_ or output:
-        fields = parse_fields(fields)
-        check_format(fields, fmt)
         emit(types, {"total": len(types), "pages": 1}, output, fields=fields, fmt=fmt)
         return
     for t in types:
@@ -543,7 +542,7 @@ def show_group():
 @_api_errors
 def show_event_type(ctx, value, json_, output, fields, fmt):
     """Print the full v2 event type JSON plus its referenced Choice records."""
-    _table_options_hint(json_, output, fields, fmt)
+    fields = _table_options(json_, output, fields, fmt)
     client = _connect(ctx)
     types = client.get_event_types(include_inactive=True, include_schema=True, version="v2.0")
     et = next((t for t in types if t.get("value") == value), None)
@@ -554,8 +553,6 @@ def show_event_type(ctx, value, json_, output, fields, fmt):
     choices = {f: er.get_choices(client, f) for f in choice_fields}
     doc = {"event_type": et, "choices": choices}
     if json_ or output:
-        fields = parse_fields(fields)
-        check_format(fields, fmt)
         emit([doc], {"total": 1, "pages": 1}, output, fields=fields, fmt=fmt)
         return
     click.echo(json.dumps(doc, indent=2))
