@@ -160,3 +160,23 @@ def test_resolve_window_default_uses_the_zone_the_until_will_be_sent_in():
         naive_tz=ZoneInfo("Africa/Nairobi"),
     )
     assert since == "2026-08-30T20:59:59Z"
+
+
+@pytest.mark.parametrize(
+    "until, expected_since",
+    [
+        ("2026-11-01T12:00:00", "2026-10-31T20:00:00Z"),
+        ("2026-03-08T12:00:00", "2026-03-07T19:00:00Z"),
+    ],
+)
+def test_default_window_is_elapsed_24_hours_across_dst(until, expected_since):
+    from zoneinfo import ZoneInfo
+
+    since, _, _ = windows.resolve_window(
+        windows.WindowRequest(None, until, None, None),
+        get_info=None,
+        default_window=timedelta(hours=24),
+        note=None,
+        naive_tz=ZoneInfo("America/Los_Angeles"),
+    )
+    assert since == expected_since

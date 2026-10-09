@@ -71,10 +71,20 @@ def parse_window(kwargs: dict) -> WindowRequest:
     for flag, value in (("--since", since), ("--until", until)):
         if value is not None and clock.parse_ts(value) is None:
             raise click.UsageError(f"{flag} must be an ISO-8601 timestamp, got {value!r}.")
-    if since and until and clock.parse_ts(since) > clock.parse_ts(until):
-        raise click.UsageError(f"--since must not be after --until ({since} > {until}).")
+    # Mixed bounds need the site's zone before their ordering is known.
+    if is_naive(since) == is_naive(until):
+        check_bounds(since, until)
     mode = chosen[0][2:] if chosen else None
     return WindowRequest(since, until, mode, span)
+
+
+def check_bounds(since, until, naive_tz=UTC) -> None:
+    """Compare actual instants after assigning the zone used for naive bounds."""
+    if since and until:
+        start = clock.parse_ts(since, naive_tz).astimezone(UTC)
+        end = clock.parse_ts(until, naive_tz).astimezone(UTC)
+        if start > end:
+            raise click.UsageError(f"--since must not be after --until ({since} > {until}).")
 
 
 def inclusive_until(until: str | None) -> str | None:
@@ -122,13 +132,14 @@ def resolve_window(
     elif since is None and default_window is not None:
         end = clock.parse_ts(until, naive_tz or UTC) if until else None
         end = end or datetime.now(UTC)
-        since = (end - default_window).astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+        since = (end.astimezone(UTC) - default_window).strftime("%Y-%m-%dT%H:%M:%SZ")
         hours = int(default_window.total_seconds() // 3600)
         anchor = f"--until {until}" if until else "now"
         if note:
             note(
                 f"note: no --since given; defaulting to the {hours} hours before {anchor} ({since})."
             )
+    check_bounds(since, until, naive_tz or UTC)
     if since is not None or until is not None:
         meta = meta or {"since": since, "until": until}
     return since, until, meta

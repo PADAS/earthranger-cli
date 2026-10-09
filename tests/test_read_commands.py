@@ -1332,3 +1332,51 @@ def test_export_done_line_skips_the_count_for_huge_bodies(fake, tmp_path, monkey
     result = _run(["events", "export", "-o", str(target)])
     assert result.exit_code == 0 and "row count not computed" in result.stderr
     assert target.read_text() == "id,notes\ne1,x\ne2,y\n"
+
+
+@pytest.mark.parametrize(
+    "group,selector,path",
+    [
+        ("events", [], "activity/events"),
+        ("observations", ["--subject-id", "s1"], "observations"),
+    ],
+)
+def test_mixed_timezone_window_accepts_valid_site_local_bounds(fake, group, selector, path):
+    fake.responses[path] = {"count": 0, "next": None, "results": []}
+    result = _run(
+        [
+            group,
+            "search",
+            *selector,
+            "--since",
+            "2026-10-09T00:00:00",
+            "--until",
+            "2026-10-08T22:00:00Z",
+        ]
+    )
+    assert result.exit_code == 0, result.output
+    assert any(call[1] == path for call in _gets(fake))
+
+
+@pytest.mark.parametrize(
+    "group,selector",
+    [
+        ("events", []),
+        ("observations", ["--subject-id", "s1"]),
+    ],
+)
+def test_mixed_timezone_window_rejects_inverted_site_local_bounds(fake, group, selector):
+    result = _run(
+        [
+            group,
+            "search",
+            *selector,
+            "--since",
+            "2026-10-09T00:30:00+03:00",
+            "--until",
+            "2026-10-08T23:00:00",
+        ]
+    )
+    assert result.exit_code == 2, result.output
+    assert "--since must not be after --until" in result.output
+    assert _gets(fake) == []

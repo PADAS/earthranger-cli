@@ -332,7 +332,8 @@ surface; none touches the DSL or writes.
       (2026-10-09) **Decided during implementation:** the extra GET /status
       is made only when one of those flags, a period `--group-by`, `er
       now`, or a bare `--since`/`--until` date on observations, tracks or an
-      export (which must be sent with the site's offset) needs it — every
+      export (which must be sent with the site's offset), or mixed naive
+      and offset-bearing bounds (to validate their ordering) needs it — every
       other read never pays for it — and `server_utc`, `site_now`,
       `site_tz` appear in `meta` only on those commands. Otus adds them to
       every response; we chose not to double every read's request count

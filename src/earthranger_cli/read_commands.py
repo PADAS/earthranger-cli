@@ -819,14 +819,22 @@ def _check_period_grouping(spec: ReadCommand, win, group_by: str) -> None:
 def _apply_window(ctx, client, spec: ReadCommand, win, params: dict) -> dict | None:
     """Resolve the window and write it into params; returns the window meta."""
     naive_tz = None
-    if spec.window != "filter" and (_windows.is_naive(win.since) or _windows.is_naive(win.until)):
-        # a bare date is the site's calendar day on every command; these
-        # endpoints need it spelled with the site's offset, so this is the
-        # one plain read that fetches the clock — before the default window
-        # is measured, so "24 hours before --until" is 24 hours before the
-        # instant the server will see
+    mixed_bounds = bool(win.since and win.until) and (
+        _windows.is_naive(win.since) != _windows.is_naive(win.until)
+    )
+    if mixed_bounds or (
+        spec.window != "filter" and (_windows.is_naive(win.since) or _windows.is_naive(win.until))
+    ):
+        # Naive dates use the site's zone. Non-filter endpoints need an
+        # explicit offset, and mixed bounds need the zone to compare instants.
+        # Resolve it before measuring a default window from --until.
         naive_tz = _clock.site_tz(get_clock(ctx, client))
         if naive_tz is None:
+            if spec.window == "filter":
+                raise click.ClickException(
+                    "the site reported no usable timezone; pass offsets on both "
+                    "--since/--until to check their ordering."
+                )
             click.echo(
                 "note: the site reported no usable timezone; bare --since/--until "
                 "dates are read as UTC.",
