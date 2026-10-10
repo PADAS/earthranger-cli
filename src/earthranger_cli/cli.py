@@ -707,12 +707,19 @@ def auth_status(ctx):
     is_flag=True,
     help="Write anyway, dropping constructs the DSL cannot express.",
 )
+@click.option(
+    "--event-type",
+    "event_types",
+    multiple=True,
+    help="Only this event type value (repeatable); the category block is kept so the "
+    "spec still applies.",
+)
 @click.pass_context
 @_api_errors
-def pull_cmd(ctx, category_value, output, skip_unsupported):
+def pull_cmd(ctx, category_value, output, skip_unsupported, event_types):
     """Reconstruct a DSL spec from the server's CATEGORY_VALUE (reverse of apply)."""
     client = _connect(ctx)
-    result = pull_category(client, category_value)
+    result = pull_category(client, category_value, event_types=list(event_types) or None)
     for w in result.unsupported:
         click.echo(f"warning: {w}")
     if result.unsupported and not skip_unsupported:

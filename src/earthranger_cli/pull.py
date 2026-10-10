@@ -35,21 +35,34 @@ class PullResult:
     unsupported: list[str] = field(default_factory=list)
 
 
-def pull_category(client, category_value: str) -> PullResult:
+def pull_category(client, category_value: str, event_types: list[str] | None = None) -> PullResult:
+    """Reconstruct the category's spec; `event_types` limits it to those values
+    (the category block stays, and only the choice sets they reference are
+    hoisted), so the file applies directly without hand-trimming."""
     categories = client.get_event_categories(include_inactive=True)
     cat = next((c for c in categories if c.get("value") == category_value), None)
     if cat is None:
         raise PullError(f"no category with value {category_value!r} on the server")
 
-    unsupported: list[str] = []
-    event_types: list[dict] = []
     all_types = client.get_event_types(include_inactive=True, include_schema=True, version="v2.0")
-    for et in all_types:
-        if _category_value(et.get("category")) != category_value:
-            continue
+    in_category = [et for et in all_types if _category_value(et.get("category")) == category_value]
+    if event_types:
+        known = {et.get("value") for et in in_category}
+        for wanted in event_types:
+            if wanted not in known:
+                raise PullError(
+                    f"no event type {wanted!r} in category {category_value!r}; "
+                    f"its types are: {', '.join(sorted(v for v in known if v))}"
+                )
+        in_category = [et for et in in_category if et.get("value") in set(event_types)]
+
+    unsupported: list[str] = []
+    inverted_types: list[dict] = []
+    for et in in_category:
         inverted = _invert_event_type(client, et, unsupported)
         if inverted is not None:
-            event_types.append(inverted)
+            inverted_types.append(inverted)
+    event_types = inverted_types
 
     shared_sets = _hoist_shared_sets(event_types)
     spec = {"category": {"value": category_value, "display": cat.get("display")}}
