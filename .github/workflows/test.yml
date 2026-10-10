@@ -1,0 +1,49 @@
+name: test
+
+# The suite and the linters, on every Python this package claims to support
+# (pyproject.toml `requires-python` and the classifiers). The release workflow
+# runs the suite once more against the tagged commit; this is the gate for
+# pull requests and for main.
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: pytest (Python ${{ matrix.python }})
+    # Pinned (not `ubuntu-latest`) for the same reason as release.yml: a runner
+    # refresh must not silently change the OS under the suite.
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12", "3.13"]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+          cache-suffix: py${{ matrix.python }}
+
+      - name: Install Python ${{ matrix.python }}
+        # setup-uv@v3 has no python-version input; uv installs the interpreter
+        # itself and --python below pins every later uv command to it.
+        run: uv python install ${{ matrix.python }}
+
+      - name: Install dependencies
+        run: uv sync --extra dev --python ${{ matrix.python }}
+
+      - name: Run tests
+        run: uv run --python ${{ matrix.python }} pytest -q
+
+      - name: Lint and format check
+        run: |
+          uv run --python ${{ matrix.python }} ruff check src tests
+          uv run --python ${{ matrix.python }} ruff format --check src tests
