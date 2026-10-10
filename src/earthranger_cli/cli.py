@@ -374,15 +374,22 @@ def apply_cmd(ctx, spec_file, dry_run):
     is_flag=True,
     help="Skip checking event details against the type's schema before posting.",
 )
+@click.option(
+    "--dry-run",
+    "dry_run",
+    is_flag=True,
+    help="Validate and show what would be posted, then stop; nothing is sent.",
+)
 @click.pass_context
 @_api_errors
-def post_event_cmd(ctx, event_type, fields, location, time_, title, file_, no_validate):
+def post_event_cmd(ctx, event_type, fields, location, time_, title, file_, no_validate, dry_run):
     """Post one event (via flags) or a batch (via --file).
 
     Before anything is sent, each event's details are checked against its
     type's schema as ER renders it (fields, required fields, choice values,
     types, bounds). ER itself does not validate details on write, so without
-    this a typo is stored silently. --no-validate skips the check.
+    this a typo is stored silently. --no-validate skips the check. --dry-run
+    stops after the check and lists what would have been posted.
     """
     try:
         if file_:
@@ -402,9 +409,16 @@ def post_event_cmd(ctx, event_type, fields, location, time_, title, file_, no_va
     except FieldArgError as e:
         click.echo(f"error: {e}")
         sys.exit(1)
-    client = _connect(ctx)
+    # a dry run that skips validation needs nothing from the server
+    client = None if (dry_run and no_validate) else _connect(ctx)
     if not no_validate:
         _validate_or_exit(client, events)
+    if dry_run:
+        for event in events:
+            click.echo(f"would post  {event['event_type']}: {_event_summary(event)}")
+        checked = "loaded, not validated" if no_validate else "valid"
+        click.echo(f"Dry run: {len(events)} event(s) {checked}; nothing was posted.")
+        return
     try:
         outcomes = post_events(client, events)
     except PostAborted as aborted:
@@ -418,6 +432,16 @@ def post_event_cmd(ctx, event_type, fields, location, time_, title, file_, no_va
         raise aborted.cause
     if _report_post_outcomes(events, outcomes):
         sys.exit(1)
+
+
+def _event_summary(event: dict) -> str:
+    """One line a person can check: the title, else the detail fields."""
+    if event.get("title"):
+        return str(event["title"])
+    details = event.get("event_details") or {}
+    if not details:
+        return "(no details)"
+    return ", ".join(f"{k}={v}" for k, v in details.items())
 
 
 def _validate_or_exit(client, events: list[dict]) -> None:
