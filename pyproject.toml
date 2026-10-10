@@ -1,13 +1,13 @@
 [project]
 name = "earthranger-cli"
 dynamic = ["version"]
-description = "CLI for creating and editing EarthRanger event categories, choices, and v2 event types, and posting events."
+description = "EarthRanger CLI: author event categories, choices and event types from a YAML spec, post events, and read subjects, tracks, events, patrols and more as agent-friendly JSON, CSV or TSV, with site-time windows, counts and exports."
 requires-python = ">=3.11"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
 readme = "README.md"
 authors = [{ name = "Chris Doehring", email = "chrisdo@earthranger.com" }]
-keywords = ["earthranger", "cli", "conservation"]
+keywords = ["earthranger", "cli", "conservation", "wildlife", "agents", "json"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Environment :: Console",
@@ -32,6 +32,7 @@ dependencies = [
 Homepage = "https://github.com/PADAS/earthranger-cli"
 Repository = "https://github.com/PADAS/earthranger-cli"
 Issues = "https://github.com/PADAS/earthranger-cli/issues"
+Changelog = "https://github.com/PADAS/earthranger-cli/releases"
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "ruff>=0.4"]
