@@ -158,3 +158,35 @@ def test_load_events_csv_errors_name_the_row(tmp_path):
     p.write_text("", encoding="utf-8")
     with pytest.raises(FieldArgError, match="no header row"):
         load_events_file(str(p), default_event_type="s")
+
+
+def test_load_events_csv_mapped_field_beats_a_same_named_column(tmp_path):
+    # review: with --map species=Species_Name, a pass-through `species` column must
+    # not overwrite the mapped value whatever the header order
+    p = tmp_path / "e.csv"
+    for header in ("event_type,Species_Name,species", "event_type,species,Species_Name"):
+        cols = header.split(",")
+        row = {"event_type": "sighting", "Species_Name": "buffalo", "species": "lion"}
+        p.write_text(header + "\n" + ",".join(row[c] for c in cols) + "\n", encoding="utf-8")
+        events = load_events_file(str(p), column_map={"species": "Species_Name"})
+        assert events[0]["event_details"] == {"species": "buffalo"}, header
+    # a reserved column displaced by a map is not smuggled in as a detail either
+    p.write_text(
+        "event_type,time,Timestamp\nsighting,bogus,2026-10-01T10:00:00Z\n", encoding="utf-8"
+    )
+    events = load_events_file(str(p), column_map={"time": "Timestamp"})
+    assert events[0]["time"] == "2026-10-01T10:00:00Z" and events[0]["event_details"] == {}
+
+
+def test_load_events_csv_rejects_surplus_cells(tmp_path):
+    p = tmp_path / "e.csv"
+    p.write_text("event_type,notes\nsighting,first part,discarded part\n", encoding="utf-8")
+    with pytest.raises(FieldArgError, match="row 2.*3 cells.*2 columns"):
+        load_events_file(str(p))
+
+
+def test_load_events_csv_reports_an_unparseable_cell(tmp_path):
+    p = tmp_path / "e.csv"
+    p.write_text("event_type,notes\nsighting,[injured\n", encoding="utf-8")
+    with pytest.raises(FieldArgError, match="row 2.*column 'notes'"):
+        load_events_file(str(p))

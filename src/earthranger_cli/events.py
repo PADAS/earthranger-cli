@@ -111,6 +111,7 @@ _RESERVED = {
     "lat": ("lat", "latitude"),
     "lon": ("lon", "lng", "longitude"),
 }
+_RESERVED_NAMES = {name for names in _RESERVED.values() for name in names}
 
 
 def _cell(row: dict, column: str | None) -> str:
@@ -176,24 +177,46 @@ def load_events_csv(
             raise FieldArgError(f"{path}: no header row")
         source = _csv_sources(headers, column_map, path)
         taken = {c for c in source.values() if c} | set(column_map.values())
+        # a header that *looks* reserved (time, latitude, ...) is never a detail,
+        # even when a map took that slot from another column
+        reserved_like = {h for h in headers if h.lower() in _RESERVED_NAMES}
         # detail columns in the CSV's own order: a pass-through column keeps its
-        # name, a mapped one takes the field key it was mapped to
+        # name, a mapped one takes the field key it was mapped to; a pass-through
+        # column whose name is an explicitly mapped key is dropped, so column
+        # order can never decide which value wins
         key_for_column = {c: k for k, c in column_map.items() if k not in _RESERVED}
         detail_keys = [
             (h, key_for_column.get(h, h))
             for h in headers
-            if h and (h not in taken or h in key_for_column)
+            if h
+            and h not in reserved_like
+            and (h in key_for_column or (h not in taken and h not in column_map))
         ]
+        width = len(headers)
         events = []
         for n, raw in enumerate(reader, start=2):
+            surplus = raw.get(None)  # DictReader parks cells beyond the header here
+            if surplus:
+                raise FieldArgError(
+                    f"{path} row {n}: {width + len(surplus)} cells for {width} columns; "
+                    "quote a cell that contains a comma"
+                )
             row = {
-                (k or "").strip(): (v.strip() if isinstance(v, str) else "") for k, v in raw.items()
+                (k or "").strip(): (v.strip() if isinstance(v, str) else "")
+                for k, v in raw.items()
+                if k is not None
             }
             event = _csv_event(row, n, path, source, default_event_type)
             details: dict = {}
             for column, key in detail_keys:
                 if row.get(column, "") != "":
-                    details[key] = _scalar(row[column])
+                    try:
+                        details[key] = _scalar(row[column])
+                    except yaml.YAMLError as e:
+                        raise FieldArgError(
+                            f"{path} row {n}, column {column!r}: cannot read "
+                            f"{row[column]!r} as a value ({e})"
+                        ) from None
             event["event_details"] = details
             events.append(event)
     return events
