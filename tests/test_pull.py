@@ -889,3 +889,21 @@ def test_pull_refuses_unknown_collection_required():
     items["required"] = ["ghost"]
     result = pull_category(fake, "wm")
     assert any("Demo1" in w and "ghost" in w for w in result.unsupported)
+
+
+def test_pull_single_event_type_keeps_category_and_only_its_choices():
+    fake = _server_from_spec(SPEC_DATA)
+    result = pull_category(fake, "wm", event_types=["inactive_type"])
+    assert result.spec["category"] == {"value": "wm", "display": "Wildlife Monitoring"}
+    assert [et["value"] for et in result.spec["event_types"]] == ["inactive_type"]
+    assert "choices" not in result.spec  # sighting's sets are not hoisted for a type not pulled
+    text = render_spec_yaml(result)
+    assert "species" not in text and "Old" in text
+
+
+def test_pull_unknown_event_type_names_the_categorys_types():
+    fake = _server_from_spec(SPEC_DATA)
+    with pytest.raises(
+        PullError, match="no event type 'nope' in category 'wm'.*inactive_type, sighting"
+    ):
+        pull_category(fake, "wm", event_types=["nope"])

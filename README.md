@@ -230,7 +230,7 @@ per profile; old `tokens/<host>.json` files are ignored.)
 | `events list categories` | List categories (inactive included) |
 | `events list event-types [--category V]` | List event types |
 | `events show event-type V` | Full v2 event-type JSON + its Choice records |
-| `events pull CATEGORY [-o FILE] [--skip-unsupported]` | Reconstruct a DSL spec from the server (reverse of apply) |
+| `events pull CATEGORY [--event-type V ...] [-o FILE] [--skip-unsupported]` | Reconstruct a DSL spec from the server (reverse of apply); `--event-type` limits it to those types, category block kept, so the file still applies |
 | `choices list`, `choices show FIELD_NAME` | List choice fields with option counts (flagging sets no v2 schema references); print one choice set in display order. Writes stay spec-driven via `events apply` |
 | `events search [--event-type V[,V...]] [--since/--until \| --today \| --yesterday \| --last 7d] [--where k=v] [--limit N] [-o F]` | Search events; `--event-type` takes values, display names, ids or `*glob*` patterns (mixed is fine); the window is in site time; `--where species=buffalo` filters `event_details` in the CLI; JSON `{records, meta}` output |
 | `events export [--since/--until \| --today \| --last 7d] [--event-type ...] [-o F.csv]`, `observations export --subject-id ID [--since/--until] [-o F.csv]` | The server's own CSV (events: the site's display names and labels); if the account may not export, the matching records as JSON with a note |

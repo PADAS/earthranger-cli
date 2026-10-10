@@ -2174,6 +2174,19 @@ def test_list_categories_format_without_fields_is_a_usage_error_even_without_jso
     assert "--format tsv needs --fields" in result.output
 
 
+# --- events pull --event-type (#19) ---
+
+
+def test_pull_event_type_filter(fake):
+    _seed_pull_server(fake)
+    result = _run(["events", "pull", "wm", "--event-type", "sighting"])
+    assert result.exit_code == 0, result.output
+    assert "value: wm" in result.output and "value: sighting" in result.output
+    result = _run(["events", "pull", "wm", "--event-type", "nope"])
+    assert result.exit_code == 1
+    assert "error: no event type 'nope' in category 'wm'" in result.output
+
+
 # --- events post --dry-run (#20) ---
 
 
