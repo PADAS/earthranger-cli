@@ -38,6 +38,11 @@ touched many files and every review had to hold all of it. Split along
 the plan's own seams: a PR is one capability a reviewer can hold in
 their head, with its own tests and README section.
 
+**Stacked PRs.** When a PR is based on another PR's branch, merge the base
+PR *without* deleting its branch (or retarget the child to main first).
+Deleting the base branch makes GitHub close the stacked PR, and a closed PR
+cannot change its base; the only recovery is a new PR from the same branch.
+
 ## 3. Smoke-test against a real site once
 
 The test suite runs against `FakeER`; it cannot know what das actually
