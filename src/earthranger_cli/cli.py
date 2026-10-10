@@ -33,7 +33,7 @@ from .events import (
     parse_field_args,
     post_events,
 )
-from .output import emit
+from .output import emit, output_options, parse_output
 from .pull import PullError, pull_category, render_spec_yaml
 from .validate import UnknownEventType, validate_events
 
@@ -457,6 +457,20 @@ def list_group():
     """List objects on the server."""
 
 
+def _table_options(json_, output, fields, fmt) -> list[str] | None:
+    """Validate --fields/--format once and return the parsed fields. The human
+    listing is unchanged by them (by design); say so on stderr rather than let
+    the flags vanish without a trace."""
+    parsed = parse_output(fields, fmt)  # the same usage error with or without --json
+    if (fields or fmt != "json") and not (json_ or output):
+        click.echo(
+            "note: --fields/--format apply to the JSON document; add --json or -o. "
+            "Showing the human listing.",
+            err=True,
+        )
+    return parsed
+
+
 def json_output_options(f):
     """Opt-in agent output for the older read commands: --json switches to the
     {records, meta} contract; -o implies --json and writes the document to a file."""
@@ -464,6 +478,7 @@ def json_output_options(f):
         "-o", "--output", type=click.Path(dir_okay=False), help="Write JSON here (implies --json)."
     )(f)
     f = click.option("--json", "json_", is_flag=True, help="Emit {records, meta} JSON.")(f)
+    f = output_options(f)
     return f
 
 
@@ -472,12 +487,13 @@ def json_output_options(f):
 @json_output_options
 @click.pass_context
 @_api_errors
-def list_categories(ctx, json_, output):
+def list_categories(ctx, json_, output, fields, fmt):
     """List event categories (inactive included)."""
+    fields = _table_options(json_, output, fields, fmt)
     client = _connect(ctx)
     categories = list(client.get_event_categories(include_inactive=True))
     if json_ or output:
-        emit(categories, {"total": len(categories), "pages": 1}, output)
+        emit(categories, {"total": len(categories), "pages": 1}, output, fields=fields, fmt=fmt)
         return
     for c in categories:
         active = "" if c.get("is_active", True) else "  (inactive)"
@@ -495,8 +511,9 @@ def _category_value_of(event_type: dict):
 @json_output_options
 @click.pass_context
 @_api_errors
-def list_event_types(ctx, category, json_, output):
+def list_event_types(ctx, category, json_, output, fields, fmt):
     """List event types (inactive included)."""
+    fields = _table_options(json_, output, fields, fmt)
     client = _connect(ctx)
     types = [
         t
@@ -504,7 +521,7 @@ def list_event_types(ctx, category, json_, output):
         if not category or _category_value_of(t) == category
     ]
     if json_ or output:
-        emit(types, {"total": len(types), "pages": 1}, output)
+        emit(types, {"total": len(types), "pages": 1}, output, fields=fields, fmt=fmt)
         return
     for t in types:
         active = "" if t.get("is_active", True) else "  (inactive)"
@@ -522,19 +539,20 @@ def show_group():
 @json_output_options
 @click.pass_context
 @_api_errors
-def show_event_type(ctx, value, json_, output):
+def show_event_type(ctx, value, json_, output, fields, fmt):
     """Print the full v2 event type JSON plus its referenced Choice records."""
+    fields = _table_options(json_, output, fields, fmt)
     client = _connect(ctx)
     types = client.get_event_types(include_inactive=True, include_schema=True, version="v2.0")
     et = next((t for t in types if t.get("value") == value), None)
     if et is None:
         click.echo(f"error: no event type with value {value!r}")
         sys.exit(1)
-    fields = extract_choice_fields(normalize_v2_schema(et.get("schema") or {}))
-    choices = {f: er.get_choices(client, f) for f in fields}
+    choice_fields = extract_choice_fields(normalize_v2_schema(et.get("schema") or {}))
+    choices = {f: er.get_choices(client, f) for f in choice_fields}
     doc = {"event_type": et, "choices": choices}
     if json_ or output:
-        emit([doc], {"total": 1, "pages": 1}, output)
+        emit([doc], {"total": 1, "pages": 1}, output, fields=fields, fmt=fmt)
         return
     click.echo(json.dumps(doc, indent=2))
 

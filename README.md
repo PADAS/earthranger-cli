@@ -215,12 +215,14 @@ per profile; old `tokens/<host>.json` files are ignored.)
 | `events show event-type V` | Full v2 event-type JSON + its Choice records |
 | `events pull CATEGORY [-o FILE] [--skip-unsupported]` | Reconstruct a DSL spec from the server (reverse of apply) |
 | `choices list`, `choices show FIELD_NAME` | List choice fields with option counts (flagging sets no v2 schema references); print one choice set in display order. Writes stay spec-driven via `events apply` |
-| `events search [--event-type V[,V...]] [--limit N] [-o F]` | Search events; `--event-type` takes values, display names or ids (mixed is fine); JSON `{records, meta}` output |
+| `events search [--event-type V[,V...]] [--since/--until \| --today \| --yesterday \| --last 7d] [--where k=v] [--limit N] [-o F]` | Search events; `--event-type` takes values, display names, ids or `*glob*` patterns (mixed is fine); the window is in site time; `--where species=buffalo` filters `event_details` in the CLI; JSON `{records, meta}` output |
+| `events export [--since/--until \| --today \| --last 7d] [--event-type ...] [-o F.csv]`, `observations export --subject-id ID [--since/--until] [-o F.csv]` | The server's own CSV (events: the site's display names and labels); if the account may not export, the matching records as JSON with a note |
+| `now` | Server UTC time, site local time and timezone, and today's `--since/--until` bounds in site time |
 | `events get EVENT_ID [-o F]` | One event as a one-record `{records, meta}` document |
 | `events list categories\|event-types [--json] [-o F]`, `events show event-type V [--json] [-o F]` | Same as above, opt-in `{records, meta}` output |
 | `status show`, `auth whoami` | Server status; the authenticated user |
 | `subjects search\|get`, `tracks get SUBJECT_ID`, `observations search --subject-id ID` | Read subjects, tracks (v2 GeoJSON), raw observations (one selector required; `--since` defaults to 24 h before `--until`, or before now) |
-| `patrols search\|get`, `sources search\|get`, `subject-groups list\|get`, `subject-sources search` | Read patrols, sources, groups, collar↔subject assignments |
+| `patrols search\|get`, `sources search\|get`, `subject-groups list\|get`, `subject-sources search` | Read patrols (`--since/--until`, `--today`, `--last 7d` in site time), sources, groups, collar↔subject assignments |
 | `spatial-feature-groups list\|get ID`, `spatial-features list\|get ID` | Read spatial feature groups and the features in them (geofences, roads, water points, boundaries) |
 | `featuresets list\|get ID`, `regions list` | Read featuresets and their GeoJSON boundaries, operational regions |
 | `auth login [--token T]/status/logout` | Cache (password session or static token), inspect, or clear the selected profile's credential |
@@ -228,6 +230,10 @@ per profile; old `tokens/<host>.json` files are ignored.)
 
 Every paginated read command answers to both `list` and `search` (`er subjects list`
 and `er regions search` both work); the names above are the ones shown in `--help`.
+Every command that emits the records document (all reads except the two CSV
+exports) takes `--fields a,b.c` and `--format json|tsv|csv`; every paginated
+one takes `--count-only` and `--group-by FIELD|day|week|month` (see *Windows,
+counts, columns* below).
 
 ## Reading data (agent-friendly JSON)
 
@@ -254,6 +260,37 @@ tusker's `er-cli` and the Skylight CLI, so agent skills can "write to
 - The pre-existing `events list ...` and `events show event-type` keep their
   human output by default; pass `--json` (or `-o`) for the contract above.
 
+### Windows, counts, columns
+
+- **Site time.** `--today`, `--yesterday` and `--last 7d` (also `30m`, `50h`,
+  `2w`) on `events search`, `events export`, `patrols search`, `observations
+  search|export` and `tracks get` are computed from the site's clock and
+  timezone, not the caller's; `er now` prints both and today's bounds. A bare
+  `--since`/`--until` date is the site's calendar day on every command (a
+  bare `--until 2026-08-31` means the end of that day). When one of these
+  flags is used, `meta.window` records the bounds actually sent and `meta`
+  carries `server_utc`, `site_now` and `site_tz`. The site clock is fetched
+  only when something needs it: a time flag, a period `--group-by`, `er now`,
+  or a bare date on observations, tracks or the observations export, which
+  must be sent with the site's offset (the events export takes a filter,
+  which das reads in site time itself). Mixing a naive bound with an
+  offset-bearing bound also fetches the site timezone to validate their
+  ordering. Every other
+  read makes no extra request.
+- **Counts.** `--count-only` asks the server for its total in one request
+  (`records: [{"count": N}]`, `meta.exact`); `--group-by priority` counts per
+  value, `--group-by month` per site-local period over the window.
+- **Columns.** `--fields id,title,reported_by.name` keeps only those dotted
+  paths (`coordinates.1` is latitude; a missing path is an empty cell);
+  `--format tsv` or `csv` writes a table of them instead of JSON.
+- **Details.** `events search --where species=buffalo` keeps events whose
+  `event_details` say so (applied by the CLI, which then does the counting).
+- **Exports.** `events export` and `observations export` return the server's
+  CSV unchanged; if the account may not export, the matching records come
+  back as JSON with a note.
+- **Bounded walks.** Paging stops after 200 pages or on a repeated `next`
+  link and says so in `meta.truncated` and `meta.note`.
+
 ### How agent skills use it
 
 The pattern is: run one command with `-o`, then read only the fields you
@@ -274,6 +311,15 @@ er observations search --subject-id <subject_id> --until 2026-06-02T00:00:00Z -o
 
 # Everything in a small table, capped
 er subjects search --limit 500 -o /tmp/subjects.json
+
+# Today's events in site time, three columns, as TSV
+er events search --today --fields id,time,event_type --format tsv -o /tmp/today.tsv
+
+# How many active patrols — one request, no records
+er patrols search --state open --count-only
+
+# Carcasses per month this quarter, whatever the type is called on this site
+er events search --event-type '*carcass*' --since 2026-07-01 --until 2026-09-30 --group-by month
 ```
 
 Then, in the skill, `jq '.records[] | {id, title, time}' /tmp/gf.json` or

@@ -38,7 +38,7 @@ def test_follow_pages_walks_next_and_counts_pages():
         "next": "https://x/subjects/?page=2",
         "results": [{"id": "a"}, {"id": "b"}],
     }
-    recs, pages, count = follow_pages(client, first)
+    recs, pages, count, _ = follow_pages(client, first)
     assert [r["id"] for r in recs] == ["a", "b", "c"]
     assert pages == 2 and count == 3
     client._get.assert_called_once_with("https://x/subjects/?page=2", max_retries=0)
@@ -47,7 +47,7 @@ def test_follow_pages_walks_next_and_counts_pages():
 def test_follow_pages_stops_at_limit_without_extra_requests():
     client = Mock()
     first = {"count": 5, "next": "https://x/?page=2", "results": [{"id": "a"}, {"id": "b"}]}
-    recs, pages, _ = follow_pages(client, first, limit=2)
+    recs, pages, _, _ = follow_pages(client, first, limit=2)
     assert [r["id"] for r in recs] == ["a", "b"]
     assert pages == 1
     client._get.assert_not_called()
@@ -58,7 +58,7 @@ def test_follow_pages_trims_overshoot_to_limit():
     client._api_root.return_value = "https://x/api/v1.0"
     client._get.side_effect = [{"count": 4, "next": None, "results": [{"id": "c"}, {"id": "d"}]}]
     first = {"count": 4, "next": "https://x/?page=2", "results": [{"id": "a"}, {"id": "b"}]}
-    recs, pages, _ = follow_pages(client, first, limit=3)
+    recs, pages, _, _ = follow_pages(client, first, limit=3)
     assert [r["id"] for r in recs] == ["a", "b", "c"]
     assert pages == 2
 
@@ -129,7 +129,7 @@ def test_pagination_uses_configured_origin_and_preserves_path_query(next_url):
     client._api_root.return_value = "https://public.example:8443/api/v1.0"
     client._get.return_value = {"results": [{"id": "b"}], "next": None}
     first = {"count": 2, "results": [{"id": "a"}], "next": next_url}
-    records, pages, count = follow_pages(client, first)
+    records, pages, count, _ = follow_pages(client, first)
     assert records == [{"id": "a"}, {"id": "b"}]
     assert (pages, count) == (2, 2)
     client._get.assert_called_once_with(
@@ -219,3 +219,133 @@ def test_fetch_and_pagination_go_through_get_json(monkeypatch):
     records, _meta = read.fetch(client, "subjects", {}, paginate=True)
     assert [r["id"] for r in records] == ["a", "b"]
     assert seen == ["subjects", "https://x/api/v1.0/subjects/?page=2"]
+
+
+from earthranger_cli import read
+
+
+class _Client:
+    def __init__(self, responses):
+        self.responses = responses
+        self.calls = []
+
+    def _api_root(self, version="v1.0"):
+        return f"https://fake.pamdas.org/api/{version}"
+
+    def _get(self, path, base_url=None, params=None, max_retries=0, **kwargs):
+        self.calls.append((path, params or {}))
+        key = path.rsplit("/", 1)[-1] if path.startswith("http") else path
+        return self.responses[key]
+
+
+def test_follow_pages_stops_at_max_pages_and_marks_truncated(monkeypatch):
+    monkeypatch.setattr(read, "MAX_PAGES", 3)
+    client = _Client({f"p{i}": {"results": [{"i": i}], "next": f"p{i + 1}"} for i in range(1, 10)})
+    records, pages, _, truncated = read.follow_pages(client, {"results": [{"i": 0}], "next": "p1"})
+    assert [r["i"] for r in records] == [0, 1, 2]
+    assert pages == 3
+    assert truncated is True
+
+
+def test_follow_pages_stops_when_next_repeats():
+    client = _Client({"loop": {"results": [{"i": 1}], "next": "loop"}})
+    records, pages, _, truncated = read.follow_pages(
+        client, {"results": [{"i": 0}], "next": "loop"}
+    )
+    assert [r["i"] for r in records] == [0, 1]
+    assert pages == 2
+    assert truncated is True
+
+
+def test_fetch_reports_truncation_in_meta(monkeypatch):
+    monkeypatch.setattr(read, "MAX_PAGES", 1)
+    client = _Client(
+        {"things": {"count": 50, "results": [{"i": 0}], "next": "p1"}, "p1": {"results": []}}
+    )
+    _records, meta = read.fetch(client, "things", paginate=True)
+    assert meta["truncated"] is True
+    assert "200" not in meta["note"] and "page" in meta["note"]
+    assert meta["count_reported"] == 50
+
+
+def test_fetch_count_asks_for_one_record():
+    client = _Client({"things": {"count": 1234, "results": [{"i": 0}], "next": "p1"}})
+    assert read.fetch_count(client, "things", {"state": "active"}) == 1234
+    assert client.calls[-1][1]["page_size"] == 1
+    assert client.calls[-1][1]["state"] == "active"
+
+
+def test_fetch_count_is_none_for_unpaginated_endpoints():
+    client = _Client({"things": [{"i": 0}, {"i": 1}]})
+    assert read.fetch_count(client, "things", {}) is None
+
+
+def test_follow_pages_stops_when_a_page_repeats_the_first_page():
+    # a next link pointing back at page 1 must not append page 1's records twice
+    client = _Client({"p2": {"results": [{"id": "a"}, {"id": "b"}], "next": "p1"}})
+    first = {"results": [{"id": "a"}, {"id": "b"}], "next": "p2"}
+    records, _pages, _, truncated = read.follow_pages(client, first)
+    assert [r["id"] for r in records] == ["a", "b"]
+    assert truncated is True
+
+
+def test_fetch_text_decodes_utf8_when_the_server_names_no_charset():
+    # requests decodes text/* without a charset as ISO-8859-1; the export is UTF-8
+    class _Resp:
+        content = "id,who\ne1,José – Nyumbu\n".encode()
+        text = content.decode("iso-8859-1")  # what requests would hand back
+        headers = {"Content-Type": "text/csv"}  # noqa: RUF012
+
+    class _C:
+        def _get(self, path, **kwargs):
+            return _Resp()
+
+    body, kind, _raw = read.fetch_text(_C(), "x")
+    assert body == "id,who\ne1,José – Nyumbu\n" and kind == "text/csv"
+
+
+def test_fetch_text_honours_a_declared_charset():
+    class _Resp:
+        content = "id\nJosé\n".encode("latin-1")
+        headers = {"Content-Type": "text/csv; charset=iso-8859-1"}  # noqa: RUF012
+
+    class _C:
+        def _get(self, path, **kwargs):
+            return _Resp()
+
+    assert read.fetch_text(_C(), "x")[0] == "id\nJosé\n"
+
+
+def test_fetch_text_retries_a_dropped_body(monkeypatch):
+    from requests.exceptions import ChunkedEncodingError
+
+    monkeypatch.setattr(read, "_sleep", lambda s: None)
+
+    class _Resp:
+        content = b"id\n"
+        headers = {"Content-Type": "text/csv"}  # noqa: RUF012
+
+    class _C:
+        calls = 0
+
+        def _get(self, path, **kwargs):
+            _C.calls += 1
+            if _C.calls == 1:
+                raise ChunkedEncodingError("dropped")
+            return _Resp()
+
+    assert read.fetch_text(_C(), "x")[0] == "id\n"
+    assert _C.calls == 2
+
+
+def test_fetch_text_also_returns_the_bytes_as_sent():
+    class _Resp:
+        content = "id\nJosé\n".encode("latin-1")
+        headers = {"Content-Type": "text/csv; charset=iso-8859-1"}  # noqa: RUF012
+
+    class _C:
+        def _get(self, path, **kwargs):
+            return _Resp()
+
+    body, _kind, raw = read.fetch_text(_C(), "x")
+    assert body == "id\nJosé\n" and raw == _Resp.content

@@ -34,6 +34,9 @@ def test_every_command_is_registered_with_output_option():
         assert ("limit" in names) == (spec.kind == "list"), (spec.group, spec.name)
         paginated = spec.kind == "list" and spec.unwrap is None
         assert ("page_size" in names) == paginated, (spec.group, spec.name)
+        assert ("since" in names) == (spec.window is not None), (spec.group, spec.name)
+        assert ("fields" in names) == (spec.kind != "raw"), (spec.group, spec.name)
+        assert ("today" in names) == (spec.window is not None), (spec.group, spec.name)
         assert cmd.help and spec.help in cmd.help
         assert ("{id}" in spec.path) == (spec.arg is not None), (spec.group, spec.name)
 
@@ -239,7 +242,11 @@ def test_output_writes_file_and_summarizes_on_stderr(fake, tmp_path):
     assert result.exit_code == 0, result.output
     assert result.stdout == ""
     assert result.stderr == f"Done. 2 record(s) written to {target} (1 page(s)).\n"
-    assert json.loads(target.read_text())["meta"] == {"total": 2, "pages": 1, "count_reported": 2}
+    assert json.loads(target.read_text())["meta"] == {
+        "total": 2,
+        "pages": 1,
+        "count_reported": 2,
+    }
 
 
 def test_api_error_is_reported_cleanly(fake):
@@ -421,7 +428,10 @@ def test_observations_rejects_unparseable_until_before_requesting(fake):
     [
         ("2026-01-02T00:00:00+03:00", "2025-12-31T21:00:00Z"),  # positive offset
         ("2026-01-02T00:00:00-05:00", "2026-01-01T05:00:00Z"),  # negative offset
-        ("2026-01-02T00:00:00", "2026-01-01T00:00:00Z"),  # naive: treated as UTC
+        (
+            "2026-01-02T00:00:00",
+            "2025-12-31T21:00:00Z",
+        ),  # naive = the site's day (+03:00)
     ],
 )
 def test_observations_default_since_converts_until_offset_to_utc(fake, until, expected_since):
@@ -554,3 +564,923 @@ def test_events_search_exact_value_beats_a_colliding_display_name(fake):
     assert result.exit_code == 0, result.output
     params = next(c for c in fake.calls if c[0] == "_get" and c[1] == "activity/events")[2]
     assert params["event_type"] == ["77777777-7777-7777-7777-777777777777"]
+
+
+def test_fields_and_format_on_a_read_command(fake):
+    fake.responses["subjects"] = {
+        "count": 2,
+        "next": None,
+        "results": [
+            {
+                "id": "s1",
+                "name": "Alpha",
+                "last_position": {"geometry": {"coordinates": [36.8, -1.3]}},
+            },
+            {"id": "s2", "name": "Beta, Jr"},
+        ],
+    }
+    result = _run(
+        ["subjects", "search", "--fields", "id,name,last_position.geometry.coordinates.1"]
+    )
+    assert result.exit_code == 0, result.output
+    doc = json.loads(result.output)
+    assert doc["records"][0] == {
+        "id": "s1",
+        "name": "Alpha",
+        "last_position.geometry.coordinates.1": -1.3,
+    }
+    assert doc["records"][1]["last_position.geometry.coordinates.1"] is None
+    assert doc["meta"]["total"] == 2
+
+    result = _run(["subjects", "search", "--fields", "id,name", "--format", "csv"])
+    assert result.output == 'id,name\ns1,Alpha\ns2,"Beta, Jr"\n'
+
+    result = _run(["subjects", "search", "--format", "tsv"])
+    assert result.exit_code == 2
+    assert "--format tsv needs --fields" in result.output
+
+
+def test_plain_reads_never_fetch_the_clock(fake):
+    # the extra GET /status is paid only by --today/--yesterday/--last and `er now`
+    fake.responses["regions"] = [{"id": "r1"}]
+    doc = json.loads(_run(["regions", "list"]).output)
+    assert "server_utc" not in doc["meta"] and "site_tz" not in doc["meta"]
+    assert [c[0] for c in fake.calls if c[0] in ("_get", "_get_response")] == ["_get"]
+
+
+def test_now_prints_the_site_clock_as_one_record(fake):
+    result = _run(["now"])
+    assert result.exit_code == 0, result.output
+    doc = json.loads(result.output)
+    assert doc["records"] == [
+        {
+            "utc": "2026-10-09T09:00:00Z",
+            "site_now": "2026-10-09T12:00:00+03:00",
+            "site_tz": "Africa/Nairobi",
+            "today": {
+                "since": "2026-10-09T00:00:00+03:00",
+                "until": "2026-10-09T23:59:59.999999+03:00",
+            },
+        }
+    ]
+    assert doc["meta"]["total"] == 1
+    result = _run(["now", "--fields", "today.since", "--format", "tsv"])
+    assert result.output == "today.since\n2026-10-09T00:00:00+03:00\n"
+
+
+def test_events_search_today_folds_into_filter_and_reports_window(fake):
+    fake.responses["activity/events"] = {"count": 0, "next": None, "results": []}
+    result = _run(["events", "search", "--today", "--filter", '{"text":"lion"}'])
+    assert result.exit_code == 0, result.output
+    sent = json.loads(_gets(fake)[0][2]["filter"])
+    assert sent == {
+        "text": "lion",
+        "date_range": {
+            "lower": "2026-10-09T00:00:00+03:00",
+            "upper": "2026-10-09T23:59:59.999999+03:00",
+        },
+    }
+    meta = json.loads(result.output)["meta"]
+    assert meta["window"] == {
+        "since": "2026-10-09T00:00:00+03:00",
+        "until": "2026-10-09T23:59:59.999999+03:00",
+        "tz": "Africa/Nairobi",
+        "mode": "today",
+    }
+    # the clock was fetched once and reused for meta
+    assert [c for c in fake.calls if c[0] == "_get_response"] == [("_get_response", "status", None)]
+    assert meta["server_utc"] == "2026-10-09T09:00:00Z"
+    assert meta["site_now"] == "2026-10-09T12:00:00+03:00"
+    assert meta["site_tz"] == "Africa/Nairobi"
+
+
+def test_patrols_last_and_bare_until(fake):
+    fake.responses["activity/patrols"] = {"count": 0, "next": None, "results": []}
+    result = _run(["patrols", "search", "--last", "7d"])
+    assert result.exit_code == 0, result.output
+    window = json.loads(_gets(fake)[0][2]["filter"])["date_range"]
+    assert window == {"lower": "2026-10-02T12:00:00+03:00", "upper": "2026-10-09T12:00:00+03:00"}
+    result = _run(["patrols", "search", "--since", "2026-08-01", "--until", "2026-08-31"])
+    window = json.loads(_gets(fake)[1][2]["filter"])["date_range"]
+    assert window == {"lower": "2026-08-01", "upper": "2026-08-31T23:59:59.999999"}
+
+
+def test_tracks_and_observations_take_the_window_as_params(fake):
+    fake.responses["subject/s1/tracks"] = {"type": "FeatureCollection", "features": []}
+    result = _run(["tracks", "get", "s1", "--yesterday"])
+    assert result.exit_code == 0, result.output
+    assert _gets(fake)[0][2] == {
+        "since": "2026-10-08T00:00:00+03:00",
+        "until": "2026-10-08T23:59:59.999999+03:00",
+    }
+    fake.responses["observations"] = {"count": 0, "next": None, "results": []}
+    result = _run(["observations", "search", "--subject-id", "s1", "--last", "24h"])
+    assert result.exit_code == 0, result.output
+    sent = _gets(fake)[1][2]
+    assert sent["since"] == "2026-10-08T12:00:00+03:00"
+    assert sent["until"] == "2026-10-09T12:00:00+03:00"
+    assert "defaulting" not in result.stderr
+
+
+def test_window_flags_conflict_is_a_usage_error_before_connecting(fake, monkeypatch):
+    monkeypatch.setattr(cli_mod, "_connect", lambda ctx: pytest.fail("connected"))
+    result = _run(["events", "search", "--today", "--since", "2026-01-01"])
+    assert result.exit_code == 2
+    assert "--today sets the whole window; drop --since" in result.output
+
+
+def test_today_without_site_timezone_exits_1(fake):
+    fake.status = {"server_timezone": "EAT"}
+    result = _run(["events", "search", "--today"])
+    assert result.exit_code == 1
+    assert "no usable timezone (EAT)" in result.output
+    assert _gets(fake) == []  # refused before asking for events
+
+
+def test_count_only_asks_the_server_once(fake):
+    fake.responses["activity/events"] = {"count": 1234, "next": "x", "results": [{"id": "e1"}]}
+    result = _run(["events", "search", "--count-only", "--state", "active"])
+    assert result.exit_code == 0, result.output
+    doc = json.loads(result.output)
+    assert doc["records"] == [{"count": 1234}]
+    assert doc["meta"]["count_reported"] == 1234 and doc["meta"]["exact"] is True
+    sent = _gets(fake)
+    assert len(sent) == 1 and sent[0][2]["page_size"] == 1 and sent[0][2]["state"] == ["active"]
+
+
+def test_count_only_walks_when_the_endpoint_has_no_count(fake):
+    fake.responses["regions"] = [{"id": "r1"}, {"id": "r2"}]
+    doc = json.loads(_run(["regions", "list", "--count_only"]).output)
+    assert doc["records"] == [{"count": 2}] and doc["meta"]["exact"] is True
+
+
+def test_group_by_field_and_unknown_field(fake):
+    fake.responses["activity/events"] = {
+        "count": 3,
+        "next": None,
+        "results": [{"priority": 300}, {"priority": 300}, {"priority": 0}],
+    }
+    doc = json.loads(_run(["events", "search", "--group-by", "priority"]).output)
+    assert doc["records"] == [{"group": "300", "count": 2}, {"group": "0", "count": 1}]
+    assert doc["meta"]["group_by"] == "priority" and doc["meta"]["records_counted"] == 3
+    result = _run(["events", "search", "--group-by", "nope"])
+    assert result.exit_code == 2
+    assert "no record carries 'nope'" in result.output and "priority" in result.output
+
+
+def test_group_by_month_needs_a_window(fake):
+    fake.responses["activity/events"] = {
+        "count": 2,
+        "next": None,
+        "results": [{"time": "2026-09-15T10:00:00Z"}, {"time": "2026-10-02T10:00:00Z"}],
+    }
+    result = _run(["events", "search", "--group-by", "month"])
+    assert result.exit_code == 2 and "needs a window" in result.output
+    doc = json.loads(
+        _run(
+            [
+                "events",
+                "search",
+                "--group-by",
+                "month",
+                "--since",
+                "2026-09-01",
+                "--until",
+                "2026-10-09",
+            ]
+        ).output
+    )
+    assert [(r["period"], r["count"]) for r in doc["records"]] == [("2026-09", 1), ("2026-10", 1)]
+    assert doc["meta"]["site_tz"] == "Africa/Nairobi"  # the clock was needed, so it is reported
+    fake.responses["subjects"] = {"count": 0, "next": None, "results": []}
+    result = _run(["subjects", "search", "--group-by", "day"])
+    assert result.exit_code == 2 and "needs a window" in result.output
+
+
+def test_count_only_and_group_by_are_exclusive(fake):
+    result = _run(["events", "search", "--count-only", "--group-by", "priority"])
+    assert result.exit_code == 2 and "either --count-only or --group-by" in result.output
+
+
+def test_events_export_writes_the_servers_csv(fake, tmp_path):
+    from conftest import FakeResponse
+
+    fake.event_types = [{"id": "t-carcass", "value": "carcass", "display": "Carcass"}]
+    fake.responses["activity/events/export"] = FakeResponse(
+        None, content_type="text/csv", text_override="id,Species\ne1,Elephant\ne2,Lion\n"
+    )
+    target = tmp_path / "events.csv"
+    result = _run(["events", "export", "--today", "--event-type", "carcass", "-o", str(target)])
+    assert result.exit_code == 0, result.output
+    assert target.read_text() == "id,Species\ne1,Elephant\ne2,Lion\n"
+    assert result.stdout == ""
+    assert result.stderr.strip() == f"Done. 2 data row(s) written to {target} (text/csv)."
+    sent = next(
+        c for c in fake.calls if c[0] == "_get_response" and c[1] == "activity/events/export"
+    )[2]
+    f = json.loads(sent["filter"])
+    assert f["date_range"]["lower"] == "2026-10-09T00:00:00+03:00"
+    assert f["event_type"] == ["t-carcass"]  # resolved id folded into filter
+    assert "event_type" not in sent
+
+
+def test_events_export_to_stdout(fake):
+    from conftest import FakeResponse
+
+    fake.responses["activity/events/export"] = FakeResponse(
+        None, content_type="text/csv", text_override="id\n"
+    )
+    result = _run(["events", "export"])
+    assert result.output == "id\n"
+
+
+def test_export_403_falls_back_to_records(fake):
+    from erclient.er_errors import ERClientPermissionDenied
+
+    def denied(path, **kwargs):
+        raise ERClientPermissionDenied("no export permission")
+
+    fake.responses["activity/events/export"] = denied
+    fake.responses["activity/events"] = {"count": 1, "next": None, "results": [{"id": "e1"}]}
+    result = _run(["events", "export", "--since", "2026-10-01"])
+    assert result.exit_code == 0, result.output
+    assert "note: this account may not export" in result.stderr
+    doc = json.loads(result.stdout)
+    assert doc["records"] == [{"id": "e1"}]
+    sent = _gets(fake)[0][2]
+    assert sent["include_details"] == "true"
+    assert json.loads(sent["filter"])["date_range"]["lower"] == "2026-10-01"
+
+
+def test_export_403_with_an_untranslatable_flag_stays_a_403(fake):
+    from erclient.er_errors import ERClientPermissionDenied
+
+    def denied(path, **kwargs):
+        raise ERClientPermissionDenied("no export permission")
+
+    fake.responses["trackingdata/export"] = denied
+    # Review Focus 5: --current-status has no records-endpoint equivalent
+    result = _run(["observations", "export", "--subject-id", "s1", "--current-status"])
+    assert result.exit_code == 1
+    assert "no export permission" in result.output
+    assert _gets(fake) == []
+
+
+def test_where_filters_details_client_side_and_counts_the_matches(fake):
+    fake.responses["activity/events"] = {
+        "count": 3,
+        "next": None,
+        "results": [
+            {"id": "e1", "event_type": "carcass", "event_details": {"species": "buffalo"}},
+            {"id": "e2", "event_type": "carcass", "event_details": {"species": "lion"}},
+            {"id": "e3", "event_type": "elephant_carcass", "event_details": {}},
+        ],
+    }
+    result = _run(["events", "search", "--where", "species=Buffalo"])
+    assert result.exit_code == 0, result.output
+    assert _gets(fake)[0][2]["include_details"] == "true"
+    doc = json.loads(result.output)
+    assert [r["id"] for r in doc["records"]] == ["e1"]
+    assert doc["meta"]["total"] == 1 and doc["meta"]["fetched"] == 3
+    assert doc["meta"]["where"] == {"species": "Buffalo"}
+    assert "1 of 3 event(s) matched" in doc["meta"]["note"]
+
+    doc = json.loads(
+        _run(["events", "search", "--where", "species=buffalo", "--count-only"]).output
+    )
+    assert doc["records"] == [{"count": 1}]
+    assert _gets(fake)[1][2]["page_size"] == 100  # walked, not the one-record count
+
+    result = _run(["events", "search", "--where", "species"])
+    assert result.exit_code == 2 and "KEY=VALUE" in result.output
+
+
+def test_event_type_glob_matches_values_and_displays(fake):
+    fake.event_types = [
+        {"id": "t1", "value": "carcass_rep", "display": "Carcass Report"},
+        {"id": "t2", "value": "elephant_carcass", "display": "Carcass - Elephant"},
+        {"id": "t3", "value": "sighting", "display": "Sighting"},
+    ]
+    fake.responses["activity/events"] = {"count": 0, "next": None, "results": []}
+    result = _run(["events", "search", "--event-type", "*carcass*"])
+    assert result.exit_code == 0, result.output
+    assert sorted(_gets(fake)[0][2]["event_type"]) == ["t1", "t2"]
+    assert (
+        "note: --event-type '*carcass*' matched 2 type(s): carcass_rep, elephant_carcass"
+        in result.stderr
+    )
+    result = _run(["events", "search", "--event-type", "zebra*"])
+    assert result.exit_code == 2 and "matches no event type" in result.output
+
+
+def test_event_type_miss_suggests_close_matches(fake):
+    fake.event_types = [{"id": "t1", "value": "geofence_break", "display": "Geofence Break"}]
+    result = _run(["events", "search", "--event-type", "geofence_brake"])
+    assert result.exit_code == 2
+    assert "Did you mean: geofence_break" in result.output
+
+
+def test_events_post_event_type_is_never_resolved(fake):
+    # guardrail: posting takes the exact value; no pattern, no lookup
+    fake.event_types = [{"id": "t1", "value": "carcass_rep", "display": "Carcass Report"}]
+    result = _run(["events", "post", "--event-type", "carcass*", "--field", "a=1"])
+    posted = [c for c in fake.calls if c[0] == "post_event"]
+    assert posted, result.output
+    assert posted[0][1]["event_type"] == "carcass*"
+
+
+def test_subject_group_name_is_resolved_to_an_id(fake):
+    fake.responses["subjectgroups"] = {
+        "count": 2,
+        "next": None,
+        "results": [{"id": "g1", "name": "Rangers"}, {"id": "g2", "name": "Elephants"}],
+    }
+    fake.responses["subjects"] = {"count": 0, "next": None, "results": []}
+    result = _run(["subjects", "search", "--subject-group", "elephants"])
+    assert result.exit_code == 0, result.output
+    assert _gets(fake)[0][1:3] == (
+        "subjectgroups",
+        {
+            "flat": "true",
+            "include_inactive": "true",
+            "render_last_location": "false",
+            "page_size": 100,
+        },
+    )
+    assert _gets(fake)[1][2]["subject_group"] == "g2"
+    result = _run(["subjects", "search", "--subject-group", "elefants"])
+    assert result.exit_code == 2 and "Did you mean: Elephants" in result.output
+    fake.calls.clear()
+    _run(["subjects", "search", "--subject-group", "0b1a7c2e-1111-4222-8333-444455556666"])
+    assert _gets(fake)[0][1] == "subjects"  # a UUID needs no lookup
+
+
+def test_count_only_with_limit_is_not_exact_when_the_limit_bites(fake):
+    # --count-only counts the whole query; --limit only bounds a --where fetch
+    fake.responses["regions"] = [{"id": f"r{i}"} for i in range(5)]
+    doc = json.loads(_run(["regions", "list", "--count-only", "--limit", "2"]).output)
+    assert doc["records"] == [{"count": 5}] and doc["meta"]["exact"] is True
+    fake.responses["activity/events"] = {
+        "count": 3,
+        "next": None,
+        "results": [{"id": str(i), "event_details": {"species": "buffalo"}} for i in range(3)],
+    }
+    doc = json.loads(
+        _run(
+            ["events", "search", "--where", "species=buffalo", "--count-only", "--limit", "2"]
+        ).output
+    )
+    assert doc["records"] == [{"count": 2}] and doc["meta"]["exact"] is False
+
+
+def test_observations_export_fallback_needs_a_selector(fake):
+    from erclient.er_errors import ERClientPermissionDenied
+
+    def denied(path, **kwargs):
+        raise ERClientPermissionDenied("no export permission")
+
+    fake.responses["trackingdata/export"] = denied
+    # without a subject the records fallback would walk every observation on the site
+    result = _run(["observations", "export", "--since", "2026-10-01", "--until", "2026-10-02"])
+    assert result.exit_code == 1 and "no export permission" in result.output
+    assert _gets(fake) == []
+    fake.responses["observations"] = {"count": 0, "next": None, "results": []}
+    result = _run(["observations", "export", "--subject-id", "s1", "--since", "2026-10-01"])
+    assert result.exit_code == 0, result.output
+    assert _gets(fake)[0][2]["subject_id"] == "s1"
+
+
+def test_export_fallback_document_carries_a_note_and_the_window(fake, tmp_path):
+    from erclient.er_errors import ERClientPermissionDenied
+
+    def denied(path, **kwargs):
+        raise ERClientPermissionDenied("no export permission")
+
+    fake.responses["activity/events/export"] = denied
+    fake.responses["activity/events"] = {"count": 0, "next": None, "results": []}
+    target = tmp_path / "events.csv"
+    result = _run(["events", "export", "--today", "-o", str(target)])
+    assert result.exit_code == 0, result.output
+    meta = json.loads((tmp_path / "events.json").read_text())["meta"]  # JSON never lands in a .csv
+    assert "may not export" in meta["note"]
+    assert meta["window"]["mode"] == "today" and meta["site_tz"] == "Africa/Nairobi"
+
+
+def test_group_by_field_reports_completeness_under_limit(fake):
+    fake.responses["activity/events"] = {
+        "count": 1000,
+        "next": None,
+        "results": [{"priority": 300}, {"priority": 0}, {"priority": 0}],
+    }
+    doc = json.loads(_run(["events", "search", "--group-by", "priority", "--limit", "1"]).output)
+    assert doc["records"] == [{"group": "300", "count": 1}]
+    assert doc["meta"]["exact"] is False and doc["meta"]["fetched"] == 1
+    assert "--limit" in doc["meta"]["note"]
+    doc = json.loads(_run(["events", "search", "--group-by", "priority"]).output)
+    assert doc["meta"]["exact"] is True and doc["meta"]["fetched"] == 3
+    # --where: fetched is the pre-filter count, where is carried
+    doc = json.loads(
+        _run(["events", "search", "--group-by", "priority", "--where", "species=x"]).output
+    )
+    assert doc["meta"]["fetched"] == 3 and doc["meta"]["where"] == {"species": "x"}
+
+
+def test_observations_bare_dates_are_the_site_day_and_pay_for_the_clock_once(fake):
+    # a bare date means the site's calendar day on every command; for observations
+    # that needs the site zone, so this is the one case a plain read fetches the clock
+    fake.responses["observations"] = {
+        "count": 1,
+        "next": None,
+        "results": [{"recorded_at": "2026-10-08T10:00:00Z"}],
+    }
+    doc = json.loads(
+        _run(
+            [
+                "observations",
+                "search",
+                "--subject-id",
+                "s1",
+                "--since",
+                "2026-10-08",
+                "--until",
+                "2026-10-08",
+                "--group-by",
+                "day",
+            ]
+        ).output
+    )
+    sent = _gets(fake)[0][2]
+    assert sent["since"] == "2026-10-08T00:00:00+03:00"
+    assert sent["until"] == "2026-10-08T23:59:59.999999+03:00"
+    assert [(r["period"], r["count"]) for r in doc["records"]] == [("2026-10-08", 1)]
+    assert [c for c in fake.calls if c[0] == "_get_response"] == [("_get_response", "status", None)]
+    # an aware bound needs no clock
+    fake.calls.clear()
+    _run(["observations", "search", "--subject-id", "s1", "--since", "2026-10-08T00:00:00Z"])
+    assert [c for c in fake.calls if c[0] == "_get_response"] == []
+
+
+def test_observations_bare_dates_fall_back_to_utc_without_a_site_zone(fake):
+    fake.status = {"server_timezone": "EAT"}
+    fake.responses["observations"] = {"count": 0, "next": None, "results": []}
+    result = _run(["observations", "search", "--subject-id", "s1", "--since", "2026-10-08"])
+    assert result.exit_code == 0, result.output
+    assert _gets(fake)[0][2]["since"] == "2026-10-08T00:00:00+00:00"
+    assert "no usable timezone" in result.stderr and "UTC" in result.stderr
+
+
+def test_grouped_limit_note_keeps_the_where_note(fake):
+    fake.responses["activity/events"] = {
+        "count": 9,
+        "next": None,
+        "results": [
+            {"priority": 300, "event_type": "carcass", "event_details": {"species": "buffalo"}},
+            {"priority": 0, "event_type": "elephant_carcass", "event_details": {}},
+        ],
+    }
+    doc = json.loads(
+        _run(
+            [
+                "events",
+                "search",
+                "--where",
+                "species=buffalo",
+                "--group-by",
+                "priority",
+                "--limit",
+                "2",
+            ]
+        ).output
+    )
+    assert doc["meta"]["exact"] is False
+    assert "--where species=buffalo was applied here" in doc["meta"]["note"]
+    assert "no 'species' detail" in doc["meta"]["note"]
+    assert "--limit" in doc["meta"]["note"]
+
+
+def test_events_export_fallback_needs_a_window_or_filter(fake):
+    from erclient.er_errors import ERClientPermissionDenied
+
+    def denied(path, **kwargs):
+        raise ERClientPermissionDenied("no export permission")
+
+    fake.responses["activity/events/export"] = denied
+    # unbounded: the records fallback would walk every event on the site in detail
+    result = _run(["events", "export"])
+    assert result.exit_code == 1 and "no export permission" in result.output
+    assert _gets(fake) == []
+    fake.responses["activity/events"] = {"count": 0, "next": None, "results": []}
+    assert _run(["events", "export", "--since", "2026-10-01"]).exit_code == 0
+
+
+def test_period_group_by_usage_errors_come_before_connecting(fake, monkeypatch):
+    monkeypatch.setattr(cli_mod, "_connect", lambda ctx: pytest.fail("connected"))
+    result = _run(["events", "search", "--group-by", "day"])
+    assert result.exit_code == 2 and "needs a window" in result.output
+    result = _run(["subjects", "search", "--group-by", "month"])
+    assert result.exit_code == 2 and "needs a window" in result.output
+
+
+def test_export_done_line_counts_csv_records_not_newlines(fake, tmp_path):
+    from conftest import FakeResponse
+
+    body = 'id,notes\ne1,"first line\nsecond line"\ne2,plain\n'
+    fake.responses["activity/events/export"] = FakeResponse(
+        None, content_type="text/csv", text_override=body
+    )
+    target = tmp_path / "events.csv"
+    result = _run(["events", "export", "-o", str(target)])
+    assert result.exit_code == 0, result.output
+    assert result.stderr.strip() == f"Done. 2 data row(s) written to {target} (text/csv)."
+
+
+def test_export_with_a_huge_csv_field_still_succeeds(fake, tmp_path):
+    # review: csv.reader's default 131,072-character field limit must not fail an
+    # export that was already written; das aggregates an event's notes into one field
+    from conftest import FakeResponse
+
+    body = "id,notes\ne1," + "x" * 131_073 + "\ne2,plain\n"
+    fake.responses["activity/events/export"] = FakeResponse(
+        None, content_type="text/csv", text_override=body
+    )
+    target = tmp_path / "events.csv"
+    result = _run(["events", "export", "-o", str(target)])
+    assert result.exit_code == 0, result.output
+    assert target.read_text() == body
+    assert result.stdout == ""
+    assert f"written to {target}" in result.stderr
+    assert "row count not computed" in result.stderr
+
+
+def test_group_by_field_with_all_null_values_is_one_none_row(fake):
+    fake.responses["activity/events"] = {
+        "count": 2,
+        "next": None,
+        "results": [{"priority_label": None}, {"priority_label": None}],
+    }
+    result = _run(["events", "search", "--group-by", "priority_label"])
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output)["records"] == [{"group": "(none)", "count": 2}]
+
+
+def test_period_group_by_checks_the_site_timezone_before_fetching(fake):
+    fake.status = {"server_timezone": "EAT"}
+    result = _run(
+        [
+            "events",
+            "search",
+            "--since",
+            "2026-07-01",
+            "--until",
+            "2026-09-30",
+            "--group-by",
+            "month",
+        ]
+    )
+    assert result.exit_code == 1 and "no usable timezone" in result.output
+    assert _gets(fake) == []
+
+
+def test_observations_export_fallback_defaults_the_window_and_keeps_filter(fake):
+    from erclient.er_errors import ERClientPermissionDenied
+
+    def denied(path, **kwargs):
+        raise ERClientPermissionDenied("no export permission")
+
+    fake.responses["trackingdata/export"] = denied
+    fake.responses["observations"] = {"count": 0, "next": None, "results": []}
+    result = _run(["observations", "export", "--subject-id", "s1", "--filter", "0"])
+    assert result.exit_code == 0, result.output
+    sent = _gets(fake)[0][2]
+    assert sent["subject_id"] == "s1" and sent["filter"] == "0"
+    assert sent["since"].endswith("Z")  # the 24 h default observations search applies
+    assert "defaulting to the 24 hours before now" in result.stderr
+
+
+def test_event_type_with_brackets_matches_exactly_before_globbing(fake):
+    fake.event_types = [
+        {"id": "t1", "value": "sighting_legacy", "display": "Wildlife Sighting [legacy]"},
+        {"id": "t2", "value": "sighting", "display": "Wildlife Sighting"},
+    ]
+    fake.responses["activity/events"] = {"count": 0, "next": None, "results": []}
+    result = _run(["events", "search", "--event-type", "Wildlife Sighting [legacy]"])
+    assert result.exit_code == 0, result.output
+    assert _gets(fake)[0][2]["event_type"] == ["t1"]
+    assert "matched" not in result.stderr
+
+
+def test_period_group_by_notes_unbucketed_records(fake):
+    fake.responses["activity/patrols"] = {
+        "count": 2,
+        "next": None,
+        "results": [
+            {"patrol_segments": [{"time_range": {"start_time": "2026-09-29T10:00:00+03:00"}}]},
+            {"patrol_segments": [{"time_range": {"start_time": "2026-10-02T10:00:00+03:00"}}]},
+        ],
+    }
+    doc = json.loads(
+        _run(
+            [
+                "patrols",
+                "search",
+                "--since",
+                "2026-10-01",
+                "--until",
+                "2026-10-02",
+                "--group-by",
+                "day",
+            ]
+        ).output
+    )
+    assert doc["meta"]["records_counted"] == 1 and doc["meta"]["unbucketed"] == 1
+    assert "outside" in doc["meta"]["note"]
+
+
+def test_export_fallback_writes_json_beside_a_csv_path(fake, tmp_path):
+    from erclient.er_errors import ERClientPermissionDenied
+
+    def denied(path, **kwargs):
+        raise ERClientPermissionDenied("no export permission")
+
+    fake.responses["activity/events/export"] = denied
+    fake.responses["activity/events"] = {"count": 1, "next": None, "results": [{"id": "e1"}]}
+    target = tmp_path / "today.csv"
+    result = _run(["events", "export", "--since", "2026-10-01", "-o", str(target)])
+    assert result.exit_code == 0, result.output
+    assert not target.exists()
+    sibling = tmp_path / "today.json"
+    assert json.loads(sibling.read_text())["records"] == [{"id": "e1"}]
+    assert str(sibling) in result.stderr
+
+
+def test_client_clock_fallback_is_announced(fake):
+    from conftest import FakeResponse
+
+    fake.responses["status"] = FakeResponse(fake.status, date="")
+    fake.responses["activity/events"] = {"count": 0, "next": None, "results": []}
+    result = _run(["events", "search", "--today"])
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout)["meta"]["clock_source"] == "client"
+    assert "note: the server sent no usable Date header" in result.stderr
+
+
+def test_where_repeated_key_is_an_or_and_limit_is_explained(fake):
+    fake.responses["activity/events"] = {
+        "count": 3,
+        "next": None,
+        "results": [
+            {"id": "e1", "event_type": "c", "event_details": {"species": "buffalo"}},
+            {"id": "e2", "event_type": "c", "event_details": {"species": "elephant"}},
+            {"id": "e3", "event_type": "c", "event_details": {"species": "lion"}},
+        ],
+    }
+    doc = json.loads(
+        _run(
+            ["events", "search", "--where", "species=buffalo", "--where", "species=elephant"]
+        ).output
+    )
+    assert [r["id"] for r in doc["records"]] == ["e1", "e2"]
+    assert doc["meta"]["where"] == {"species": ["buffalo", "elephant"]}
+    doc = json.loads(_run(["events", "search", "--where", "species=lion", "--limit", "3"]).output)
+    assert "--limit bounds the records fetched" in doc["meta"]["note"]
+
+
+def test_malformed_filter_is_a_usage_error_before_connecting(fake, monkeypatch):
+    monkeypatch.setattr(cli_mod, "_connect", lambda ctx: pytest.fail("connected"))
+    result = _run(["events", "search", "--filter", "{bad", "--since", "2026-01-01"])
+    assert result.exit_code == 2 and "--filter is not valid JSON" in result.output
+    result = _run(["patrols", "search", "--filter", "[1]"])
+    assert result.exit_code == 2 and "--filter must be a JSON object" in result.output
+
+
+def test_count_only_floor_is_noted_in_table_mode(fake, monkeypatch):
+    from earthranger_cli import read
+
+    monkeypatch.setattr(read, "MAX_PAGES", 1)  # a truncated walk is the only floor now
+    fake.responses["regions"] = {"next": "p2", "results": [{"id": "r1"}, {"id": "r2"}]}
+    fake.responses["p2"] = {"next": None, "results": [{"id": "r3"}]}
+    result = _run(["regions", "list", "--count-only", "--fields", "count", "--format", "tsv"])
+    assert result.stdout == "count\n2\n"
+    assert "floor" in result.stderr
+
+
+def test_looping_event_type_listing_is_refused(fake):
+    fake.event_types = []
+    page = {"results": [{"id": "t1", "value": "a", "display": "A"}], "next": "loop"}
+    fake.event_types_v2 = page
+    fake.responses["loop"] = page
+    result = _run(["events", "search", "--event-type", "a"])
+    assert result.exit_code == 1
+    assert "event-type listing did not end" in result.output
+    assert not any(c[0] == "_get" and c[1] == "activity/events" for c in fake.calls)
+
+
+def test_observations_default_window_is_24h_before_the_localized_until(fake):
+    # the bare --until is the site's end of day; the default since must be 24 h before *that*
+    fake.responses["observations"] = {"count": 0, "next": None, "results": []}
+    result = _run(["observations", "search", "--subject-id", "s1", "--until", "2026-08-31"])
+    assert result.exit_code == 0, result.output
+    sent = _gets(fake)[0][2]
+    assert sent["until"] == "2026-08-31T23:59:59.999999+03:00"
+    assert sent["since"] == "2026-08-30T20:59:59Z"
+    meta = json.loads(result.stdout)["meta"]
+    assert meta["window"] == {
+        "since": "2026-08-30T20:59:59Z",
+        "until": "2026-08-31T23:59:59.999999+03:00",
+    }
+
+
+def test_observations_walk_has_a_higher_page_cap(fake, monkeypatch):
+    from earthranger_cli import read
+
+    monkeypatch.setattr(read, "MAX_PAGES", 2)
+    fake.responses["observations"] = {"count": 3, "next": "p2", "results": [{"i": 1}]}
+    fake.responses["p2"] = {"count": 3, "next": "p3", "results": [{"i": 2}]}
+    fake.responses["p3"] = {"count": 3, "next": None, "results": [{"i": 3}]}
+    doc = json.loads(
+        _run(
+            ["observations", "search", "--subject-id", "s1", "--since", "2026-01-01T00:00:00Z"]
+        ).stdout
+    )
+    assert [r["i"] for r in doc["records"]] == [1, 2, 3] and "truncated" not in doc["meta"]
+    fake.responses["activity/events"] = {"count": 3, "next": "p2", "results": [{"i": 1}]}
+    doc = json.loads(_run(["events", "search"]).stdout)
+    assert doc["meta"]["truncated"] is True  # events keep the default cap
+
+
+def test_inverted_window_is_a_usage_error_before_connecting(fake, monkeypatch):
+    monkeypatch.setattr(cli_mod, "_connect", lambda ctx: pytest.fail("connected"))
+    result = _run(["events", "search", "--since", "2026-09-01", "--until", "2026-08-01"])
+    assert result.exit_code == 2 and "--since must not be after --until" in result.output
+
+
+def test_count_only_skips_the_count_request_on_unwrapped_endpoints(fake):
+    fake.responses["featureset"] = {"features": [{"id": "f1"}, {"id": "f2"}]}
+    doc = json.loads(_run(["featuresets", "list", "--count-only"]).stdout)
+    assert doc["records"] == [{"count": 2}]
+    assert len(_gets(fake)) == 1 and "page_size" not in _gets(fake)[0][2]
+
+
+def test_export_done_line_skips_the_count_for_huge_bodies(fake, tmp_path, monkeypatch):
+    import earthranger_cli.read_commands as rc
+    from conftest import FakeResponse
+
+    monkeypatch.setattr(rc, "CSV_COUNT_LIMIT", 10)
+    fake.responses["activity/events/export"] = FakeResponse(
+        None, content_type="text/csv", text_override="id,notes\ne1,x\ne2,y\n"
+    )
+    target = tmp_path / "e.csv"
+    result = _run(["events", "export", "-o", str(target)])
+    assert result.exit_code == 0 and "row count not computed" in result.stderr
+    assert target.read_text() == "id,notes\ne1,x\ne2,y\n"
+
+
+@pytest.mark.parametrize(
+    "group,selector,path",
+    [
+        ("events", [], "activity/events"),
+        ("observations", ["--subject-id", "s1"], "observations"),
+    ],
+)
+def test_mixed_timezone_window_accepts_valid_site_local_bounds(fake, group, selector, path):
+    fake.responses[path] = {"count": 0, "next": None, "results": []}
+    result = _run(
+        [
+            group,
+            "search",
+            *selector,
+            "--since",
+            "2026-10-09T00:00:00",
+            "--until",
+            "2026-10-08T22:00:00Z",
+        ]
+    )
+    assert result.exit_code == 0, result.output
+    assert any(call[1] == path for call in _gets(fake))
+
+
+@pytest.mark.parametrize(
+    "group,selector",
+    [
+        ("events", []),
+        ("observations", ["--subject-id", "s1"]),
+    ],
+)
+def test_mixed_timezone_window_rejects_inverted_site_local_bounds(fake, group, selector):
+    result = _run(
+        [
+            group,
+            "search",
+            *selector,
+            "--since",
+            "2026-10-09T00:30:00+03:00",
+            "--until",
+            "2026-10-08T23:00:00",
+        ]
+    )
+    assert result.exit_code == 2, result.output
+    assert "--since must not be after --until" in result.output
+    assert _gets(fake) == []
+
+
+def test_where_renames_the_servers_count_so_it_is_not_read_as_the_answer(fake):
+    fake.responses["activity/events"] = {
+        "count": 5000,
+        "next": None,
+        "results": [
+            {"id": "e1", "event_type": "c", "event_details": {"species": "buffalo"}},
+            {"id": "e2", "event_type": "c", "event_details": {"species": "lion"}},
+        ],
+    }
+    meta = json.loads(_run(["events", "search", "--where", "species=buffalo"]).stdout)["meta"]
+    assert meta["total"] == 1 and meta["fetched"] == 2
+    assert "count_reported" not in meta and meta["server_count"] == 5000
+    meta = json.loads(
+        _run(["events", "search", "--where", "species=buffalo", "--group-by", "id"]).stdout
+    )["meta"]
+    assert "count_reported" not in meta and meta["server_count"] == 5000
+
+
+def test_export_writes_the_body_without_newline_translation(fake, tmp_path, monkeypatch):
+    import pathlib
+
+    from conftest import FakeResponse
+
+    seen = {}
+    real = pathlib.Path.write_text
+
+    def spy(self, data, *args, **kwargs):
+        seen["newline"] = kwargs.get("newline", "missing")
+        return real(self, data, *args, **kwargs)
+
+    monkeypatch.setattr(pathlib.Path, "write_text", spy)
+    fake.responses["activity/events/export"] = FakeResponse(
+        None, content_type="text/csv", text_override="id\r\ne1\r\n"
+    )
+    result = _run(["events", "export", "-o", str(tmp_path / "e.csv")])
+    assert result.exit_code == 0, result.output
+    assert "newline" not in seen  # written as bytes: no text-mode translation on any OS
+    assert (tmp_path / "e.csv").read_bytes() == b"id\r\ne1\r\n"
+
+
+def test_export_file_holds_the_bytes_the_server_sent(fake, tmp_path):
+    from conftest import FakeResponse
+
+    latin = "id,who\ne1,José\n".encode("latin-1")
+
+    class _Latin(FakeResponse):
+        @property
+        def content(self):
+            return latin
+
+        @property
+        def text(self):
+            return latin.decode("latin-1")
+
+    fake.responses["activity/events/export"] = _Latin(
+        None, content_type="text/csv; charset=iso-8859-1"
+    )
+    target = tmp_path / "e.csv"
+    result = _run(["events", "export", "-o", str(target)])
+    assert result.exit_code == 0, result.output
+    assert target.read_bytes() == latin  # not re-encoded as UTF-8
+
+
+def test_subject_group_lookup_walks_past_the_page_cap(fake, monkeypatch):
+    from earthranger_cli import read
+
+    monkeypatch.setattr(read, "MAX_PAGES", 1)
+    fake.responses["subjectgroups"] = {
+        "count": 2,
+        "next": "g2",
+        "results": [{"id": "g1", "name": "Rangers"}],
+    }
+    fake.responses["g2"] = {
+        "count": 2,
+        "next": None,
+        "results": [{"id": "g2", "name": "Elephants"}],
+    }
+    fake.responses["subjects"] = {"count": 0, "next": None, "results": []}
+    result = _run(["subjects", "search", "--subject-group", "elephants"])
+    assert result.exit_code == 0, result.output
+    assert _gets(fake)[-1][2]["subject_group"] == "g2"
+
+
+def test_exact_when_the_walk_ends_exactly_at_the_limit(fake):
+    fake.responses["activity/events"] = {
+        "count": 3,
+        "next": None,
+        "results": [{"priority": 1}, {"priority": 1}, {"priority": 2}],
+    }
+    doc = json.loads(_run(["events", "search", "--group-by", "priority", "--limit", "3"]).stdout)
+    assert doc["meta"]["exact"] is True  # the server says there are exactly three
+    assert "note" not in doc["meta"]
+
+
+def test_count_only_ignores_limit_on_every_endpoint(fake):
+    fake.responses["activity/events"] = {"count": 100, "next": "x", "results": [{"id": "e1"}]}
+    doc = json.loads(_run(["events", "search", "--count-only", "--limit", "2"]).stdout)
+    assert doc["records"] == [{"count": 100}] and doc["meta"]["exact"] is True
+    fake.responses["regions"] = [{"id": f"r{i}"} for i in range(5)]
+    doc = json.loads(_run(["regions", "list", "--count-only", "--limit", "2"]).stdout)
+    assert doc["records"] == [{"count": 5}] and doc["meta"]["exact"] is True

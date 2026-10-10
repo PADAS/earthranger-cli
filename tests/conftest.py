@@ -1,7 +1,35 @@
 """FakeER: an in-memory stand-in for erclient.ERClient covering the calls we make."""
 
+import json
+from dataclasses import dataclass
+
 import pytest
 from erclient.er_errors import ERClientNotFound
+
+
+@dataclass
+class FakeResponse:
+    """What erclient._get(return_response=True) hands back: raw requests-shaped."""
+
+    body: object
+    status_code: int = 200
+    content_type: str = "application/json"
+    date: str = "Fri, 09 Oct 2026 09:00:00 GMT"
+    text_override: str | None = None
+
+    @property
+    def text(self) -> str:
+        if self.text_override is not None:
+            return self.text_override
+        return json.dumps({"data": self.body, "status": {"code": self.status_code}})
+
+    @property
+    def content(self) -> bytes:
+        return self.text.encode("utf-8")
+
+    @property
+    def headers(self) -> dict:
+        return {"Date": self.date, "Content-Type": self.content_type}
 
 
 @pytest.fixture(autouse=True)
@@ -30,6 +58,9 @@ class FakeER:
         self.me = {"username": "chris", "id": "user-1"}
         # path (or absolute next-URL) -> the literal response body erclient._get would return
         self.responses: dict = {}
+        # what GET /status says about the site clock (clock.fetch_clock reads it raw)
+        self.status = {"server_timezone_name": "Africa/Nairobi", "server_timezone": "EAT"}
+        self.date_header = "Fri, 09 Oct 2026 09:00:00 GMT"
 
     def auth_headers(self):
         self.calls.append(("auth_headers",))
@@ -72,6 +103,20 @@ class FakeER:
 
     # --- generic path methods (choices) ---
     def _get(self, path, base_url=None, params=None, max_retries=5, **kwargs):
+        if kwargs.get("return_response"):
+            # recorded under its own name so index-based `_get` assertions in
+            # tests are unaffected by the clock lookup
+            self.calls.append(("_get_response", path, params))
+            body = (
+                self.responses.get("status", self.status)
+                if path == "status"
+                else self.responses[path]
+            )
+            if callable(body):
+                return body(path, params=params)
+            if isinstance(body, FakeResponse):
+                return body
+            return FakeResponse(body, date=self.date_header)
         if path == "user/me":
             self.calls.append(("get_me", max_retries))
             return self.me

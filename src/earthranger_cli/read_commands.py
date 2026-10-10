@@ -11,24 +11,34 @@ output.emit) so agent skills can consume it unchanged.
 
 from __future__ import annotations
 
+import csv
+import difflib
+import fnmatch
+import io
 import re
 from collections.abc import Callable
-from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from dataclasses import dataclass, field
+from datetime import UTC, timedelta
+from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
 import click
+from erclient.er_errors import ERClientException, ERClientPermissionDenied
 
-from .output import emit
-from .read import fetch, follow_pages
+from . import aggregate
+from . import clock as _clock
+from . import windows as _windows
+from .output import append_note, emit, output_options, parse_output
+from .read import DEFAULT_CAP, fetch, fetch_count, fetch_text, follow_pages
 
 
 @dataclass(frozen=True)
 class Flag:
     param: str  # ER query parameter name, e.g. "updated_since"
     help: str
-    kind: str = "str"  # "str" | "int" | "float" | "bool" | "list" | "positive_int"
+    kind: str = "str"  # "str" | "int" | "float" | "bool" | "list" | "positive_int" | "multi"
+    # "multi": a repeatable option handled by the CLI itself, never sent as a query param
     # "list": a comma-separated value split into repeated query parameters
     # (?state=a&state=b), which is how DRF's getlist() expects multi-values;
     # a single "a,b" string would be matched literally and return nothing.
@@ -40,7 +50,9 @@ class ReadCommand:
     name: str  # action, e.g. "search"
     path: str  # relative to the API root; "{id}" is replaced by the positional
     help: str
-    kind: str = "list"  # "list" (paginated, has --limit) | "get" (single object)
+    # "list" (paginated, has --limit) | "get" (single object) | "raw" (the body
+    # is written as the server sent it — the CSV exports)
+    kind: str = "list"
     flags: tuple[Flag, ...] = ()
     version: str | None = None  # e.g. "v2.0"; None = erclient default (v1.0)
     arg: str | None = None  # positional name shown in help, e.g. "subject_id"
@@ -55,6 +67,26 @@ class ReadCommand:
     # server (e.g. turning event-type names into the ids the API filters on).
     # Raise click.UsageError to refuse; return the (possibly amended) params.
     resolve: Callable[[Any, dict], dict] | None = None
+    # How --since/--until (and --today/--yesterday/--last) reach this endpoint:
+    # one of windows.KINDS, or None for commands without a time window.
+    window: str | None = None
+    # Fill --since this far before --until (or now) when no window flag is given.
+    default_window: timedelta | None = None
+    # Dotted path to a record's timestamp, for --group-by day|week|month.
+    time_field: str | None = None
+    # For "raw" exports: how to answer with the records endpoint instead when
+    # the account may not export (403). {"path", "keep": {export_param:
+    # records_param}, "drop": {params that mean nothing there}, "add": {...}}.
+    # A sent param in neither keep nor drop, or a missing "require"d one, means
+    # the fallback cannot carry the question, and the 403 stands rather than
+    # widening it.
+    fallback: dict | None = None
+    # Query params a `--where` filter needs the server to include (the detail
+    # it reads), declared on the row rather than assumed by the shared callback.
+    where_params: dict = field(default_factory=dict)
+    # Pages a walk may follow before it is reported truncated; None = the
+    # read surface default (read.MAX_PAGES). Observations need far more.
+    max_pages: int | None = None
 
 
 @dataclass(frozen=True)
@@ -111,8 +143,21 @@ def _all_event_types(client) -> list[dict]:
     """
     v1 = client.get_event_types(include_inactive=True)
     v2_page = client.get_event_types(include_inactive=True, version="v2.0")
-    v2, _, _ = follow_pages(client, v2_page)
-    return [t for t in list(v1 or []) + list(v2) if isinstance(t, dict)]
+    v2, pages, _, truncated = follow_pages(client, v2_page, max_pages=None)
+    if truncated:
+        # a partial listing would resolve names against half the types
+        raise ERClientException(
+            f"the server's event-type listing did not end after {pages} page(s): its `next` "
+            "link repeated; refusing to resolve names against a partial list."
+        )
+    seen: set = set()
+    types = []
+    for t in list(v1 or []) + list(v2):
+        # the same type must not count twice when a listing repeats it
+        if isinstance(t, dict) and t.get("id") not in seen:
+            seen.add(t.get("id"))
+            types.append(t)
+    return types
 
 
 def _resolve_event_types(client, params: dict) -> dict:
@@ -153,21 +198,89 @@ def _resolve_event_types(client, params: dict) -> dict:
                 f"display name {w!r} matches {len(matches)} event types: {options}. "
                 "Pass the value or id instead."
             )
+        if any(ch in w for ch in "*?["):
+            # only after no exact value/display matched: a pattern (brackets included)
+            pat = w.casefold()
+            hits = [
+                t
+                for t in types
+                if t.get("id")
+                and (
+                    fnmatch.fnmatchcase(str(t.get("value") or "").casefold(), pat)
+                    or fnmatch.fnmatchcase(str(t.get("display") or "").casefold(), pat)
+                )
+            ]
+            if not hits:
+                raise click.UsageError(
+                    f"--event-type {w!r} matches no event type on this server; "
+                    f"values: {', '.join(sorted(by_value))}"
+                )
+            resolved.extend(t["id"] for t in hits)
+            matched = ", ".join(sorted(str(t.get("value")) for t in hits))
+            click.echo(
+                f"note: --event-type {w!r} matched {len(hits)} type(s): {matched}.", err=True
+            )
+            continue
         available = ", ".join(sorted(by_value))
+        displays = [str(t["display"]) for t in types if t.get("display")]
+        close = difflib.get_close_matches(w, list(by_value) + displays, n=3, cutoff=0.6)
+        hint = f" Did you mean: {', '.join(close)}?" if close else ""
         raise click.UsageError(
-            f"unknown event type {w!r}. Pass a value, display name or id; "
+            f"unknown event type {w!r}.{hint} Pass a value, display name or id; "
             f"values on this server: {available}"
         )
     params["event_type"] = resolved
     return params
 
 
-def _parse_iso(value: str, flag: str) -> datetime:
-    try:
-        parsed = datetime.fromisoformat(value)  # Python 3.11+ accepts a trailing Z
-    except ValueError:
-        raise click.UsageError(f"{flag} must be an ISO-8601 timestamp, got {value!r}.") from None
-    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+def _resolve_subject_group(client, params: dict) -> dict:
+    """Let --subject-group take a group name as well as an id."""
+    wanted = params.get("subject_group")
+    if not wanted or _UUID_RE.match(wanted):
+        return params
+    groups, meta = fetch(
+        client,
+        "subjectgroups",
+        # names and ids only: the default renders every subject's last position
+        {"flat": "true", "include_inactive": "true", "render_last_location": "false"},
+        paginate=True,
+        max_pages=None,  # resolution must see every group; only a loop is refused
+    )
+    if meta.get("truncated"):
+        raise ERClientException(
+            "the server's subject-group listing did not end: its `next` link repeated; "
+            "refusing to resolve a name against a partial list."
+        )
+    hits = [
+        g
+        for g in groups
+        if isinstance(g, dict)
+        and g.get("id")
+        and str(g.get("name") or "").casefold() == wanted.casefold()
+    ]
+    if len(hits) == 1:
+        params["subject_group"] = hits[0]["id"]
+        return params
+    if hits:
+        options = ", ".join(sorted(f"{g['name']} ({g['id']})" for g in hits))
+        raise click.UsageError(
+            f"subject group {wanted!r} matches {len(hits)} groups: {options}. Pass the id."
+        )
+    names = sorted(str(g.get("name")) for g in groups if isinstance(g, dict) and g.get("name"))
+    close = difflib.get_close_matches(wanted, names, n=3, cutoff=0.6)
+    hint = f" Did you mean: {', '.join(close)}?" if close else ""
+    raise click.UsageError(
+        f"unknown subject group {wanted!r}.{hint} Groups on this server: {', '.join(names)}"
+    )
+
+
+def _resolve_export_event_types(client, params: dict) -> dict:
+    """The export view reads event types only from inside `filter`."""
+    params = _resolve_event_types(client, params)
+    ids = params.pop("event_type", None)
+    if ids:
+        _windows.merge_filter(params, event_type=list(ids))
+    return params
 
 
 def _prepare_observations(params: dict) -> dict:
@@ -175,9 +288,8 @@ def _prepare_observations(params: dict) -> dict:
 
     With no selector ER falls through to "every observation on the site up to
     now", which the CLI would then page through in full; das itself rejects
-    more than one selector. With a selector but no `since`, ER defaults the
-    start to a day before `until` — we do the same client-side so the window
-    is visible in the request and in the stderr note.
+    more than one selector. (The 24-hour default for `since` is the row's
+    `default_window`, applied by the window machinery.)
     """
     chosen = [p for p in OBSERVATION_SELECTORS if params.get(p)]
     flags = ", ".join("--" + p.replace("_", "-") for p in OBSERVATION_SELECTORS)
@@ -188,18 +300,6 @@ def _prepare_observations(params: dict) -> dict:
         )
     if len(chosen) > 1:
         raise click.UsageError(f"pass only one of {flags} (got {', '.join(chosen)}).")
-    if not params.get("since"):
-        until = params.get("until")
-        end = _parse_iso(until, "--until") if until else datetime.now(UTC)
-        # `end` keeps whatever offset --until carried; convert before stamping a Z
-        start = (end - OBSERVATIONS_DEFAULT_WINDOW).astimezone(UTC)
-        params["since"] = start.strftime("%Y-%m-%dT%H:%M:%SZ")
-        anchor = f"--until {until}" if until else "now"
-        click.echo(
-            f"note: no --since given; defaulting to the 24 hours before {anchor} "
-            f"({params['since']}).",
-            err=True,
-        )
     return params
 
 
@@ -215,7 +315,7 @@ COMMANDS: tuple[ReadCommand, ...] = (
         "Search subjects.",
         flags=(
             Flag("name", "Filter by subject name."),
-            Flag("subject_group", "Subject group id."),
+            Flag("subject_group", "Subject group name or id."),
             Flag("subject_subtypes", "Comma-separated subject subtypes."),
             _INCLUDE_INACTIVE,
             Flag("updated_since", "ISO-8601; subjects updated after this time."),
@@ -227,6 +327,7 @@ COMMANDS: tuple[ReadCommand, ...] = (
             Flag("bbox", "Bounding box: west,south,east,north."),
             _PAGE_SIZE,
         ),
+        resolve=_resolve_subject_group,
     ),
     ReadCommand(
         "subjects", "get", "subject/{id}", "Retrieve one subject.", "get", arg="subject_id"
@@ -238,14 +339,13 @@ COMMANDS: tuple[ReadCommand, ...] = (
         "Retrieve a subject's track (GeoJSON) for a time window.",
         "get",
         flags=(
-            Flag("since", "ISO-8601 start."),
-            Flag("until", "ISO-8601 end."),
             Flag("show_excluded", "Include points ER excluded as outliers.", "bool"),
             Flag("max_speed_kmh", "Drop segments faster than this.", "float"),
             Flag("max_gap_minutes", "Break the track at gaps longer than this.", "int"),
         ),
         version="v2.0",
         arg="subject_id",
+        window="since_until",
     ),
     ReadCommand(
         "observations",
@@ -258,8 +358,6 @@ COMMANDS: tuple[ReadCommand, ...] = (
             Flag("source_id", "Source id (selector)."),
             Flag("subjectsource_id", "Subject-source assignment id (selector)."),
             Flag("sourceprovider_id", "Source provider id (selector)."),
-            Flag("since", "ISO-8601 start (default: 24 hours ago)."),
-            Flag("until", "ISO-8601 end (default: now)."),
             Flag("filter", "ER observation filter (e.g. 0 = exclusion flags off)."),
             Flag("include_details", "Include observation details.", "bool"),
             Flag("bbox", "Bounding box: west,south,east,north."),
@@ -267,6 +365,46 @@ COMMANDS: tuple[ReadCommand, ...] = (
             _PAGE_SIZE,
         ),
         prepare=_prepare_observations,
+        window="since_until",
+        default_window=OBSERVATIONS_DEFAULT_WINDOW,
+        time_field="recorded_at",
+        max_pages=2000,  # a collar fixing every minute is ~20k rows a fortnight
+    ),
+    ReadCommand(
+        "observations",
+        "export",
+        "trackingdata/export",
+        "Export raw observations as the server's CSV (ER's own column names).",
+        "raw",
+        flags=(
+            Flag("subject_id", "Subject id."),
+            Flag("source_provider", "Source provider key."),
+            Flag("subject_chronofile", "Subject chronofile number."),
+            Flag("filter", "ER observation filter (e.g. 0 = exclusion flags off)."),
+            _INCLUDE_INACTIVE,
+            Flag(
+                "current_status", "One row per subject: its current status, not its track.", "bool"
+            ),
+            Flag("record_serial_base", "Serial base for record numbering.", "int"),
+            Flag("max_records", "Stop after this many records.", "int"),
+        ),
+        window="after_before",
+        fallback={
+            "path": "observations",
+            "keep": {
+                "after_date": "since",
+                "before_date": "until",
+                "subject_id": "subject_id",
+                "filter": "filter",
+            },
+            "drop": set(),
+            "add": {"include_details": "true"},
+            # the records endpoint is bounded the way `observations search` is
+            "default_window": OBSERVATIONS_DEFAULT_WINDOW,
+            # without a selector the records endpoint is every observation on
+            # the site (what `observations search` refuses); the 403 stands
+            "require": {"subject_id"},
+        },
     ),
     ReadCommand(
         "events",
@@ -293,12 +431,56 @@ COMMANDS: tuple[ReadCommand, ...] = (
             Flag("include_related_events", "Include related events.", "bool"),
             Flag("is_collection", "Only incident collections.", "bool"),
             Flag("exclude_contained", "Exclude events contained in a collection.", "bool"),
+            Flag(
+                "where",
+                "Keep events whose event_details say KEY is VALUE (repeatable), e.g. "
+                "--where species=buffalo. Applied by the CLI after fetching; with "
+                "--count-only or --group-by the CLI counts the matches.",
+                "multi",
+            ),
             _PAGE_SIZE,
         ),
         resolve=_resolve_event_types,
+        window="filter",
+        time_field="time",
+        where_params={"include_details": "true"},
     ),
     ReadCommand(
         "events", "get", "activity/event/{id}", "Retrieve one event.", "get", arg="event_id"
+    ),
+    ReadCommand(
+        "events",
+        "export",
+        "activity/events/export",
+        "Export events as the server's own CSV: columns and values are the site's display "
+        "names (what the form shows), which the JSON records do not carry.",
+        "raw",
+        flags=(
+            Flag("filter", "ER events JSON filter; --since/--until merge into it."),
+            Flag(
+                "event_type",
+                "Event type value(s), display name(s) or id(s), comma-separated; "
+                "resolved to ids and folded into the filter.",
+                "list",
+            ),
+            Flag("state", "new | active | resolved."),
+            Flag("bbox", "Bounding box: west,south,east,north."),
+            Flag("value_cols", "Also write each field's internal value column.", "bool"),
+            Flag(
+                "display_cols", "Write fields under their display names (server default).", "bool"
+            ),
+        ),
+        window="filter",
+        resolve=_resolve_export_event_types,
+        fallback={
+            "path": "activity/events",
+            "keep": {"filter": "filter", "state": "state", "bbox": "bbox"},
+            "drop": {"value_cols", "display_cols"},
+            "add": {"include_details": "true"},
+            # the CSV export is legitimately whole-site; a detailed JSON walk of
+            # every event is not, so the fallback needs a window or a filter
+            "require_any": {"filter"},
+        },
     ),
     ReadCommand(
         "patrols",
@@ -311,6 +493,8 @@ COMMANDS: tuple[ReadCommand, ...] = (
             Flag("exclude_empty_patrols", "Skip patrols with no segments.", "bool"),
             _PAGE_SIZE,
         ),
+        window="filter",
+        time_field="patrol_segments.0.time_range.start_time",
     ),
     ReadCommand(
         "patrols", "get", "activity/patrols/{id}", "Retrieve one patrol.", "get", arg="patrol_id"
@@ -416,6 +600,35 @@ COMMANDS: tuple[ReadCommand, ...] = (
 _TYPES = {"str": str, "int": int, "float": float, "positive_int": click.IntRange(min=1)}
 
 
+def get_clock(ctx, client) -> dict:
+    """The site clock, fetched once per invocation and only when something
+    needs it (--today/--yesterday/--last, a period --group-by, `er now`):
+    a plain read never pays for the extra GET /status."""
+    cached = ctx.obj.get("clock")
+    if cached is None:
+        cached = ctx.obj["clock"] = _clock.fetch_clock(client)
+        if cached.get("clock_source") == "client":
+            click.echo(
+                "note: the server sent no usable Date header; windows are computed from this "
+                "machine's clock (meta.clock_source = client).",
+                err=True,
+            )
+    return cached
+
+
+def _walk_exact(meta: dict, limit: int | None, fetched: int) -> bool:
+    """Whether a paginated walk saw the whole query: neither truncated by the
+    page cap or a repeated link, nor cut short by --limit. A walk that ends
+    exactly at --limit is still exact when the server's own count says there
+    was nothing more."""
+    if meta.get("truncated"):
+        return False
+    if limit is None or fetched < limit:
+        return True
+    reported = meta.get("count_reported", meta.get("server_count"))
+    return reported is not None and fetched >= reported
+
+
 def _option_names(param: str) -> list[str]:
     """`--updated-since` plus er-cli's `--updated_since`; the last entry is the
     Python destination name click passes to the callback."""
@@ -431,40 +644,354 @@ def _endpoint(spec: ReadCommand) -> str:
     return f"[GET /api/{spec.version or 'v1.0'}/{path}]"
 
 
+def _grouped(
+    ctx,
+    client,
+    spec: ReadCommand,
+    records: list,
+    meta: dict,
+    group_by: str,
+    window_meta,
+    limit: int | None,
+    fetched: int,
+):
+    """Rows of counts in place of records: per field value, or per site-local
+    period over the command's window. `fetched` is how many records the walk
+    returned before any --where filter; the breakdown is exact only when that
+    walk exhausted the query (no truncation, no --limit stop)."""
+    out_meta = {
+        k: v
+        for k, v in meta.items()
+        if k in ("pages", "count_reported", "server_count", "truncated", "note", "where")
+    }
+    out_meta["group_by"] = group_by
+    out_meta["fetched"] = fetched
+    out_meta["exact"] = _walk_exact(meta, limit, fetched)
+    if not out_meta["exact"] and not meta.get("truncated"):
+        limit_note = (
+            f"grouped only the {fetched} record(s) --limit allowed; counts are a floor, not totals."
+        )
+        append_note(out_meta, limit_note)
+    if group_by in _clock.PERIODS:
+        # the window and time_field were checked before connecting (callback)
+        info = get_clock(ctx, client)
+        tz = _clock.site_tz(info)  # refused before the walk if None (callback)
+        until = window_meta.get("until") or info.get("local") or info["utc"]
+        # a naive bound here is a filter-kind one, which das reads in the site zone
+        # (the other kinds were sent, and recorded in window_meta, with an offset)
+        rows, unbucketed = aggregate.group_by_period(
+            records,
+            period=group_by,
+            since=window_meta["since"],
+            until=until,
+            tz=tz,
+            time_field=spec.time_field,
+            naive_tz=tz,
+        )
+        out_meta["unbucketed"] = unbucketed
+        if unbucketed:
+            outside = (
+                f"{unbucketed} fetched record(s) fall outside the window's buckets (e.g. a "
+                "patrol that started before --since, or no timestamp at all) and are not "
+                "counted in any period."
+            )
+            append_note(out_meta, outside)
+    else:
+        rows, matched = aggregate.group_counts(records, group_by)
+        if records and not matched:
+            keys = ", ".join(aggregate.scalar_keys(records))
+            raise click.UsageError(f"no record carries {group_by!r}; fields seen: {keys}")
+    out_meta["total"] = len(rows)
+    out_meta["records_counted"] = sum(r["count"] for r in rows)
+    return rows, out_meta
+
+
+CSV_COUNT_LIMIT = 8_000_000  # characters; beyond this the count is not worth a second parse
+
+
+def _csv_row_count(body: str) -> int | None:
+    """Data rows in a CSV body — records, not newlines, since the server quotes
+    multi-line notes. None when the body is too large to parse twice just for
+    a number, or when the parser refuses a field (its default limit is 131,072
+    characters, and das puts all of an event's notes in one field): the export
+    itself is fine, only the count is unavailable."""
+    if not body.strip():
+        return 0
+    if len(body) > CSV_COUNT_LIMIT:
+        return None
+    try:
+        return max(sum(1 for _ in csv.reader(io.StringIO(body))) - 1, 0)
+    except csv.Error:
+        return None
+
+
+def _emit_raw(
+    client, spec: ReadCommand, path: str, params: dict, output: str | None, extra_meta: dict
+) -> None:
+    """Write the server's body as sent; on 403 answer with the records instead."""
+    try:
+        body, content_type, raw = fetch_text(client, path, params)
+    except ERClientPermissionDenied as e:
+        plan = spec.fallback
+        mapped = dict(plan["add"]) if plan else None
+        if plan:
+            for name, value in params.items():
+                if name in plan["drop"]:
+                    continue
+                if name not in plan["keep"]:
+                    mapped = None
+                    break
+                mapped[plan["keep"][name]] = value
+            if mapped is not None and not plan.get("require", set()) <= set(mapped):
+                mapped = None
+            require_any = plan.get("require_any")
+            if mapped is not None and require_any and not (require_any & set(mapped)):
+                mapped = None
+        if mapped is None:
+            raise
+        default_window = plan.get("default_window")
+        if default_window is not None and "since" not in mapped:
+            since, _until, _ = _windows.resolve_window(
+                _windows.WindowRequest(None, mapped.get("until"), None, None),
+                get_info=None,
+                default_window=default_window,
+                note=lambda text: click.echo(text, err=True),
+            )
+            mapped["since"] = since
+        if output and Path(output).suffix.lower() == ".csv":
+            # never leave JSON in a file named .csv: a reader would parse garbage
+            output = str(Path(output).with_suffix(".json"))
+        note = (
+            f"this account may not export ({e}); these are the matching records as JSON "
+            f"from GET /api/v1.0/{plan['path']} instead of the CSV"
+            + (f", written to {output}" if output else "")
+            + "."
+        )
+        click.echo(f"note: {note}", err=True)
+        records, meta = fetch(client, plan["path"], mapped, paginate=True)
+        append_note(meta, note)
+        meta.update(extra_meta)
+        emit(records, meta, output)
+        return
+    if output:
+        target = Path(output)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(raw)  # exactly what the server sent: its charset, its CRLF
+        rows = _csv_row_count(body)
+        kind = content_type or "text/csv"
+        if rows is None:
+            # the file is complete; only the count is missing, so say exactly that
+            click.echo(
+                f"Done. File written to {output} ({kind}); row count not computed "
+                "(large body or an oversized field).",
+                err=True,
+            )
+        else:
+            click.echo(f"Done. {rows} data row(s) written to {output} ({kind}).", err=True)
+    else:
+        click.echo(body, nl=False)
+
+
+def _query_params(spec: ReadCommand, kwargs: dict) -> dict:
+    """The flags a row declares, as the query params ER expects."""
+    params: dict = {}
+    for flag in spec.flags:
+        value = kwargs.get(flag.param)
+        if flag.kind == "multi":
+            continue  # the CLI's own, not a query param
+        if flag.kind == "bool":
+            if value:
+                params[flag.param] = "true"
+        elif flag.kind == "list":
+            if value is not None:
+                params[flag.param] = [v.strip() for v in value.split(",") if v.strip()]
+        elif value is not None:
+            params[flag.param] = value
+    return params
+
+
+def _check_period_grouping(spec: ReadCommand, win, group_by: str) -> None:
+    """Both facts are known before connecting; failing after a full walk would waste it."""
+    if win is None:
+        raise click.UsageError(
+            f"--group-by {group_by} needs a window, and {spec.group} records have "
+            "none to divide; group by a field instead."
+        )
+    if not (win.since or win.mode or spec.default_window):
+        raise click.UsageError(
+            f"--group-by {group_by} needs a window to divide: "
+            "pass --since/--until, --today, or --last."
+        )
+    if not spec.time_field:
+        raise click.UsageError(
+            f"{spec.group} records have no timestamp to bucket by {group_by}; "
+            "group by a field instead."
+        )
+
+
+def _apply_window(ctx, client, spec: ReadCommand, win, params: dict) -> dict | None:
+    """Resolve the window and write it into params; returns the window meta."""
+    naive_tz = None
+    mixed_bounds = bool(win.since and win.until) and (
+        _windows.is_naive(win.since) != _windows.is_naive(win.until)
+    )
+    if mixed_bounds or (
+        spec.window != "filter" and (_windows.is_naive(win.since) or _windows.is_naive(win.until))
+    ):
+        # Naive dates use the site's zone. Non-filter endpoints need an
+        # explicit offset, and mixed bounds need the zone to compare instants.
+        # Resolve it before measuring a default window from --until.
+        naive_tz = _clock.site_tz(get_clock(ctx, client))
+        if naive_tz is None:
+            if spec.window == "filter":
+                raise click.ClickException(
+                    "the site reported no usable timezone; pass offsets on both "
+                    "--since/--until to check their ordering."
+                )
+            click.echo(
+                "note: the site reported no usable timezone; bare --since/--until "
+                "dates are read as UTC.",
+                err=True,
+            )
+            naive_tz = UTC
+    since, until, window_meta = _windows.resolve_window(
+        win,
+        get_info=lambda: get_clock(ctx, client),
+        default_window=spec.default_window,
+        note=lambda text: click.echo(text, err=True),
+        naive_tz=naive_tz,
+    )
+    _windows.apply_window(spec.window, params, since, until, naive_tz=naive_tz)
+    if window_meta and spec.window != "filter":
+        lower, upper = _windows.bound_params(spec.window)
+        window_meta["since"] = params.get(lower, window_meta.get("since"))
+        window_meta["until"] = params.get(upper, window_meta.get("until"))
+    return window_meta
+
+
+def _count_only(client, spec: ReadCommand, path: str, params: dict):
+    """One count request where the server will say; a walk reported honestly
+    where not. --limit never applies: a count is the size of the query on
+    every endpoint, so the walk is bounded only by the page cap."""
+    n = None if spec.unwrap else fetch_count(client, path, params, version=spec.version)
+    if n is not None:
+        return [{"count": n}], {"total": 1, "pages": 1, "count_reported": n, "exact": True}
+    _records, walked = fetch(
+        client,
+        path,
+        params,
+        paginate=True,
+        version=spec.version,
+        unwrap=spec.unwrap,
+        max_pages=spec.max_pages or DEFAULT_CAP,
+    )
+    n, pages = walked["total"], walked["pages"]
+    meta = {"total": 1, "pages": pages, "count_reported": n, "exact": not walked.get("truncated")}
+    if walked.get("note"):
+        meta["note"] = walked["note"]
+    return [{"count": n}], meta
+
+
+def _apply_where(records: list, meta: dict, where, limit: int | None, fetched: int):
+    """Filter event_details in the CLI and say what that did to the numbers."""
+    records, note = aggregate.filter_details(records, where)
+    meta["fetched"] = fetched
+    meta["total"] = len(records)
+    meta["where"] = aggregate.where_summary(where)
+    if "count_reported" in meta:
+        # the server's count answers the unfiltered query; keep it, but not under
+        # the name every other document uses for "how many answer this query"
+        meta["server_count"] = meta.pop("count_reported")
+    if limit is not None:
+        append_note(
+            meta,
+            f"--limit bounds the records fetched ({fetched}), not the matches; "
+            "raise it or narrow the window for more.",
+        )
+    append_note(meta, note)
+    return records, meta
+
+
+def _count_matches(records: list, meta: dict, limit: int | None, fetched: int):
+    """--count-only after --where: the server's count is meaningless, count what matched."""
+    n = len(records)
+    return [{"count": n}], {
+        **meta,
+        "total": 1,
+        "count_reported": n,
+        "exact": _walk_exact(meta, limit, fetched),
+    }
+
+
 def _make_command(spec: ReadCommand, deps: Deps) -> click.Command:
-    def callback(ctx, output, limit=None, **kwargs):
+    def callback(ctx, output, fields=None, fmt="json", limit=None, **kwargs):
+        fields = parse_output(fields, fmt)
+        count_only = kwargs.pop("count_only", False)
+        group_by = kwargs.pop("group_by", None)
+        if count_only and group_by:
+            raise click.UsageError("pass either --count-only or --group-by, not both.")
         # Build and validate the request before connecting: a usage error (a
-        # missing selector, an unparseable --until) must not first demand a
+        # missing selector, conflicting window flags) must not first demand a
         # server or prompt for a password.
+        win = _windows.parse_window(kwargs) if spec.window else None
         path = spec.path
         if spec.arg:
             path = path.replace("{id}", quote(kwargs.pop(spec.arg), safe=""))
-        params: dict = {}
-        for flag in spec.flags:
-            value = kwargs.get(flag.param)
-            if flag.kind == "bool":
-                if value:
-                    params[flag.param] = "true"
-            elif flag.kind == "list":
-                if value is not None:
-                    params[flag.param] = [v.strip() for v in value.split(",") if v.strip()]
-            elif value is not None:
-                params[flag.param] = value
+        params = _query_params(spec, kwargs)
+        if spec.window == "filter" and "filter" in params:
+            # events/patrols take a JSON filter: malformed is a usage error, not a login
+            # (the observations --filter is an exclusion-flag integer, not JSON)
+            _windows.load_filter(params)
+        where = aggregate.parse_where(kwargs.get("where")) if "where" in kwargs else []
+        if where:
+            params.update(spec.where_params)  # e.g. include_details, which the filter reads
+        if group_by in _clock.PERIODS:
+            _check_period_grouping(spec, win, group_by)
         if spec.prepare is not None:
             params = spec.prepare(params)
         client = deps.connect(ctx)
+        window_meta = _apply_window(ctx, client, spec, win, params) if win is not None else None
         if spec.resolve is not None:
             params = spec.resolve(client, params)
-        records, meta = fetch(
-            client,
-            path,
-            params,
-            paginate=spec.kind == "list",
-            limit=limit,
-            version=spec.version,
-            unwrap=spec.unwrap,
-        )
-        emit(records, meta, output)
+        # the site zone decides where buckets begin; refuse before the walk, not after
+        if group_by in _clock.PERIODS and _clock.site_tz(get_clock(ctx, client)) is None:
+            raise click.ClickException(
+                "the site reported no usable timezone, so --group-by cannot say where a day begins."
+            )
+        if spec.kind == "raw":
+            extra = {"window": window_meta} if window_meta else {}
+            if ctx.obj.get("clock"):
+                extra.update(_clock.clock_meta(ctx.obj["clock"]))
+            _emit_raw(client, spec, path, params, output, extra)
+            return
+        if count_only and not where:
+            records, meta = _count_only(client, spec, path, params)
+        else:
+            records, meta = fetch(
+                client,
+                path,
+                params,
+                paginate=spec.kind == "list",
+                limit=limit,
+                version=spec.version,
+                unwrap=spec.unwrap,
+                max_pages=spec.max_pages or DEFAULT_CAP,
+            )
+            fetched = meta["total"]
+            if where:
+                records, meta = _apply_where(records, meta, where, limit, fetched)
+            if count_only:
+                records, meta = _count_matches(records, meta, limit, fetched)
+            elif group_by:
+                records, meta = _grouped(
+                    ctx, client, spec, records, meta, group_by, window_meta, limit, fetched
+                )
+        if window_meta:
+            meta["window"] = window_meta
+        if ctx.obj.get("clock"):
+            # only when a window flag already fetched it; never an extra request
+            meta.update(_clock.clock_meta(ctx.obj["clock"]))
+        emit(records, meta, output, fields=fields, fmt=fmt)
 
     callback.__name__ = f"{spec.group}_{spec.name}".replace("-", "_")
     fn = deps.api_errors(callback)
@@ -472,17 +999,43 @@ def _make_command(spec: ReadCommand, deps: Deps) -> click.Command:
     for flag in reversed(spec.flags):
         if flag.kind == "bool":
             fn = click.option(*_option_names(flag.param), is_flag=True, help=flag.help)(fn)
+        elif flag.kind == "multi":
+            fn = click.option(
+                *_option_names(flag.param), multiple=True, metavar="KEY=VALUE", help=flag.help
+            )(fn)
         else:
             fn = click.option(
                 *_option_names(flag.param), type=_TYPES.get(flag.kind, str), help=flag.help
             )(fn)
+    if spec.window:
+        fn = _windows.window_options(fn)
     if spec.kind == "list":
         fn = click.option(
-            "--limit", type=click.IntRange(min=1), metavar="N", help="Cap total records returned."
+            *_option_names("group_by"),
+            metavar="FIELD|day|week|month",
+            help="Count records per value of FIELD (a dotted path), or per site-local period "
+            "(needs a window: --since/--until, --today, --last).",
+        )(fn)
+        fn = click.option(
+            *_option_names("count_only"),
+            is_flag=True,
+            help="Report the server's count for the query in one request; no records.",
+        )(fn)
+        fn = click.option(
+            "--limit",
+            type=click.IntRange(min=1),
+            metavar="N",
+            help="Cap total records returned (with --where: records fetched before "
+            "filtering; ignored by --count-only, which counts the whole query).",
         )(fn)
     fn = click.option(
-        "-o", "--output", type=click.Path(dir_okay=False), help="Write JSON here instead of stdout."
+        "-o",
+        "--output",
+        type=click.Path(dir_okay=False),
+        help="Write the output here instead of stdout.",
     )(fn)
+    if spec.kind != "raw":
+        fn = output_options(fn)
     if spec.arg:
         fn = click.argument(spec.arg)(fn)
     fn = deps.connection_options(fn)
@@ -509,3 +1062,34 @@ def register(main: click.Group, deps: Deps) -> None:
         alias = _LIST_ALIASES.get(spec.name) if spec.kind == "list" else None
         if alias and alias not in group.commands:
             group.add_command(cmd, name=alias)
+    main.add_command(_make_now(deps))
+
+
+def _make_now(deps: Deps) -> click.Command:
+    """`er now`: the clock every window flag is computed from, so an agent
+    never does timezone arithmetic by hand."""
+
+    def now(ctx, output, fields=None, fmt="json"):
+        fields = parse_output(fields, fmt)
+        client = deps.connect(ctx)
+        info = get_clock(ctx, client)
+        record = {
+            "utc": info["utc"],
+            "site_now": info["local"],
+            "site_tz": info.get("timezone_name") or info.get("timezone"),
+            "today": info["today"],
+        }
+        emit([record], {"total": 1, "pages": 1}, output, fields=fields, fmt=fmt)
+
+    fn = deps.api_errors(now)
+    fn = click.pass_context(fn)
+    fn = click.option(
+        "-o", "--output", type=click.Path(dir_okay=False), help="Write JSON here instead of stdout."
+    )(fn)
+    fn = output_options(fn)
+    fn = deps.connection_options(fn)
+    return click.command(
+        "now",
+        help="The server's current time (UTC), the site's local time and timezone, and "
+        "today's --since/--until bounds in site time.\n\n[GET /api/v1.0/status]",
+    )(fn)

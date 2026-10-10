@@ -2129,3 +2129,46 @@ def test_version_flag():
     result = _run(["--version"])
     assert result.exit_code == 0
     assert result.output.strip() == f"er, version {__version__}"
+
+
+def test_list_event_types_fields_only_under_json(fake):
+    fake.event_types = [{"value": "a", "display": "A", "category": "c", "is_active": True}]
+    human = _run(["events", "list", "event-types"])
+    with_fields = _run(["events", "list", "event-types", "--fields", "value"])
+    # guardrail: --fields without --json changes nothing about the human output,
+    # but a stderr hint says why nothing happened
+    assert with_fields.stdout == human.stdout
+    assert human.stdout.startswith("a")
+    assert "--fields" in with_fields.stderr and "--json" in with_fields.stderr
+    assert human.stderr == ""
+    as_json = _run(["events", "list", "event-types", "--json", "--fields", "value"])
+    assert json.loads(as_json.output)["records"] == [{"value": "a"}]
+
+
+def test_show_event_type_json_with_choice_fields_and_fields_option(fake):
+    # review finding: the --fields option shadowed the local list of choice fields
+    fake.event_types = [
+        {
+            "value": "s",
+            "display": "S",
+            "schema": {
+                "schema": {
+                    "properties": {"species": {"$ref": "/api/v1.0/choices.json?field=species"}}
+                }
+            },
+        }
+    ]
+    fake.choices = {"species": [{"id": "c1", "field": "species", "value": "lion"}]}
+    result = _run(["events", "show", "event-type", "s", "--json"])
+    assert result.exit_code == 0, result.output
+    doc = json.loads(result.output)
+    assert "species" in doc["records"][0]["choices"]
+    result = _run(["events", "show", "event-type", "s", "--json", "--fields", "event_type.value"])
+    assert json.loads(result.output)["records"] == [{"event_type.value": "s"}]
+
+
+def test_list_categories_format_without_fields_is_a_usage_error_even_without_json(fake):
+    fake.categories = [{"value": "c", "display": "C"}]
+    result = _run(["events", "list", "categories", "--format", "tsv"])
+    assert result.exit_code == 2
+    assert "--format tsv needs --fields" in result.output

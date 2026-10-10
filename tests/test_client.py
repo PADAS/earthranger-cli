@@ -276,3 +276,33 @@ def test_get_me_body_failure_is_retried(monkeypatch):
     client._get.side_effect = [ChunkedEncodingError(ProtocolError("x")), {"username": "chris"}]
     assert get_me(client) == {"username": "chris"}
     assert client._get.call_count == 2
+
+
+def test_collect_pages_refuses_a_looping_listing_but_not_a_long_one(monkeypatch):
+    from erclient.er_errors import ERClientException
+
+    from earthranger_cli import client as er
+    from earthranger_cli import read
+
+    class _Client:
+        def __init__(self, responses):
+            self.responses = responses
+
+        def _api_root(self, version="v1.0"):
+            return "https://x/api/v1.0"
+
+        def _get(self, path, **kwargs):
+            return self.responses[path.rsplit("/", 1)[-1]]
+
+    # review: the authoring path must keep walking past the read surface's page cap
+    monkeypatch.setattr(read, "MAX_PAGES", 1)
+    long = _Client(
+        {f"p{i}": {"results": [{"id": f"c{i}"}], "next": f"p{i + 1}"} for i in range(1, 4)}
+    )
+    long.responses["p4"] = {"results": [{"id": "c4"}], "next": None}
+    first = {"count": 5, "next": "p1", "results": [{"id": "c0"}]}
+    assert [r["id"] for r in er._collect_pages(long, first)] == ["c0", "c1", "c2", "c3", "c4"]
+    # ...but a next link that repeats is still refused
+    loop = _Client({"loop": {"results": [{"id": "c1"}], "next": "loop"}})
+    with pytest.raises(ERClientException, match="repeated"):
+        er._collect_pages(loop, {"count": 5, "next": "loop", "results": [{"id": "c0"}]})
