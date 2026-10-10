@@ -177,8 +177,8 @@ def load_events_csv(
             raise FieldArgError(f"{path}: no header row")
         source = _csv_sources(headers, column_map, path)
         taken = {c for c in source.values() if c} | set(column_map.values())
-        # a header that *looks* reserved (time, latitude, ...) is never a detail,
-        # even when a map took that slot from another column
+        # Reserved headers are not pass-through details, even when a map took
+        # that slot from another column. An explicit detail map still wins.
         reserved_like = {h for h in headers if h.lower() in _RESERVED_NAMES}
         # detail columns in the CSV's own order: a pass-through column keeps its
         # name, a mapped one takes the field key it was mapped to; a pass-through
@@ -189,8 +189,10 @@ def load_events_csv(
             (h, key_for_column.get(h, h))
             for h in headers
             if h
-            and h not in reserved_like
-            and (h in key_for_column or (h not in taken and h not in column_map))
+            and (
+                h in key_for_column
+                or (h not in reserved_like and h not in taken and h not in column_map)
+            )
         ]
         width = len(headers)
         events = []

@@ -190,3 +190,13 @@ def test_load_events_csv_reports_an_unparseable_cell(tmp_path):
     p.write_text("event_type,notes\nsighting,[injured\n", encoding="utf-8")
     with pytest.raises(FieldArgError, match="row 2.*column 'notes'"):
         load_events_file(str(p))
+
+
+def test_load_events_csv_explicit_detail_map_accepts_reserved_header(tmp_path):
+    p = tmp_path / "e.csv"
+    p.write_text("event_type,Title\nsighting,Alice\n", encoding="utf-8")
+
+    events = load_events_file(str(p), column_map={"observer": "Title"})
+
+    assert events[0]["event_details"] == {"observer": "Alice"}
+    assert events[0]["title"] == "Alice"
