@@ -1,3 +1,3 @@
 """er-events-cli: manage EarthRanger event categories, choices, and v2 event types."""
 
-__version__ = "0.5.1"
+__version__ = "0.6.0"
