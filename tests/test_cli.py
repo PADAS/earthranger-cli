@@ -2185,3 +2185,138 @@ def test_pull_event_type_filter(fake):
     result = _run(["events", "pull", "wm", "--event-type", "nope"])
     assert result.exit_code == 1
     assert "error: no event type 'nope' in category 'wm'" in result.output
+
+
+# --- events post --dry-run (#20) ---
+
+
+def test_post_dry_run_validates_and_posts_nothing(fake):
+    _seed_sighting(fake)
+    result = _run(
+        [
+            "events",
+            "post",
+            "--dry-run",
+            "--event-type",
+            "animal_sighting",
+            "--field",
+            "species=elephant",
+            "--field",
+            "count=3",
+        ]
+    )
+    assert result.exit_code == 0, result.output
+    assert result.output.splitlines() == [
+        "would post  animal_sighting: species=elephant, count=3",
+        "Dry run: 1 event(s) valid; nothing was posted.",
+    ]
+    assert not any(c[0] == "post_event" for c in fake.calls)
+
+
+def test_post_dry_run_reports_invalid_events_and_exits_1(fake):
+    _seed_sighting(fake)
+    result = _run(
+        [
+            "events",
+            "post",
+            "--dry-run",
+            "--event-type",
+            "animal_sighting",
+            "--field",
+            "species=zebra",
+        ]
+    )
+    assert result.exit_code == 1
+    assert "invalid  animal_sighting (events[0]): species: 'zebra' is not one of" in result.output
+    assert "nothing was posted" in result.output
+    assert "would post" not in result.output
+    assert not any(c[0] == "post_event" for c in fake.calls)
+
+
+def test_post_dry_run_file_without_validation_needs_no_connection(fake, monkeypatch):
+    monkeypatch.setattr(cli_mod, "_connect", lambda ctx: pytest.fail("connected"))
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        with open("events.yaml", "w") as f:
+            f.write(
+                "- event_type: a\n  title: First\n  event_details: {x: 1}\n"
+                "- event_type: b\n  event_details: {y: 2, z: 3}\n"
+            )
+        result = runner.invoke(
+            main, ["events", "post", "--file", "events.yaml", "--dry-run", "--no-validate"]
+        )
+    assert result.exit_code == 0, result.output
+    assert result.output.splitlines() == [
+        "would post  a: First",
+        "would post  b: y=2, z=3",
+        "Dry run: 2 event(s) loaded, not validated; nothing was posted.",
+    ]
+
+
+# --- events post --file *.csv (#21) ---
+
+
+def test_post_csv_file_with_map_validates_and_dry_runs(fake):
+    _seed_sighting(fake)
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        with open("history.csv", "w") as f:
+            f.write("Species_Name,count,lat,lon\nelephant,3,-1.3,36.8\nzebra,1,,\n")
+        result = runner.invoke(
+            main,
+            [
+                "events",
+                "post",
+                "--file",
+                "history.csv",
+                "--event-type",
+                "animal_sighting",
+                "--map",
+                "species=Species_Name",
+                "--dry-run",
+            ],
+        )
+        assert result.exit_code == 1, result.output
+        assert (
+            "invalid  animal_sighting (events[1]): species: 'zebra' is not one of" in result.output
+        )
+        result = runner.invoke(
+            main,
+            [
+                "events",
+                "post",
+                "--file",
+                "history.csv",
+                "--event-type",
+                "animal_sighting",
+                "--map",
+                "species=Species_Name",
+                "--dry-run",
+                "--no-validate",
+            ],
+        )
+    assert result.exit_code == 0, result.output
+    assert result.output.splitlines()[:2] == [
+        "would post  animal_sighting: species=elephant, count=3",
+        "would post  animal_sighting: species=zebra, count=1",
+    ]
+    assert not any(c[0] == "post_event" for c in fake.calls)
+
+
+def test_post_bad_map_is_reported_cleanly(fake):
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        with open("h.csv", "w") as f:
+            f.write("a\n1\n")
+        result = runner.invoke(main, ["events", "post", "--file", "h.csv", "--map", "species"])
+    assert result.exit_code == 1
+    assert "error: --map expects key=column, got 'species'" in result.output
+
+
+def test_post_map_with_yaml_file_is_an_error(fake):
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        with open("e.yaml", "w") as f:
+            f.write("- event_type: a\n")
+        result = runner.invoke(main, ["events", "post", "--file", "e.yaml", "--map", "a=A"])
+    assert result.exit_code == 1 and "--map applies to CSV files only" in result.output

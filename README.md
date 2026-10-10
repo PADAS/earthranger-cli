@@ -180,6 +180,21 @@ per profile; old `tokens/<host>.json` files are ignored.)
        --location -1.286,36.817
    ```
 
+   Add `--dry-run` to see the validated event without sending it (a batch
+   from `--file` lists one line per event). A batch can be a YAML list or a
+   CSV, one event per row: `event_type`, `time`, `title` and `lat`/`lon` (or a
+   `location` column holding `lat,lon`) are recognised, every other column is
+   a detail field (integers, decimals and `true`/`false` become numbers and
+   booleans, everything else stays text), and `--map` points a field at a
+   differently named column. The delimiter is detected from the header
+   (comma, semicolon, tab or pipe) and errors name the file's line number.
+   Historical data usually needs only:
+
+   ```bash
+   er events post --file history.csv --event-type animal_sighting \\
+       --map species=Species_Name --map time=Timestamp --dry-run
+   ```
+
    Before anything is sent, the event's details are checked against the
    type's schema as ER renders it: unknown fields, values outside a
    select's choices, wrong types, out-of-range numbers and missing
@@ -210,8 +225,8 @@ per profile; old `tokens/<host>.json` files are ignored.)
 | Command | What it does |
 |---|---|
 | `events apply SPEC [--dry-run]` | Upsert category, choices, and event types from a spec |
-| `events post --event-type V --field k=v ... [--no-validate]` | Post one event (`--location LAT,LON`, `--time`, `--title`); details are validated against the type's schema first |
-| `events post --file events.yaml [--no-validate]` | Post a batch; every event is validated before any is sent; exits 1 if any fail |
+| `events post --event-type V --field k=v ... [--no-validate] [--dry-run]` | Post one event (`--location LAT,LON`, `--time`, `--title`); details are validated against the type's schema first; `--dry-run` validates and lists what would be posted without sending |
+| `events post --file events.yaml\|history.csv [--event-type V] [--map k=Column ...] [--no-validate] [--dry-run]` | Post a batch from a YAML list or a CSV (one event per row: reserved columns `event_type`, `time`, `title`, `lat`/`lon` or `location`; every other column is a detail field; `--map` renames); every event is validated before any is sent; exits 1 if any fail; `--dry-run` previews the batch |
 | `events list categories` | List categories (inactive included) |
 | `events list event-types [--category V]` | List event types |
 | `events show event-type V` | Full v2 event-type JSON + its Choice records |
