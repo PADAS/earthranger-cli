@@ -93,6 +93,14 @@ example in the README is parsed against the real command tree by
 suite; keep examples runnable, and note that the parser cannot check
 argument *values* (an invalid `--state` still parses).
 
+## What CI runs
+
+Every pull request and push to main runs `.github/workflows/test.yml`: the
+suite plus `ruff check` and `ruff format --check` on each Python the package
+claims (3.11, 3.12, 3.13). A tag runs `release.yml`, which tests once more on
+3.11, builds, and publishes. Adding a Python version means the classifiers in
+`pyproject.toml` and the matrix in `test.yml` change together.
+
 ## Day-to-day commands
 
 ```bash

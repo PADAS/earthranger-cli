@@ -27,24 +27,27 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Set up uv (with a pinned Python)
-        # `python-version` on setup-uv installs the requested CPython AND makes
-        # it the interpreter every subsequent `uv sync` / `uv run` resolves to,
-        # so the release build/tests are reproducible regardless of what
-        # interpreter happens to be first on the runner's PATH.
+      - name: Set up uv
         uses: astral-sh/setup-uv@v3
         with:
           enable-cache: true
-          python-version: "3.11"
+
+      - name: Install Python 3.11
+        # The oldest supported interpreter builds the release, so the wheel's
+        # metadata and the tests reflect the floor in requires-python. (setup-uv
+        # v3 has no python-version input; it warned and ignored the old one.)
+        # --python below pins every later uv command to this interpreter.
+        run: uv python install 3.11
 
       - name: Install dependencies
         # Dev tools (pytest, ruff) live in the `dev` optional-dependency extra.
-        run: uv sync --extra dev
+        run: uv sync --extra dev --python 3.11
 
       - name: Run tests
         # Gate the release on the test suite passing against the tagged
-        # commit. Without this, a broken tag would still ship to PyPI.
-        run: uv run pytest -q
+        # commit. Without this, a broken tag would still ship to PyPI. The
+        # full version matrix runs in test.yml on every PR and push to main.
+        run: uv run --python 3.11 pytest -q
 
       - name: Verify tag is a strict release and matches __version__
         # 1. The trigger glob `v*.*.*` would happily match pre-release tags
