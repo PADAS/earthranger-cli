@@ -184,8 +184,11 @@ per profile; old `tokens/<host>.json` files are ignored.)
    from `--file` lists one line per event). A batch can be a YAML list or a
    CSV, one event per row: `event_type`, `time`, `title` and `lat`/`lon` (or a
    `location` column holding `lat,lon`) are recognised, every other column is
-   a detail field with its value read like `--field`, and `--map` points a
-   field at a differently named column. Historical data usually needs only:
+   a detail field (integers, decimals and `true`/`false` become numbers and
+   booleans, everything else stays text), and `--map` points a field at a
+   differently named column. The delimiter is detected from the header
+   (comma, semicolon, tab or pipe) and errors name the file's line number.
+   Historical data usually needs only:
 
    ```bash
    er events post --file history.csv --event-type animal_sighting \\

@@ -2298,3 +2298,12 @@ def test_post_bad_map_is_reported_cleanly(fake):
         result = runner.invoke(main, ["events", "post", "--file", "h.csv", "--map", "species"])
     assert result.exit_code == 1
     assert "error: --map expects key=column, got 'species'" in result.output
+
+
+def test_post_map_with_yaml_file_is_an_error(fake):
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        with open("e.yaml", "w") as f:
+            f.write("- event_type: a\n")
+        result = runner.invoke(main, ["events", "post", "--file", "e.yaml", "--map", "a=A"])
+    assert result.exit_code == 1 and "--map applies to CSV files only" in result.output

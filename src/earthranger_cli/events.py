@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import re
 from datetime import UTC, datetime
 
 import yaml
@@ -56,10 +57,7 @@ def build_event(
     }
     if location:
         lat_str, _, lon_str = location.partition(",")
-        try:
-            event["location"] = {"latitude": float(lat_str), "longitude": float(lon_str)}
-        except ValueError:
-            raise FieldArgError(f"--location expects LAT,LON, got {location!r}") from None
+        event["location"] = _parse_location(lat_str, lon_str, "--location")
     if title:
         event["title"] = title
     return event
@@ -68,9 +66,13 @@ def build_event(
 def load_events_file(
     path: str, *, default_event_type: str | None = None, column_map: dict | None = None
 ) -> list[dict]:
-    """Events from a YAML list or, for a `.csv` path, from CSV rows."""
+    """Events from a YAML list or, for a `.csv` path, from CSV rows.
+    `default_event_type` fills in items/rows that name none; `column_map`
+    is the CSV `--map` and is refused for a YAML file rather than ignored."""
     if path.lower().endswith(".csv"):
         return load_events_csv(path, default_event_type=default_event_type, column_map=column_map)
+    if column_map:
+        raise FieldArgError("--map applies to CSV files only")
     with open(path, encoding="utf-8") as f:
         try:
             data = yaml.safe_load(f)
@@ -80,6 +82,8 @@ def load_events_file(
         raise FieldArgError("events file must be a YAML list of event objects")
     events: list[dict] = []
     for i, item in enumerate(data):
+        if isinstance(item, dict) and "event_type" not in item and default_event_type:
+            item = {**item, "event_type": default_event_type}
         if not isinstance(item, dict) or "event_type" not in item:
             raise FieldArgError(f"events[{i}] must be a mapping with an 'event_type'")
         if not isinstance(item["event_type"], str) or not item["event_type"]:
@@ -112,33 +116,102 @@ _RESERVED = {
     "lon": ("lon", "lng", "longitude"),
 }
 _RESERVED_NAMES = {name for names in _RESERVED.values() for name in names}
+_SLOT_OF = {name: slot for slot, names in _RESERVED.items() for name in names}
+_INT_RE = re.compile(r"^[+-]?(0|[1-9]\d*)$")  # 0123 is an identifier, not a number
+# a decimal needs a point or an exponent; "0123" and "42" are the integer rule's business
+_FLOAT_RE = re.compile(r"^[+-]?((\d+\.\d*|\.\d+)([eE][+-]?\d+)?|\d+[eE][+-]?\d+)$")
+_DELIMITERS = ",;\t|"
+
+
+def _coerce(text: str):
+    """A CSV cell as a value: integers, decimals and true/false become those,
+    everything else stays text. Spreadsheet exports are full of values that a
+    YAML reader would mangle (dates, times, 0123, NO, #12, "a: b"), so unlike
+    --field this never uses YAML."""
+    if _INT_RE.match(text):
+        return int(text)
+    if _FLOAT_RE.match(text):
+        return float(text)
+    if text.lower() in ("true", "false"):
+        return text.lower() == "true"
+    return text
+
+
+def _parse_location(lat, lon, where: str) -> dict:
+    """{latitude, longitude} from two cells or the halves of LAT,LON; a missing
+    or non-numeric half is named."""
+    lat, lon = str(lat).strip(), str(lon).strip()
+    if not lat or not lon:
+        missing = "lat" if not lat else "lon"
+        raise FieldArgError(f"{where}: {missing} is missing (got lat {lat!r}, lon {lon!r})")
+    try:
+        return {"latitude": float(lat), "longitude": float(lon)}
+    except ValueError:
+        raise FieldArgError(f"{where}: lat/lon must be numbers, got {lat!r}, {lon!r}") from None
 
 
 def _cell(row: dict, column: str | None) -> str:
     return row.get(column, "") if column else ""
 
 
-def _csv_sources(headers: list[str], column_map: dict, path: str) -> dict[str, str | None]:
-    """Which column feeds each reserved slot: an explicit map wins, else the
-    first header matching the slot's name or an alias."""
+def _sniff_delimiter(header_line: str) -> str:
+    """The delimiter the header uses most (comma, semicolon, tab or pipe):
+    Excel in many locales writes semicolons."""
+    counts = {d: header_line.count(d) for d in _DELIMITERS}
+    best = max(counts, key=counts.get)
+    return best if counts[best] else ","
+
+
+def _csv_plan(headers: list[str], column_map: dict, path: str) -> dict:
+    """How columns feed the event: which column fills each reserved slot and
+    which columns become which detail keys, with every ambiguity refused up
+    front so row order and column order can never decide the result."""
+    seen: dict[str, str] = {}
+    for h in headers:
+        if h and h.lower() in seen:
+            raise FieldArgError(f"{path}: duplicate column {h!r} (also {seen[h.lower()]!r})")
+        if h:
+            seen[h.lower()] = h
+    # map keys naming a reserved slot (or alias) are case-insensitive, like headers
+    norm_map: dict[str, str] = {}
     for key, column in column_map.items():
         if column not in headers:
             raise FieldArgError(
                 f"--map {key}={column}: no column {column!r} in {path}; "
                 f"columns: {', '.join(h for h in headers if h)}"
             )
+        norm_map[_SLOT_OF.get(key.lower(), key)] = column
+    targets: dict[str, str] = {}
+    for key, column in norm_map.items():
+        if column in targets:
+            raise FieldArgError(
+                f"--map: column {column!r} is mapped twice ({targets[column]} and {key})"
+            )
+        targets[column] = key
+    detail_map = {c: k for k, c in norm_map.items() if k not in _RESERVED}
     lowered = {h.lower(): h for h in headers if h}
-    return {
-        slot: column_map.get(slot) or next((lowered[n] for n in names if n in lowered), None)
-        for slot, names in _RESERVED.items()
-    }
+    source: dict[str, str | None] = {}
+    for slot, names in _RESERVED.items():
+        # an explicit map wins; else the first header matching the slot's name or
+        # an alias. A detail map onto such a column adds the detail; the column
+        # still fills its slot (a `Title` column is the title *and* the observer).
+        source[slot] = norm_map.get(slot) or next((lowered[n] for n in names if n in lowered), None)
+    taken = {c for c in source.values() if c} | set(norm_map.values())
+    reserved_like = {h for h in headers if h.lower() in _RESERVED_NAMES}
+    detail_keys = [
+        (h, detail_map.get(h, h))
+        for h in headers
+        if h
+        and (h in detail_map or (h not in taken and h not in reserved_like and h not in norm_map))
+    ]
+    return {"source": source, "detail_keys": detail_keys, "width": len(headers)}
 
 
-def _csv_event(row: dict, n: int, path: str, source: dict, default_event_type: str | None) -> dict:
+def _csv_event(row: dict, where: str, source: dict, default_event_type: str | None) -> dict:
     event_type = _cell(row, source["event_type"]) or default_event_type
     if not event_type:
         raise FieldArgError(
-            f"{path} row {n}: no event_type; add an event_type column or pass --event-type"
+            f"{where}: no event_type; add an event_type column or pass --event-type"
         )
     event: dict = {
         "event_type": event_type,
@@ -146,16 +219,14 @@ def _csv_event(row: dict, n: int, path: str, source: dict, default_event_type: s
     }
     if _cell(row, source["title"]):
         event["title"] = _cell(row, source["title"])
+    loc = _cell(row, source["location"])
     lat, lon = _cell(row, source["lat"]), _cell(row, source["lon"])
-    if _cell(row, source["location"]):
-        lat, _, lon = _cell(row, source["location"]).partition(",")
+    if loc and (lat or lon):
+        raise FieldArgError(f"{where}: both a location cell and lat/lon cells are filled; use one")
+    if loc:
+        lat, _, lon = loc.partition(",")
     if lat or lon:
-        try:
-            event["location"] = {"latitude": float(lat), "longitude": float(lon)}
-        except ValueError:
-            raise FieldArgError(
-                f"{path} row {n}: lat/lon must be numbers, got {lat!r}, {lon!r}"
-            ) from None
+        event["location"] = _parse_location(lat, lon, where)
     return event
 
 
@@ -166,61 +237,48 @@ def load_events_csv(
     they are, plus `column_map` (field key -> column name) for the ones that
     do not. Converting a CSV to YAML by hand was the step this removes.
 
-    Row numbers in errors count the header as row 1, so a validation
-    message's `events[i]` is row i + 2.
+    Row numbers in errors are the file's physical line numbers (the header is
+    line 1), so they match a spreadsheet's row numbers even past blank lines
+    and quoted multi-line cells.
     """
-    column_map = dict(column_map or {})
-    with open(path, encoding="utf-8-sig", newline="") as f:
-        reader = csv.DictReader(f)
+    try:
+        with open(path, encoding="utf-8-sig", newline="") as f:
+            text = f.read()
+    except UnicodeDecodeError as e:
+        raise FieldArgError(
+            f"{path} is not valid UTF-8 ({e.reason} at byte {e.start}); save it as UTF-8"
+        ) from None
+    header_line = text.split("\n", 1)[0]
+    reader = csv.DictReader(text.splitlines(keepends=True), delimiter=_sniff_delimiter(header_line))
+    try:
         headers = [(h or "").strip() for h in (reader.fieldnames or [])]
         if not any(headers):
             raise FieldArgError(f"{path}: no header row")
-        source = _csv_sources(headers, column_map, path)
-        taken = {c for c in source.values() if c} | set(column_map.values())
-        # Reserved headers are not pass-through details, even when a map took
-        # that slot from another column. An explicit detail map still wins.
-        reserved_like = {h for h in headers if h.lower() in _RESERVED_NAMES}
-        # detail columns in the CSV's own order: a pass-through column keeps its
-        # name, a mapped one takes the field key it was mapped to; a pass-through
-        # column whose name is an explicitly mapped key is dropped, so column
-        # order can never decide which value wins
-        key_for_column = {c: k for k, c in column_map.items() if k not in _RESERVED}
-        detail_keys = [
-            (h, key_for_column.get(h, h))
-            for h in headers
-            if h
-            and (
-                h in key_for_column
-                or (h not in reserved_like and h not in taken and h not in column_map)
-            )
-        ]
-        width = len(headers)
+        plan = _csv_plan(headers, dict(column_map or {}), path)
+        source, detail_keys, width = plan["source"], plan["detail_keys"], plan["width"]
         events = []
-        for n, raw in enumerate(reader, start=2):
+        for raw in reader:
+            where = f"{path} row {reader.line_num}"
             surplus = raw.get(None)  # DictReader parks cells beyond the header here
             if surplus:
                 raise FieldArgError(
-                    f"{path} row {n}: {width + len(surplus)} cells for {width} columns; "
-                    "quote a cell that contains a comma"
+                    f"{where}: {width + len(surplus)} cells for {width} columns; "
+                    "quote a cell that contains the delimiter"
                 )
             row = {
                 (k or "").strip(): (v.strip() if isinstance(v, str) else "")
                 for k, v in raw.items()
                 if k is not None
             }
-            event = _csv_event(row, n, path, source, default_event_type)
-            details: dict = {}
-            for column, key in detail_keys:
-                if row.get(column, "") != "":
-                    try:
-                        details[key] = _scalar(row[column])
-                    except yaml.YAMLError as e:
-                        raise FieldArgError(
-                            f"{path} row {n}, column {column!r}: cannot read "
-                            f"{row[column]!r} as a value ({e})"
-                        ) from None
-            event["event_details"] = details
+            event = _csv_event(row, where, source, default_event_type)
+            event["event_details"] = {
+                key: _coerce(row[column])
+                for column, key in detail_keys
+                if row.get(column, "") != ""
+            }
             events.append(event)
+    except csv.Error as e:
+        raise FieldArgError(f"{path} line {reader.line_num}: {e}") from None
     return events
 
 
