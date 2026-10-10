@@ -180,6 +180,9 @@ per profile; old `tokens/<host>.json` files are ignored.)
        --location -1.286,36.817
    ```
 
+   Add `--dry-run` to see the validated event without sending it (a batch
+   from `--file` lists one line per event).
+
    Before anything is sent, the event's details are checked against the
    type's schema as ER renders it: unknown fields, values outside a
    select's choices, wrong types, out-of-range numbers and missing
@@ -210,8 +213,8 @@ per profile; old `tokens/<host>.json` files are ignored.)
 | Command | What it does |
 |---|---|
 | `events apply SPEC [--dry-run]` | Upsert category, choices, and event types from a spec |
-| `events post --event-type V --field k=v ... [--no-validate]` | Post one event (`--location LAT,LON`, `--time`, `--title`); details are validated against the type's schema first |
-| `events post --file events.yaml [--no-validate]` | Post a batch; every event is validated before any is sent; exits 1 if any fail |
+| `events post --event-type V --field k=v ... [--no-validate] [--dry-run]` | Post one event (`--location LAT,LON`, `--time`, `--title`); details are validated against the type's schema first; `--dry-run` validates and lists what would be posted without sending |
+| `events post --file events.yaml [--no-validate] [--dry-run]` | Post a batch; every event is validated before any is sent; exits 1 if any fail; `--dry-run` previews the batch |
 | `events list categories` | List categories (inactive included) |
 | `events list event-types [--category V]` | List event types |
 | `events show event-type V` | Full v2 event-type JSON + its Choice records |
