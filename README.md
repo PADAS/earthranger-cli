@@ -54,6 +54,8 @@ If you'd rather install editable into an environment you already manage:
 uv pip install -e ".[dev]"
 ```
 
+See `CONTRIBUTING.md` for how features move from spec to merged PR.
+
 Releases are cut by pushing a `vX.Y.Z` tag that matches `__version__` in
 `src/earthranger_cli/__init__.py`; the `release` GitHub Actions workflow
 runs the tests, builds with `uv build`, and publishes to PyPI via Trusted
