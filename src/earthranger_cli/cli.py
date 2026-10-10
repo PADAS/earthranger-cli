@@ -31,6 +31,7 @@ from .events import (
     build_event,
     load_events_file,
     parse_field_args,
+    parse_map_args,
     post_events,
 )
 from .output import emit, output_options, parse_output
@@ -366,7 +367,15 @@ def apply_cmd(ctx, spec_file, dry_run):
     "--file",
     "file_",
     type=click.Path(exists=True, dir_okay=False),
-    help="YAML list of events to post.",
+    help="Events to post: a YAML list, or a .csv (one event per row; see README).",
+)
+@click.option(
+    "--map",
+    "map_",
+    multiple=True,
+    metavar="KEY=COLUMN",
+    help="CSV only: take field KEY from column COLUMN (e.g. species=Species_Name); "
+    "also renames a reserved column (time=Timestamp). Repeatable.",
 )
 @click.option(
     "--no-validate",
@@ -382,7 +391,9 @@ def apply_cmd(ctx, spec_file, dry_run):
 )
 @click.pass_context
 @_api_errors
-def post_event_cmd(ctx, event_type, fields, location, time_, title, file_, no_validate, dry_run):
+def post_event_cmd(
+    ctx, event_type, fields, location, time_, title, file_, map_, no_validate, dry_run
+):
     """Post one event (via flags) or a batch (via --file).
 
     Before anything is sent, each event's details are checked against its
@@ -393,7 +404,9 @@ def post_event_cmd(ctx, event_type, fields, location, time_, title, file_, no_va
     """
     try:
         if file_:
-            events = load_events_file(file_)
+            events = load_events_file(
+                file_, default_event_type=event_type, column_map=parse_map_args(list(map_))
+            )
         elif event_type:
             events = [
                 build_event(

@@ -93,3 +93,68 @@ def test_post_events_reports_per_event_outcomes():
     outcomes = post_events(fake, events)
     assert outcomes[0] is None
     assert "400 bad species" in outcomes[1]
+
+
+# --- CSV import (#21) ---
+
+
+def test_load_events_csv_fixed_columns(tmp_path):
+    p = tmp_path / "e.csv"
+    p.write_text(
+        "event_type,time,title,lat,lon,species,count,notes\n"
+        "sighting,2026-10-01T10:00:00Z,Two lions,-1.286,36.817,lion,2,\n"
+        "sighting,,,,,elephant,true,seen at dusk\n",
+        encoding="utf-8",
+    )
+    events = load_events_file(str(p))
+    assert events[0] == {
+        "event_type": "sighting",
+        "time": "2026-10-01T10:00:00Z",
+        "title": "Two lions",
+        "location": {"latitude": -1.286, "longitude": 36.817},
+        "event_details": {"species": "lion", "count": 2},  # empty notes cell is skipped
+    }
+    assert events[1]["event_type"] == "sighting"
+    assert "location" not in events[1] and "title" not in events[1]
+    assert events[1]["event_details"] == {
+        "species": "elephant",
+        "count": True,
+        "notes": "seen at dusk",
+    }
+    assert "time" in events[1]  # defaulted to now
+
+
+def test_load_events_csv_default_type_column_map_and_aliases(tmp_path):
+    p = tmp_path / "history.csv"
+    p.write_text(
+        "Timestamp,Species_Name,Latitude,Longitude,Count\n2026-10-01T10:00:00Z,buffalo,-1.5,36.9,4\n",
+        encoding="utf-8",
+    )
+    events = load_events_file(
+        str(p),
+        default_event_type="sighting",
+        column_map={"time": "Timestamp", "species": "Species_Name", "count": "Count"},
+    )
+    assert events == [
+        {
+            "event_type": "sighting",
+            "time": "2026-10-01T10:00:00Z",
+            "location": {"latitude": -1.5, "longitude": 36.9},
+            "event_details": {"species": "buffalo", "count": 4},
+        }
+    ]
+
+
+def test_load_events_csv_errors_name_the_row(tmp_path):
+    p = tmp_path / "e.csv"
+    p.write_text("species,lat,lon\nlion,-1.3,36.8\n", encoding="utf-8")
+    with pytest.raises(FieldArgError, match="row 2.*event_type.*--event-type"):
+        load_events_file(str(p))
+    with pytest.raises(FieldArgError, match="--map species=Species: no column 'Species'"):
+        load_events_file(str(p), default_event_type="s", column_map={"species": "Species"})
+    p.write_text("species,lat,lon\nlion,north,36.8\n", encoding="utf-8")
+    with pytest.raises(FieldArgError, match="row 2.*lat.*'north'"):
+        load_events_file(str(p), default_event_type="s")
+    p.write_text("", encoding="utf-8")
+    with pytest.raises(FieldArgError, match="no header row"):
+        load_events_file(str(p), default_event_type="s")
