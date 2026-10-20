@@ -16,6 +16,14 @@ message will say which event type). Every stock category tested so far
 - **Category `ordernum`** (event-type ordernum is supported; categories are
   a two-line addition when wanted).
 
+Not refused, silently flattened: **sub-choices** (a choice nested under a
+parent choice, `Choice.sub_choice_of` in das). Pull emits the child as a
+plain option and apply never touches parent links, because the choices
+REST API neither returns nor accepts them (2026-10-20); the Django admin is
+the only way to set one. Blocked on ERA-14343 (expose `sub_choice_of` in
+the API); the CLI follow-up is GUNDI-5828 (parent reference as
+`<choice set>:<value>` in the spec, spec authoritative).
+
 Related but separate: `docs/backlog/json-file-import.md` (parked feature),
 and two post-merge hardening notes from the first whole-branch review —
 consider a sturdier check than the django-filter message-string match in
